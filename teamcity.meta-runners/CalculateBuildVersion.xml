@@ -1,0 +1,35 @@
+<meta-runner name="CalculateOctopusBuildVersion">
+    <description>Calculate octopus build version</description>
+    <settings>
+        <parameters>
+            <param name="VERSION_TAG" value="" />
+        </parameters>
+        <build-runners>
+            <runner name="Calculate Build Version" type="kotlinScript">
+                <parameters>
+                    <param name="kotlinArgs"><![CDATA[%build.counter%
+%VERSION_TAG%]]></param>
+                    <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
+                    <param name="scriptContent"><![CDATA[var versionTag = "v2.0.0";
+if (args.size == 2) {
+        versionTag = args[1]
+    }
+    println("VERSION TAG: $versionTag")
+    val regex = """^v(?<major>\d*)(\.(?<minor>\d*))?(\.(?<patch>\d*))?$""".toRegex()
+    val matcher = regex.matchEntire(versionTag) ?: throw NullPointerException("$versionTag is incorrect")
+    val matchedGroups = matcher.groups
+    val versionMajor = matchedGroups[1]?.value ?: "2"
+    val versionMinor = matchedGroups[3]?.value ?: 0
+	val versionPatch = matchedGroups[5]?.value?.toLong()?.plus(1)?.toString() ?: "0"
+    val buildCounter = args[0]
+    println("New version: $versionMajor.$versionMinor.$versionPatch.$buildCounter")
+    println("##teamcity[buildNumber '$versionMajor.$versionMinor.$versionPatch-$buildCounter']")
+    println("##teamcity[setParameter name='PROJECT_VERSION' value='$versionMajor.$versionMinor.$versionPatch']")]]></param>
+                    <param name="scriptType" value="customScript" />
+                    <param name="teamcity.step.mode" value="default" />
+                </parameters>
+            </runner>
+        </build-runners>
+        <requirements />
+    </settings>
+</meta-runner>
