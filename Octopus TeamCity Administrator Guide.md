@@ -14,7 +14,7 @@ Upload SSH Key:
 - name: gh-octopusden
 - key: \<call admin\>
 
-# Octopus Module Project
+# Octopus Module parameters
 
 **VCS Roots**
 
