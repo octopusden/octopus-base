@@ -2,10 +2,8 @@
 
 **Parameters**
 |Parameter|Type, spec|Value|
-|---------|----------|-----|
+|-|-|-|
 |OCTOPUS_GITHUB_TOKEN|Password, read-only, hidden|\<call admin\>|
-|OCTOPUS_GPG_PRIVATE_KEY|Password, read-only, hidden|\<call admin\>|
-|OCTOPUS_GPG_PASSPHRASE|Password, read-only, hidden|\<call admin\>|
 |OCTOPUS_GITHUB_DOCKER_REGISTRY|Text, read-only|ghcr.io/octopusden|
 
 **SSH Keys**
