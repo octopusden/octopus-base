@@ -44,6 +44,13 @@ These parameters should be defined at the aggregator project level.
    ![Properties](../docs/img/screen2.png)
 3. Futhere perform a standard sequence of the steps such as ex Check Component Configuration in JIRA before Build, Build and etc
 
+#### Environment Variables
+
+| ***Name***                | ***Description***                                  |
+|---------------------------|----------------------------------------------------|
+| env.AUTH_SERVER_REALM     | The name of the realm of Keycloak.                 |
+| env.TECHNICAL_USER_BEARER | The security token which was created in Keycloak.  |
+
 ---
 ### 2. Release
 
