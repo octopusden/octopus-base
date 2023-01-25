@@ -28,5 +28,5 @@ runs:
   - name: Check version format
     if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
     run: |
-      echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ github.event.client_payload.build_version }}"
+      echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ inputs.tag-value }}"
       exit 1
