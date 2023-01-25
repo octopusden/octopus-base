@@ -1,0 +1,32 @@
+name: Get a version from the tag
+inputs:
+  tag-value:
+    required: true
+  exit-if-empty:
+    type: boolean
+    default: false
+outputs:
+  group1:
+    description: Major version
+    value: ${{ steps.version.outputs.version.group1 }}
+  group2:
+    description: Minor version
+    value: ${{ steps.version.outputs.version.group2 }}
+  group3:
+    description: Patch version
+    value: ${{ steps.version.outputs.version.group3 }}
+runs:
+  using: "composite"
+  steps:
+  - uses: actions-ecosystem/action-regex-match@v2
+    id: version
+    name: Prepare a version from a tag
+    with:
+      text: ${{ inputs.tag-value }}
+      regex: '^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?'
+      flags: gm
+  - name: Check version format
+    if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
+    run: |
+      echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ github.event.client_payload.build_version }}"
+      exit 1
