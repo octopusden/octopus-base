@@ -8,25 +8,25 @@ inputs:
 outputs:
   group1:
     description: Major version
-    value: ${{ steps.version.outputs.version.group1 }}
+    value: ${{ steps.version.outputs.group1 }}
   group2:
     description: Minor version
-    value: ${{ steps.version.outputs.version.group2 }}
+    value: ${{ steps.version.outputs.group2 }}
   group3:
     description: Patch version
-    value: ${{ steps.version.outputs.version.group3 }}
+    value: ${{ steps.version.outputs.group3 }}
 runs:
   using: "composite"
   steps:
-  - uses: actions-ecosystem/action-regex-match@v2
-    id: version
-    name: Prepare a version from a tag
-    with:
-      text: ${{ inputs.tag-value }}
-      regex: '^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?'
-      flags: gm
-  - name: Check version format
-    if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
-    run: |
-      echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ inputs.tag-value }}"
-      exit 1
+    - uses: actions-ecosystem/action-regex-match@v2
+      id: version
+      name: Prepare a version from a tag
+      with:
+        text: ${{ inputs.tag-value }}
+        regex: '^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?'
+        flags: gm
+    - if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
+      shell: bash
+      run: |
+        echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ inputs.tag-value }}"
+        exit 1
