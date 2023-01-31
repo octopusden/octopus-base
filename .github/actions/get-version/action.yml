@@ -15,6 +15,9 @@ outputs:
   group3:
     description: Patch version
     value: ${{ steps.version.outputs.group3 }}
+  version:
+    description: Build version
+    value: ${{ format('{0}.{1}.{2}', steps.version.outputs.group1, steps.version.outputs.group2, steps.version.outputs.group3) }}
 runs:
   using: "composite"
   steps:
