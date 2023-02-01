@@ -30,7 +30,6 @@ Project name is the same as a repository name
 
 - feature/issue_id: for enhancements/features/technical tasks
 - bug/issue_id: for bugfixes
-- or just
 - issue_id: for lazies
 
 ## Pull Request names
