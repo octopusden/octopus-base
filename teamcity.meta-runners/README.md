@@ -62,6 +62,8 @@ These parameters should be defined at the aggregator project level.
 
 ### 3. Deploy
 
+Disable step 'Close Deployed Issues'
+
 | ***Name***        | ***Value***                                                                               |
 |-------------------|-------------------------------------------------------------------------------------------|
 | HELM_SERVICES_SET | --set image.name=octopusden/employee-service-staging --set image.tag=%PROJECT_VERSION%... |
