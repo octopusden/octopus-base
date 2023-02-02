@@ -15,9 +15,10 @@
     - Add branch protection rule
       - name: 'main'
         - Enable 'Require a pull request before merging'
-        - Enable 'Dismiss stale pull request approvals when new commits are pushed'
-        - Enable 'Require review from Code Owners'
+          - Enable 'Dismiss stale pull request approvals when new commits are pushed'
+          - Enable 'Require review from Code Owners'
         - Enable 'Require linear history'
+        - Enable 'Do not allow bypassing the above settings'
   - Environments
     - New Environment
       - name: 'Prod'
