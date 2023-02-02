@@ -7,7 +7,7 @@
 # Contribution policies
 
 1. For each change, create a feature branch (direct commit to the 'main' branch is forbidden)
-2. For each change, create an issue in the corresponding issue in the project (issue #id must be put in a pull request description)
+2. For each change, create an issue in the corresponding project (issue #id must be put in a pull request description)
 3. Use naming conventions for branches and pull requests (see below)
 4. Merge with squash strategy (merge&commit strategy is forbidden in order to keep linear history)
 
