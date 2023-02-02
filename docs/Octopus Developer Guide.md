@@ -29,9 +29,10 @@ Project name is the same as a repository name
 
 ## Branch names
 
-- feature/issue_id: for enhancements/features/technical tasks
-- bug/issue_id: for bugfixes
-- issue_id: for lazies
+- issue_id-brief-description: if there is an issue for the change
+- brief-description: if there is no issue (primitive change)
+
+Examples: 13-fix-npe-on-start, 12-support-security-champ, fix-typo
 
 ## Pull Request names
 
