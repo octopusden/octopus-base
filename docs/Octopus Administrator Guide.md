@@ -21,7 +21,7 @@
   - Environments
     - New Environment
       - name: 'Prod'
-        - Add secrets: OSSRH_USERNAME, OSSRH_TOKEN, SONATYPE_PROFILE_ID, GPG_PASSPHRASE, GPG_PRIVATE_KEY, DOCKER_HUB_TOKEN
+        - Add secrets: OSSRH_USERNAME, OSSRH_TOKEN, SONATYPE_PROFILE_ID, GPG_PASSPHRASE, GPG_PRIVATE_KEY
 
 # Create a project
 
