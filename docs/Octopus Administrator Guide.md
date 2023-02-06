@@ -5,12 +5,8 @@
 - Repository settings
   - General
     - Pull Requests
-    - Disable 'Allow merge commits'
-    - Enable 'Automatically delete head branches'
-  - Collaborators
-    - Add team members
-    - Add technical user 'gh-octopusden'
-      - Sign in to GitHub with gh-octopusden user and accept the invitation
+      - Disable 'Allow merge commits'
+      - Enable 'Automatically delete head branches'
   - Branches
     - Add branch protection rule
       - name: 'main'
@@ -23,6 +19,10 @@
     - New Environment
       - name: 'Prod'
         - Add secrets: OSSRH_USERNAME, OSSRH_TOKEN, SONATYPE_PROFILE_ID, GPG_PASSPHRASE, GPG_PRIVATE_KEY
+  - Collaborators
+    - Add team members
+    - Add technical user 'gh-octopusden'
+      - Sign in to GitHub with gh-octopusden user and accept the invitation
 
 # Create a project
 
