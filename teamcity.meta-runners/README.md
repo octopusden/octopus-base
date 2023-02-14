@@ -26,7 +26,6 @@ Add the new keys to ***'config-server / api-gateway-cloud-qa / api-gateway-cloud
 
 These parameters should be defined at the aggregator project level.
 
-- Define a new parameter OCTOPUS_GITHUB_DOCKER_REGISTRY to set a docker registry path where a docker image is retained(ghcr.io/octopusden)
 - Set up Docker Registry for proxying from the external hosts (docker.io and ghcr.io)
 
 ### Local project parameters
