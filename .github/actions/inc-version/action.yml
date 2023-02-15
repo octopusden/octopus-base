@@ -1,0 +1,34 @@
+name: Increment version
+inputs:
+  version:
+    required: true
+  default_version:
+    default: '2.0.0'
+outputs:
+  version: ${{ steps.build_version.outputs.value }}
+runs:
+  using: "composite"
+  steps:
+    - uses: octopusden/octopus-base/.github/actions/get-version@main
+      name: Get version
+      id: version
+      with:
+        tag-value: ${{ inputs.version }}
+        exit-if-empty: false
+    - run: |
+        echo "MAJOR: ${{ steps.version.outputs.group1 }}"
+        echo "MINOR: ${{ steps.version.outputs.group2 }}"
+        echo "PATCH: ${{ steps.version.outputs.group3 }}"
+    - if: ${{ steps.version.outputs.group1 == ''}}
+      run: echo "BUILD_VERSION=${{ inputs.default_version }}" >> $GITHUB_ENV
+    - if: ${{ steps.version.outputs.group2 == ''}}
+      run: echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.0.0" >> $GITHUB_ENV
+    - if: ${{ steps.version.outputs.group3 == ''}}
+      run: echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.0" >> $GITHUB_ENV
+    - if: ${{ steps.version.outputs.group3 != ''}}
+      run: |
+        VERSION_PATCH=${{ steps.version.outputs.group3 }}
+        echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.$(($VERSION_PATCH+1))" >> $GITHUB_ENV
+    - id: build_version
+      run: |
+        echo "value=${{ env.BUILD_VERSION }}" >> $GITHUB_OUTPUT
