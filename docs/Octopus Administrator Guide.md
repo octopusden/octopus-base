@@ -15,6 +15,10 @@
           - Enable 'Require review from Code Owners'
         - Enable 'Require linear history'
         - Enable 'Do not allow bypassing the above settings'
+  - Actions
+    - General
+      - Workflow permissions
+        - Enable 'Read and write permissions'
   - Environments
     - New Environment
       - name: 'Prod'
