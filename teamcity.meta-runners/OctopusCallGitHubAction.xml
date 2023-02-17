@@ -5,11 +5,12 @@
             <param name="LABELING_PATTERN" value="" />
             <param name="CURRENT_COMMIT" value="" />
             <param name="OCTOPUS_GITHUB_TOKEN" value="" />
+            <param name="OCTOPUS_REPOSITORY" value="" />
         </parameters>
         <build-runners>
             <runner name="Call a github action" type="kotlinScript">
                 <parameters>
-                    <param name="kotlinArgs" value="octopusden octopus-employee-service %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %LABELING_PATTERN%" />
+                    <param name="kotlinArgs" value="octopusden %OCTOPUS_REPOSITORY% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %LABELING_PATTERN%" />
                     <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
                     <param name="scriptContent"><![CDATA[@file:Repository("https://jcenter.bintray.com")
 @file:DependsOn("khttp:khttp:1.0.0")
