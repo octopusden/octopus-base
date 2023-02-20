@@ -1,5 +1,5 @@
 <meta-runner name="OctopusCallGitHubAction">
-    <description>Call a gitHub action</description>
+    <description>Call GitHub action</description>
     <settings>
         <parameters>
             <param name="LABELING_PATTERN" value="" />

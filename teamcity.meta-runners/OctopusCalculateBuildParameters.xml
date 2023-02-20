@@ -1,0 +1,57 @@
+<meta-runner name="Calculate build parameters">
+  <description>Define build.number and set CURRENT_COMMIT and PROJECT_VERSION parameters</description>
+  <settings>
+    <build-runners>
+      <runner name="Read CURRENT_COMMIT" type="kotlinScript">
+        <parameters>
+          <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
+          <param name="scriptContent"><![CDATA[import java.io.BufferedReader
+
+val command = "git rev-parse HEAD"
+println(command)
+val process = Runtime.getRuntime().exec(command)
+val stderr = process.errorStream.bufferedReader().use(BufferedReader::readText).trim()
+if (stderr.isNotEmpty()) throw Exception(stderr)
+val currentCommit = process.inputStream.bufferedReader().use(BufferedReader::readText).trim()
+if (currentCommit.isEmpty()) throw Exception("Unable to read current commit")
+println("Current commit: $currentCommit")
+println("##teamcity[setParameter name='CURRENT_COMMIT' value='$currentCommit']")]]></param>
+          <param name="scriptType" value="customScript" />
+          <param name="teamcity.step.mode" value="default" />
+        </parameters>
+      </runner>
+      <runner name="Calculate PROJECT_VERSION" type="kotlinScript">
+        <parameters>
+          <param name="kotlinArgs"><![CDATA[%build.counter%]]></param>
+          <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
+          <param name="scriptContent"><![CDATA[import java.io.BufferedReader
+
+val buildCounter = args[0]
+val command = "git tag -l --sort=-v:refname v[0-9,\\.]*"
+println(command)
+val process = Runtime.getRuntime().exec(command)
+val stderr = process.errorStream.bufferedReader().use(BufferedReader::readText).trim()
+if (stderr.isNotEmpty()) throw Exception(stderr)
+val stdout = process.inputStream.bufferedReader().use(BufferedReader::readText).trim()
+var versionMajor = "2"
+var versionMinor = "0"
+var versionPatch = "0"
+if (stdout.isNotEmpty()) {
+    val versionTag = stdout.split("\n").first()
+    println("Version tag: $versionTag")
+    val regex = """^v(?<major>\d*)(\.(?<minor>\d*))?(\.(?<patch>\d*))?$""".toRegex()
+    val matchedGroups = regex.matchEntire(versionTag)?.groups ?: throw Exception("Version tag '$versionTag' is incorrect")
+    versionMajor = matchedGroups[1]!!.value
+    versionMinor = matchedGroups[3]!!.value
+    versionPatch = matchedGroups[5]!!.value.toLong().plus(1).toString()
+}
+println("##teamcity[buildNumber '$versionMajor.$versionMinor.$versionPatch-$buildCounter']")
+println("##teamcity[setParameter name='PROJECT_VERSION' value='$versionMajor.$versionMinor.$versionPatch']")]]></param>
+          <param name="scriptType" value="customScript" />
+          <param name="teamcity.step.mode" value="default" />
+        </parameters>
+      </runner>
+    </build-runners>
+    <requirements />
+  </settings>
+</meta-runner>
