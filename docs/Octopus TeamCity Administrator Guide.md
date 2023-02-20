@@ -24,10 +24,10 @@ Upload Meta-Runners:
 
 Add parameters:
 
-| Name            | Value   | Description                                            |
-|-----------------|---------|--------------------------------------------------------|
-| CURRENT_COMMIT  | <empty> | Utilized by OctopusCalculateBuildParameters metarunner |
-| PROJECT_VERSION | <empty> | Utilized by OctopusCalculateBuildParameters metarunner |
+| Name            | Value     | Description                                            |
+|-----------------|-----------|--------------------------------------------------------|
+| CURRENT_COMMIT  | \<empty\> | Utilized by OctopusCalculateBuildParameters metarunner |
+| PROJECT_VERSION | \<empty\> | Utilized by OctopusCalculateBuildParameters metarunner |
 
 
 
