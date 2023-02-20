@@ -1,6 +1,10 @@
 <meta-runner name="Calculate build parameters">
   <description>Define build.number and set CURRENT_COMMIT and PROJECT_VERSION parameters</description>
   <settings>
+    <parameters>
+      <param name="CURRENT_COMMIT" value="%CURRENT_COMMIT%"/>
+      <param name="PROJECT_VERSION" value="%PROJECT_VERSION%"/>
+    </parameters>
     <build-runners>
       <runner name="Read CURRENT_COMMIT" type="kotlinScript">
         <parameters>

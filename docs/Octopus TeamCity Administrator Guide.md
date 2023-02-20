@@ -24,10 +24,9 @@ Upload Meta-Runners:
 
 Add parameters:
 
-| Name            | Value     | Description                                            |
-|-----------------|-----------|--------------------------------------------------------|
-| CURRENT_COMMIT  | \<empty\> | Utilized by OctopusCalculateBuildParameters metarunner |
-| PROJECT_VERSION | \<empty\> | Utilized by OctopusCalculateBuildParameters metarunner |
+| Name                 | Value          | Description                                     |
+|----------------------|----------------|-------------------------------------------------|
+| OCTOPUS_GITHUB_TOKEN | \<call admin\> | Utilized by OctopusCallGitHubAction meta-runner |
 
 
 
@@ -39,3 +38,11 @@ Add parameters:
 * Username: git
 * Uploaded key: gh-octopusden
 * Passphrase: \<call admin\>
+
+## Parameters
+
+Add parameters:
+
+| Name                 | Value             | Description                                     |
+|----------------------|-------------------|-------------------------------------------------|
+| OCTOPUS_REPOSITORY   | \<VCS Root repo\> | Utilized by OctopusCallGitHubAction meta-runner |
