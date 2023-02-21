@@ -23,7 +23,7 @@ val request = post("https://api.github.com/repos/octopusden/${args[0]}/dispatche
         "event_type": "release",
         "client_payload": {
         "commit": "${args[2]}",
-        "build_version": "v${args[3]}"
+        "project_version": "${args[3]}"
     }""")
     if (request.statusCode / 100 != 2) {
         throw Exception(request.text)
