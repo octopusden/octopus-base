@@ -1,38 +1,38 @@
-<meta-runner name="OctopusCallGitHubAction">
-    <description>Call GitHub action</description>
-    <settings>
+<meta-runner name="Call GitHub action">
+  <description>Call GitHub build and release action</description>
+  <settings>
+    <parameters>
+      <param name="OCTOPUS_REPOSITORY_NAME" value="%OCTOPUS_REPOSITORY_NAME%"/>
+      <param name="OCTOPUS_GITHUB_TOKEN" value="%OCTOPUS_GITHUB_TOKEN%"/>
+      <param name="CURRENT_COMMIT" value="%CURRENT_COMMIT%"/>
+      <param name="PROJECT_VERSION" value="%PROJECT_VERSION%"/>
+    </parameters>
+    <build-runners>
+      <runner name="Call GitHub build and release action" type="kotlinScript">
         <parameters>
-            <param name="LABELING_PATTERN" value="" />
-            <param name="CURRENT_COMMIT" value="" />
-            <param name="OCTOPUS_GITHUB_TOKEN" value="" />
-            <param name="OCTOPUS_REPOSITORY" value="" />
-        </parameters>
-        <build-runners>
-            <runner name="Call a github action" type="kotlinScript">
-                <parameters>
-                    <param name="kotlinArgs" value="octopusden %OCTOPUS_REPOSITORY% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %LABELING_PATTERN%" />
-                    <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
-                    <param name="scriptContent"><![CDATA[@file:Repository("https://jcenter.bintray.com")
+          <param name="kotlinArgs" value="%OCTOPUS_REPOSITORY_NAME% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %PROJECT_VERSION%" />
+          <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
+          <param name="scriptContent"><![CDATA[@file:Repository("https://jcenter.bintray.com")
 @file:DependsOn("khttp:khttp:1.0.0")
 
 import khttp.post
 
-val request = post("https://api.github.com/repos/${args[0]}/${args[1]}/dispatches",
-        mapOf("Authorization" to "Bearer ${args[2]}")
+val request = post("https://api.github.com/repos/octopusden/${args[0]}/dispatches",
+        mapOf("Authorization" to "Bearer ${args[1]}")
     , emptyMap(), """{
         "event_type": "release",
         "client_payload": {
-        "commit": "${args[3]}",
-        "build_version": "${args[4]}"
+        "commit": "${args[2]}",
+        "build_version": "v${args[3]}"
     }""")
-    if (request.statusCode / 100 > 2) {
+    if (request.statusCode / 100 != 2) {
         throw Exception(request.text)
     }]]></param>
-                    <param name="scriptType" value="customScript" />
-                    <param name="teamcity.step.mode" value="default" />
-                </parameters>
-            </runner>
-        </build-runners>
-        <requirements />
-    </settings>
+          <param name="scriptType" value="customScript" />
+          <param name="teamcity.step.mode" value="default" />
+        </parameters>
+      </runner>
+    </build-runners>
+    <requirements />
+  </settings>
 </meta-runner>
