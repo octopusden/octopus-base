@@ -1,26 +1,26 @@
-### Global requirements
+# Docker registry configuration
 
 * Set up Docker Registry for proxying from the external hosts (docker.io and ghcr.io)
 
+# TeamCity configuration
 
+## Octopus Root project
 
-# Octopus Root project
-
-## SSH Keys
+### SSH Keys
 
 Upload SSH Key:
 
 * name: gh-octopusden
 * key: \<call admin\>
 
-## Meta-Runners
+### Meta-Runners
 
 Upload Meta-Runners:
 
 * ![OctopusCalculateBuildParameters](../teamcity.meta-runners/OctopusCalculateBuildParameters.xml)
 * ![OctopusCallGitHubAction](../teamcity.meta-runners/OctopusCallGitHubAction.xml)
 
-## Parameters
+### Parameters
 
 Add parameters:
 
@@ -30,10 +30,9 @@ Add parameters:
 | PROJECT_VERSION | \<empty\> | Utilized by OctopusCalculateBuildParameters metarunner |
 
 
+## Octopus Module project
 
-# Octopus Module project
-
-## VCS Root
+### VCS Root
 
 * Auth method: Uploaded Key
 * Username: git
