@@ -15,9 +15,12 @@
           <param name="scriptContent"><![CDATA[@file:Repository("https://jcenter.bintray.com")
 @file:DependsOn("khttp:khttp:1.0.0")
 
-import khttp.post
+    import khttp.get
+    import khttp.post
+    import java.util.concurrent.TimeUnit
+    import java.util.concurrent.TimeoutException
 
-val request = post("https://api.github.com/repos/octopusden/${args[0]}/dispatches",
+    val respCreate = post("https://api.github.com/repos/octopusden/${args[0]}/dispatches",
         mapOf("Authorization" to "Bearer ${args[1]}")
     , emptyMap(), """{
         "event_type": "release",
@@ -25,9 +28,21 @@ val request = post("https://api.github.com/repos/octopusden/${args[0]}/dispatche
         "commit": "${args[2]}",
         "project_version": "${args[3]}"
     }""")
-    if (request.statusCode / 100 != 2) {
-        throw Exception(request.text)
-    }]]></param>
+    if (respCreate.statusCode / 100 != 2) {
+        throw Exception(respCreate.text)
+    }
+	println("Waiting release...")
+    var attempt = 1
+    do {
+		println("Attempt: " + attempt)
+        TimeUnit.MINUTES.sleep(1L)
+        val respCheck = get(url = "https://api.github.com/repos/octopusden/${args[0]}/releases/tags/v${args[3]}")
+        if (attempt > 10) {
+            throw TimeoutException("Number of attempts exceeded($attempt)")
+        }
+		attempt++
+    } while (respCheck.statusCode != 200)
+]]></param>
           <param name="scriptType" value="customScript" />
           <param name="teamcity.step.mode" value="default" />
         </parameters>
