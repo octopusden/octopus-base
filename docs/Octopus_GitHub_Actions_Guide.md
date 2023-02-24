@@ -97,3 +97,9 @@ To publish to the docker registry:
     - name: Push to docker registry
       run: docker push ghcr.io/$GITHUB_REPOSITORY:${{ github.event.client_payload.project_version }}
 ```
+
+## Examples
+
+- [Release workflow(non-docker)](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/release.yml)
+- [Release workflow(with docker)](https://github.com/octopusden/octopus-employee-service/blob/main/.github/workflows/buildAndRelease.yml)
+- [Build workflow](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/build.yml)
