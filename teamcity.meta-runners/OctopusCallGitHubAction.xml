@@ -6,11 +6,12 @@
       <param name="OCTOPUS_GITHUB_TOKEN" value="%OCTOPUS_GITHUB_TOKEN%"/>
       <param name="CURRENT_COMMIT" value="%CURRENT_COMMIT%"/>
       <param name="PROJECT_VERSION" value="%PROJECT_VERSION%"/>
+      <param name="TIMEOUT" value="%OCTOPUS_RELEASE_TIMEOUT%" spec="text display='normal' description='Timeout in minutes' validationMode='any'"/>
     </parameters>
     <build-runners>
       <runner name="Call GitHub build and release action" type="kotlinScript">
         <parameters>
-          <param name="kotlinArgs" value="%OCTOPUS_REPOSITORY_NAME% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %PROJECT_VERSION%" />
+          <param name="kotlinArgs" value="%OCTOPUS_REPOSITORY_NAME% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %PROJECT_VERSION% %TIMEOUT%" />
           <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
           <param name="scriptContent"><![CDATA[@file:Repository("https://jcenter.bintray.com")
 @file:DependsOn("khttp:khttp:1.0.0")
@@ -33,11 +34,12 @@
     }
 	println("Waiting release...")
     var attempt = 1
+    var limit = Integer.valueOf(args[4])
     do {
 		println("Attempt: " + attempt)
         TimeUnit.MINUTES.sleep(1L)
         val respCheck = get(url = "https://api.github.com/repos/octopusden/${args[0]}/releases/tags/v${args[3]}")
-        if (attempt > 10) {
+        if (attempt > limit) {
             throw TimeoutException("Number of attempts exceeded($attempt)")
         }
 		attempt++
