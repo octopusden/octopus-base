@@ -41,9 +41,10 @@ Use GitHub keywords to automatically close the related issue, for example 'fixes
 
 ## Group Id, Artifact Id
 
-- groupId always contains 'octopus' segment, i.e. 'octopus-module-name'
-- artifactId may optionally include 'octopus' prefix if it is meaningful.
-  - For example: artifactId = 'octopus-parent', artifactId = 'cloud-commons'.
+- groupId should start with `org.octopusden.octopus.` prefix
+  - For example: groupId = `org.octopusden.octopus.employee`, groupId = `org.octopusden.octopus.vcsfacade`
+- artifactId may optionally include `octopus` prefix if it is meaningful.
+  - For example: artifactId = `octopus-parent`, artifactId = `cloud-commons`.
 
 ## Package names
 
