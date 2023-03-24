@@ -38,4 +38,6 @@
   - Visibility: public
   - Manage access
   - Invite collaborators: add team members
+- Link the project to the corresponding repository
+
   
