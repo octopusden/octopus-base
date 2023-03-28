@@ -22,7 +22,9 @@
   - Environments
     - New Environment
       - name: 'Prod'
-        - Add secrets: OSSRH_USERNAME, OSSRH_TOKEN, SONATYPE_PROFILE_ID, GPG_PASSPHRASE, GPG_PRIVATE_KEY
+        - Add secrets:
+          - For maven modules: OSSRH_USERNAME, OSSRH_TOKEN, SONATYPE_PROFILE_ID, GPG_PASSPHRASE, GPG_PRIVATE_KEY
+          - For python modules: PYPI_API_TOKEN
   - Collaborators
     - Add team members
     - Add technical user 'gh-octopusden'
