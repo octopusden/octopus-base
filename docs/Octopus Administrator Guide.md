@@ -2,6 +2,8 @@
 
 - Create new public repository, see Naming Conventions
   - Add files: .gitignore, LICENSE, README.md
+- About section
+  - Add topics, e.g. 'maven', 'gradle', 'docker', 'public-flow', 'hybrid-flow', etc
 - Repository settings
   - General
     - Pull Requests
