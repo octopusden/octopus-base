@@ -3,7 +3,7 @@
 - Create new public repository, see Naming Conventions
   - Add files: .gitignore, LICENSE, README.md
 - About section
-  - Add topics, e.g. 'maven', 'gradle', 'docker', 'public-flow', 'hybrid-flow', etc
+  - Add topics, see section 'Repository topics'
 - Repository settings
   - General
     - Pull Requests
@@ -22,15 +22,41 @@
       - Workflow permissions
         - Enable 'Read and write permissions'
   - Environments
-    - New Environment
-      - name: 'Prod'
-        - Add secrets:
-          - For maven modules: OSSRH_USERNAME, OSSRH_TOKEN, SONATYPE_PROFILE_ID, GPG_PASSPHRASE, GPG_PRIVATE_KEY
-          - For python modules: PYPI_API_TOKEN
+    - Create environments: Prod, Test
+      - See 'Environment settings' for configuration
   - Collaborators
     - Add team members
     - Add technical user 'gh-octopusden'
       - Sign in to GitHub with gh-octopusden user and accept the invitation
+
+# Repository topics
+
+List of commonly used topics:
+* maven - maven build is used
+* gradle - gradle build is used
+* docker - docker image is built and published in GH packages
+* public-flow - public flow module
+* hybrid-flow - hybrid flow module
+* pypi-package - python module published to pypi.org
+
+# Environment settings
+
+## Secrets
+
+|Module topic|Prod|Test|
+|---|---|---|
+|sonatype-nexus|OSSRH_USERNAME| - |
+|sonatype-nexus|OSSRH_TOKEN| - |
+|sonatype-nexus|SONATYPE_PROFILE_ID| - |
+|sonatype-nexus|GPG_PASSPHRASE| - |
+|sonatype-nexus|GPG_PRIVATE_KEY| - |
+|pypi-package|PYPI_API_TOKEN|PYPI_API_TOKEN|
+
+## Variables
+
+|Module topic|Prod|Test|
+|---|---|---|
+|pypi-package|PYPI_REPO_URL = `https://upload.pypi.org/legacy/`|PYPI_REPO_URL = `https://test.pypi.org/legacy/`|
 
 # Create a project
 
