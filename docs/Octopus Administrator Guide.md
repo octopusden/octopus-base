@@ -34,6 +34,7 @@
 List of commonly used topics:
 * maven - maven build is used
 * gradle - gradle build is used
+* sonatype-nexus - module is published in Sonatype Nexus
 * docker - docker image is built and published in GH packages
 * public-flow - public flow module
 * hybrid-flow - hybrid flow module
