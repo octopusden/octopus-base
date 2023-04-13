@@ -54,7 +54,7 @@ jobs:
           verbose: false
           repository-url: ${{ vars.PYPI_REPO_URL }}
   build-deploy-for-python3:
-    if: ${{ contains(inputs.python_versions, '2') == true }}
+    if: ${{ contains(inputs.python_versions, '3') == true }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.process_env }}
     permissions:
