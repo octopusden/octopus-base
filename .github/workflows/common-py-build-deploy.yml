@@ -13,7 +13,7 @@ on:
         required: true
 jobs:
   build-deploy-for-python2:
-  if: ${{ contains(inputs.python_versions, '2') == true }}
+    if: ${{ contains(inputs.python_versions, '2') == true }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.process_env }}
     permissions:
@@ -52,7 +52,7 @@ jobs:
           verbose: false
           repository-url: ${{ vars.PYPI_REPO_URL }}
   build-deploy-for-python3:
-  if: ${{ contains(inputs.python_versions, '2') == true }}
+    if: ${{ contains(inputs.python_versions, '2') == true }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.process_env }}
     permissions:
