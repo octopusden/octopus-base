@@ -68,10 +68,6 @@ jobs:
         run: echo "PYPI_API_TOKEN=${{ secrets.PYPI_API_TOKEN }}"
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Install python3
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.7'
       - name: Install Binaries
         run: |
           if test -f required-binaries.txt; then
