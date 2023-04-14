@@ -44,7 +44,7 @@ jobs:
       - name: Setup
         run: python2 setup.py sdist bdist_wheel
       - name: Install and test
-        run: python2 -m pip install dist/*.whl && python2 setup.py test
+        run: python2 -m pip install dist/*.whl && python2 -m unittest discover
       - name: Remove tars
         run: rm -f dist/*.tar.gz
       - name: Publish
@@ -80,7 +80,7 @@ jobs:
       - name: Setup
         run: python3 setup.py sdist bdist_wheel
       - name: Install and test
-        run: python3 -m pip install dist/*.whl && python3 setup.py test
+        run: python3 -m pip install dist/*.whl && python3 -m unittest discover
       - name: Remove tars
         run: rm -f dist/*.tar.gz
       - name: Publish
