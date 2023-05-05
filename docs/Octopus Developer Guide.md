@@ -49,26 +49,26 @@ Use GitHub keywords to automatically close the related issue, for example 'fixes
 
 Package name should start with `org.octopusden.octopus.` prefix.
 
-## Additional rules on Python repositories and packages names
+## Additional rules for Python repository and package name
 
 All Python code have to be packaged properly and installable with `pip` routine from `PyPI`. Thus have to be labeled with `pypi-package`.
-The way recommended to run high-level code: `python -m <module_name>`
-The way recommended to run unit-tests: `python -m unittest discover -v`
+The way recommended to run high-level code: `python -m <module_name>`.
+The way recommended to run unit-tests: `python -m unittest discover -v`.
 
-- `oc-` prefix on repository name
-- `oc-` prefix on package name
-- `oc_` prefix on module name
-- hyphen `-` is the delimiter for repository and package name, while underscore `_` is that for module name
-- repository name template: `octopus-oc-<sub_section>-<package_name_without_oc_prefix>`, where **sub_section** may be complex
+- `oc-` prefix on repository name.
+- `oc-` prefix on package name.
+- `oc_` prefix on module name.
+- hyphen `-` is the delimiter for repository and package name, while underscore `_` is that for module name.
+- repository name template: `octopus-oc-<sub_section>-<package_name_without_oc_prefix>`, where **sub_section** may be complex, see below.
 
 **Possible values for *sub_section***:
 - `corelibs` - for core low-level libraries used in high- and middle- level packages
-- `base-libs` - for middle-level libraries used in middle- and high- level jobs but not runnable itself
+- `base-libs` - for middle-level libraries used in middle- and high- level jobs but not runnable themselves
 - `base-jobs` - for runnable midle-level modules (jobs)
-- `srv-libs` - for high-level libraries used in high-level jobs but not runnable itself
-- `srv-jobs` - for high-level modules runnable
+- `srv-libs` - for high-level libraries used in high-level jobs but not runnable themselves
+- `srv-jobs` - for high-level modules, runnable
 
 **Example**:
-- **Module**: oc\_sql\_helpers
-- **Package**: oc-sql-helpers
-- **Repository**: octopus-oc-corelibs-sql-helpers
+- **Module**: `oc_sql_helpers`
+- **Package**: `oc-sql-helpers`
+- **Repository**: `octopus-oc-corelibs-sql-helpers`
