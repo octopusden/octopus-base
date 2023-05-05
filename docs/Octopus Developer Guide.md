@@ -51,8 +51,9 @@ Package name should start with `org.octopusden.octopus.` prefix.
 
 ## Additional rules on Python repositories and packages names
 
-All Python code have to be packaged properly and installable with `pip` routine from `PyPI`.
+All Python code have to be packaged properly and installable with `pip` routine from `PyPI`. Thus have to be labeled with `pypi-package`.
 The way recommended to run high-level code: `python -m <module_name>`
+The way recommended to run unit-tests: `python -m unittest discover -v`
 
 - `oc-` prefix on repository name
 - `oc-` prefix on package name
