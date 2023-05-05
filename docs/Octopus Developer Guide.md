@@ -11,6 +11,13 @@
 - Merge with squash strategy (merge&commit strategy is forbidden in order to keep linear history)
 - For pull requests, specify additional parameters on the right sidebar: assignee, linked project, labels (Documentation, Bug, Enhancement, etc)
 
+## Additional policies for Python code
+
+- All Python code have to be packaged properly and installable with `pip` routine from `PyPI`. 
+- Repository have to be labeled with `pypi-package`.
+- The way recommended to run high-level code: `python -m <module_name>`.
+- The way recommended to run unit-tests: `python -m unittest discover -v`.
+
 # Naming Conventions
 
 ## Repository names
@@ -50,10 +57,6 @@ Use GitHub keywords to automatically close the related issue, for example 'fixes
 Package name should start with `org.octopusden.octopus.` prefix.
 
 ## Additional rules for Python repository and package name
-
-All Python code have to be packaged properly and installable with `pip` routine from `PyPI`. Thus have to be labeled with `pypi-package`.
-The way recommended to run high-level code: `python -m <module_name>`.
-The way recommended to run unit-tests: `python -m unittest discover -v`.
 
 - `oc-` prefix on repository name.
 - `oc-` prefix on package name.
