@@ -11,6 +11,13 @@
 - Merge with squash strategy (merge&commit strategy is forbidden in order to keep linear history)
 - For pull requests, specify additional parameters on the right sidebar: assignee, linked project, labels (Documentation, Bug, Enhancement, etc)
 
+## Additional policies for Python code
+
+- All Python code have to be packaged properly and installable with `pip` routine from `PyPI`. 
+- Repository have to be labeled with `pypi-package`.
+- The way recommended to run high-level code: `python -m <module_name>`.
+- The way recommended to run unit-tests: `python -m unittest discover -v`.
+
 # Naming Conventions
 
 ## Repository names
@@ -48,3 +55,23 @@ Use GitHub keywords to automatically close the related issue, for example 'fixes
 ## Package names
 
 Package name should start with `org.octopusden.octopus.` prefix.
+
+## Additional rules for Python repository and package name
+
+- `oc-` prefix on repository name.
+- `oc-` prefix on package name.
+- `oc_` prefix on module name.
+- hyphen `-` is the delimiter for repository and package name, while underscore `_` is that for module name.
+- repository name template: `octopus-oc-<sub_section>-<package_name_without_oc_prefix>`, where **sub_section** may be complex, see below.
+
+**Possible values for *sub_section***:
+- `corelibs` - for core low-level libraries used in high- and middle- level packages
+- `base-libs` - for middle-level libraries used in middle- and high- level jobs but not runnable themselves
+- `base-jobs` - for runnable midle-level modules (jobs)
+- `srv-libs` - for high-level libraries used in high-level jobs but not runnable themselves
+- `srv-jobs` - for high-level modules, runnable
+
+**Example**:
+- **Module**: `oc_sql_helpers`
+- **Package**: `oc-sql-helpers`
+- **Repository**: `octopus-oc-corelibs-sql-helpers`
