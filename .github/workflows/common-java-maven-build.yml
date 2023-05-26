@@ -1,5 +1,5 @@
 # This is a basic build workflow for Octopus Java modules published to Sonatype Central Repository
-name: Snapshot Compile&UT
+name: Maven Compile&UT
 
 on:
   workflow_call:
