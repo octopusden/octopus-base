@@ -12,8 +12,6 @@ on:
         required: true
       GPG_PRIVATE_KEY:
         required: true
-      GITHUB_TOKEN:
-        required: true
 
 jobs:
   build:
