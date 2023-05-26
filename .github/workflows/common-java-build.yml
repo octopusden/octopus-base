@@ -7,7 +7,7 @@ on:
       process_env:
         required: true
         type: string
-      java_version:
+      java-version:
         required: false
         type: string
         default: '11'
@@ -27,7 +27,7 @@ jobs:
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v3
         with:
-          java-version: '${{ github.event.inputs.java_version }}'
+          java-version: '${{ github.event.inputs.java-version }}'
           distribution: 'adopt'
           server-id: ossrh
           server-username: MAVEN_USERNAME
