@@ -7,6 +7,10 @@ on:
       process_env:
         required: true
         type: string
+      java_version:
+        required: false
+        type: string
+        default: '11'
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -23,7 +27,7 @@ jobs:
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v3
         with:
-          java-version: '8'
+          java-version: '${{ github.event.inputs.java_version }}'
           distribution: 'adopt'
           server-id: ossrh
           server-username: MAVEN_USERNAME
