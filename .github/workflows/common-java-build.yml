@@ -4,9 +4,6 @@ name: Snapshot Compile&UT
 on:
   workflow_call:
     inputs:
-      process_env:
-        required: true
-        type: string
       java-version:
         required: false
         type: string
