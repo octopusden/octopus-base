@@ -55,7 +55,7 @@ jobs:
         # todo: use release version instead of master
         uses: qcastel/github-actions-maven-cmd@master
         with:
-          maven-args: "org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{env.BUILD_VERSION}}"
+          maven-args: "org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{ env.BUILD_VERSION }}"
 
       - name: Set up maven Central Repository
         uses: actions/setup-java@v3
@@ -81,6 +81,6 @@ jobs:
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: false
-          automatic_release_tag: "v${{env.BUILD_VERSION}}"
+          automatic_release_tag: "v${{ env.BUILD_VERSION }}"
           files: |
             pom.xml
