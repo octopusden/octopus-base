@@ -3,6 +3,11 @@ name: Maven Release
 
 on:
   workflow_call:
+    inputs:
+      java-version:
+        required: false
+        type: string
+        default: '8'
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -64,7 +69,7 @@ jobs:
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v3
         with:
-          java-version: '8'
+          java-version: ${{ inputs.java-version }}
           distribution: 'adopt'
           server-id: ossrh
           server-username: MAVEN_USERNAME
