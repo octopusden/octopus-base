@@ -69,7 +69,12 @@ jobs:
           exit-if-empty: true
           
       - name: Gradle build
+        if: ${{ !inputs.docker-image }}
         run: ./gradlew build -P buildVersion=${{ env.BUILD_VERSION }}
+          
+      - name: Gradle build docker image
+        if: ${{ inputs.docker-image }}
+        run: ./gradlew dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
         
       - name: Publish snapshot to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -s
@@ -78,7 +83,3 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-          
-      - name: Publish image to docker registry
-        if: ${{ inputs.docker-image }}
-        run: ./gradlew dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
