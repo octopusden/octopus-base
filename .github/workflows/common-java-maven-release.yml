@@ -56,6 +56,7 @@ jobs:
           echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
 
       - name: Set Version
+        # todo: use release version instead of master
         uses: qcastel/github-actions-maven-cmd@master
         with:
           maven-args: "org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{env.BUILD_VERSION}}"
@@ -79,6 +80,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Create Release
+        # todo: use release version instead of master
         uses: "marvinpinto/action-automatic-releases@master"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
