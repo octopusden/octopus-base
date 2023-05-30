@@ -1,0 +1,50 @@
+# This is a basic build workflow for Octopus gradle Java modules published to Sonatype Central Repository
+name: Gradle Compile & UT
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        required: false
+        type: string
+        default: '8'
+    secrets:
+      OSSRH_USERNAME:
+        required: true
+      OSSRH_TOKEN:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: Prod
+    steps:
+      - uses: actions/checkout@v3
+        name: Checkout(switching to commit)
+      - name: Set up JDK 11
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'adopt'
+          cache: 'gradle'
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@v1
+      - uses: actions-ecosystem/action-get-latest-tag@v1
+        id: tag_version
+        with:
+          initial_version: v2.0.0
+      - uses: actions-ecosystem/action-bump-semver@v1
+        id: bump_semver
+        with:
+          current_version: ${{ steps.tag_version.outputs.tag }}
+          level: patch
+      - run: |
+          echo "BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}"
+      - uses: octopusden/octopus-base/.github/actions/get-version@main
+        name: Get version
+        id: version
+        with:
+          tag-value: ${{ steps.bump_semver.outputs.new_version }}
+          exit-if-empty: true
+      - name: Build with Gradle
+        run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
