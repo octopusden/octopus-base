@@ -1,4 +1,4 @@
-# This is a basic build workflow for Octopus maven Java modules published to Sonatype Central Repository
+# This is a basic build workflow for Octopus maven Java modules
 name: Maven Compile & UT
 
 on:
@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: '8'
-    secrets:
-      OSSRH_USERNAME:
-        required: true
-      OSSRH_TOKEN:
-        required: true
 
 jobs:
   build:
@@ -34,9 +29,3 @@ jobs:
           
       - name: Maven build
         run: mvn --batch-mode --update-snapshots package
-        
-      - name: Publish snapshot to Sonatype Nexus
-        run: mvn --batch-mode deploy
-        env:
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
