@@ -12,6 +12,15 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      OSSRH_USERNAME:
+        required: ${{ !inputs.DOCKER_PACKAGE }}
+      OSSRH_TOKEN:
+        required: ${{ !inputs.DOCKER_PACKAGE }}
+      GPG_PASSPHRASE:
+        required: ${{ !inputs.DOCKER_PACKAGE }}
+      GPG_PRIVATE_KEY:
+        required: ${{ !inputs.DOCKER_PACKAGE }}
 
 jobs:
   build:
@@ -53,6 +62,11 @@ jobs:
       - name: Publish snapshot to Sonatype Nexus
         if: ${{ !inputs.DOCKER_PACKAGE }}
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -s
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
       - name: Publish image to docker registry
         if: ${{ inputs.DOCKER_PACKAGE }}
         run: ./gradlew dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
