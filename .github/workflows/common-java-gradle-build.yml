@@ -1,4 +1,4 @@
-# This is a basic build workflow for Octopus gradle Java modules published to Sonatype Nexus and docker registry
+# This is a basic build workflow for Octopus gradle Java modules
 name: Gradle Compile & UT
 
 on:
@@ -12,21 +12,16 @@ on:
         required: false
         type: boolean
         default: false
-    secrets:
-      OSSRH_USERNAME:
-        required: true
-      OSSRH_TOKEN:
-        required: true
-      # GPG_PASSPHRASE:
-        # required: true
-      # GPG_PRIVATE_KEY:
-        # required: true
+      build-version:
+        required: false
+        type: string
+        default: '1.0-SNAPSHOT'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
-    # todo: get rid of the next param
+    # todo: get rid of the next parameter
     permissions:
       packages: write
       contents: write
@@ -44,40 +39,18 @@ jobs:
           
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
-        
-      - name: Get latest tag
-        uses: actions-ecosystem/action-get-latest-tag@v1
-        id: tag_version
-        with:
-          initial_version: v2.0.0
           
-      - name: Bump semver
-        uses: actions-ecosystem/action-bump-semver@v1
-        id: bump_semver
-        with:
-          current_version: ${{ steps.tag_version.outputs.tag }}
-          level: patch
-          
-      - run: |
-          echo "BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}"
-          
-      - name: Get version
-        uses: octopusden/octopus-base/.github/actions/get-version@v1.0
-        id: version
-        with:
-          tag-value: ${{ steps.bump_semver.outputs.new_version }}
-          exit-if-empty: true
-          
-      - name: Gradle build
+      - name: Gradle 
+      
         if: ${{ !inputs.docker-image }}
-        run: ./gradlew build -P buildVersion=${{ steps.version.outputs.version }}
+        run: ./gradlew build -P buildVersion=${{ inputs.build-version }}
           
       - name: Gradle build docker image
         if: ${{ inputs.docker-image }}
-        run: ./gradlew dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
+        run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
         
       - name: Publish snapshot to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -Pversion=${{ steps.version.outputs.version }} -s
+        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -Pversion=${{ inputs.build-version }} -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
