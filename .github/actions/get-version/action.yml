@@ -31,5 +31,5 @@ runs:
     - if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
       shell: bash
       run: |
-        echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ inputs.tag-value }}"
+        echo "The version must match the format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ inputs.tag-value }}"
         exit 1
