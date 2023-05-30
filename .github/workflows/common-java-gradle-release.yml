@@ -27,37 +27,43 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
+    # todo: get rid of the next parameter
     permissions:
       packages: write
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Get latest tag
+        id: tag_version
+        uses: oprypin/find-latest-tag@v1
+        with:
+          repository: ${{ github.repository }}
+          regex: '^v([0-9]+)\..*'
+
+      - name: Prepare new version
+        uses: actions-ecosystem/action-bump-semver@v1
+        id: bump_semver
+        with:
+          current_version: ${{ steps.tag_version.outputs.tag }}
+          level: ${{ inputs.increment-version-level }}
+
+      - env:
+          BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}
+
+      - run: |
+          echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}
+
       - name: Build
         uses: octopus-base/common-java-gradle-build@gradle-templates
         with:
           java-version: ${{ inputs.java-version }}
           docker-image: ${{ inputs.docker-image }}
+          build-version: ${{ env.BUILD_VERSION }}
           secrets: inherit
 
-      - run: |
-          echo "MAJOR: ${{ steps.version.outputs.group1 }}"
-          echo "MINOR: ${{ steps.version.outputs.group2 }}"
-          echo "PATCH: ${{ steps.version.outputs.group3 }}"
-      - if: ${{ steps.version.outputs.group1 == ''}}
-        run: echo "BUILD_VERSION=2.0.0" >> $GITHUB_ENV
-      - if: ${{ steps.version.outputs.group2 == ''}}
-        run: echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.0.0" >> $GITHUB_ENV
-      - if: ${{ steps.version.outputs.group3 == ''}}
-        run: echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.0" >> $GITHUB_ENV
-      - if: ${{ steps.version.outputs.group3 != ''}}
-        run: |
-          VERSION_PATCH=${{ steps.version.outputs.group3 }}
-          echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.$(($VERSION_PATCH+1))" >> $GITHUB_ENV
-        env:
-          BUILD_VERSION: ${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.$((${{ steps.version.outputs.group3 }}+1))
-      - run: |
-          echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
-          
       - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }}  -s
         env:
@@ -65,7 +71,7 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-          
+
       - name: Log in to Docker Registry
         if: ${{ inputs.docker-image }}
         uses: docker/login-action@v2
@@ -73,11 +79,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-          
+
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
         run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
-        
+
       - name: Create Release
         # todo: use fixed version instead of master
         uses: marvinpinto/action-automatic-releases@master
