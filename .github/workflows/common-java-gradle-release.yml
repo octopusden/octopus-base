@@ -6,8 +6,8 @@ on:
     inputs:
       java-version:
         required: false
-        type: number
-        default: 8
+        type: string
+        default: '8'
       docker-image:
         description: 'Publishing to docker registry'
         required: false
@@ -15,13 +15,13 @@ on:
         default: false
     secrets:
       OSSRH_USERNAME:
-        required: ${{ !inputs.docker-image }}
+        required: true
       OSSRH_TOKEN:
-        required: ${{ !inputs.docker-image }}
+        required: true
       GPG_PASSPHRASE:
-        required: ${{ !inputs.docker-image }}
+        required: true
       GPG_PRIVATE_KEY:
-        required: ${{ !inputs.docker-image }}
+        required: true
 
 jobs:
   build:
@@ -36,8 +36,9 @@ jobs:
         uses: octopus-base/common-java-gradle-build@gradle-templates
         with:
           java-version: ${{ inputs.java-version }}
-          docker-package: ${{ inputs.docker-package }}
+          docker-image: ${{ inputs.docker-image }}
           secrets: inherit
+
       - run: |
           echo "MAJOR: ${{ steps.version.outputs.group1 }}"
           echo "MINOR: ${{ steps.version.outputs.group2 }}"
@@ -56,24 +57,30 @@ jobs:
           BUILD_VERSION: ${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.$((${{ steps.version.outputs.group3 }}+1))
       - run: |
           echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
+          
       - name: Build with Gradle
         run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -Pversion=${{ env.BUILD_VERSION }} --info
-      - name: Publish
+        
+      - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }}  -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-#          BUILD_VERSION: ${{ steps.version.outputs.version }}
-      - name: Log in to Docker Hub
+          
+      - name: Log in to Docker Registry
+        if: ${{ inputs.docker-image }}
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          
       - name: Push to docker registry
+        if: ${{ inputs.docker-image }}
         run: docker push ghcr.io/octopusden/api-gateway:${{ env.BUILD_VERSION }}
+        
       - name: Create Release
         uses: marvinpinto/action-automatic-releases@master
         with:
