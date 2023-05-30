@@ -49,6 +49,9 @@ jobs:
           BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}
 
       - run: |
+          echo "BUILD_VERSION=${{ steps.bump_semver.outputs.new_version }}" >> $GITHUB_ENV
+
+      - run: |
           echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
 
   build:
