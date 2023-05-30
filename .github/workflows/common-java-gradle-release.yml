@@ -58,9 +58,6 @@ jobs:
       - run: |
           echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
           
-      - name: Build with Gradle
-        run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -Pversion=${{ env.BUILD_VERSION }} --info
-        
       - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }}  -s
         env:
