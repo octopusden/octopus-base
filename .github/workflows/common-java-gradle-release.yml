@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      increment-version-level:
+        description: 'One of: {major, premajor, minor, preminor, patch, prepatch, prerelease}'
+        required: false
+        type: string
+        default: patch
     secrets:
       OSSRH_USERNAME:
         required: true
