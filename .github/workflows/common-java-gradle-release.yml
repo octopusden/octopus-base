@@ -90,4 +90,4 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
-          automatic_release_tag: v${{ steps.bump_semver.outputs.new_version }}
+          automatic_release_tag: ${{ steps.bump_semver.outputs.new_version }}
