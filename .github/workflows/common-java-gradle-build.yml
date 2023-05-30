@@ -26,6 +26,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
+    permissions:
+      packages: write
+      contents: write
 
     steps:
       - name: Checkout
