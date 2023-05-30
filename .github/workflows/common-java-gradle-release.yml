@@ -27,6 +27,8 @@ jobs:
   prepare:
     runs-on: ubuntu-latest
     environment: Prod
+    outputs:
+      build-version: ${{ steps.bump_semver.outputs.new_version }}
 
     steps:
       - name: Checkout
@@ -45,14 +47,9 @@ jobs:
         with:
           current_version: ${{ steps.tag_version.outputs.tag }}
           level: ${{ inputs.increment-version-level }}
-        env:
-          BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}
 
       - run: |
-          echo "BUILD_VERSION=${{ steps.bump_semver.outputs.new_version }}" >> $GITHUB_ENV
-
-      - run: |
-          echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
+          echo "BUILD_VERSION=${{ steps.bump_semver.outputs.new_version }}"
 
   build:
     needs: prepare
@@ -60,7 +57,7 @@ jobs:
     with:
       java-version: ${{ inputs.java-version }}
       docker-image: ${{ inputs.docker-image }}
-      build-version: ${{ env.BUILD_VERSION }}
+      build-version: ${{ needs.prepare.outputs.build-version }}
 
   publish:
     needs: [prepare, build]
@@ -86,7 +83,7 @@ jobs:
 
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
-        run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
+        run: docker push ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.build-version }}
 
   release:
     needs: [prepare, build, publish]
@@ -100,4 +97,4 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
-          automatic_release_tag: v${{ env.BUILD_VERSION }}
+          automatic_release_tag: v${{ needs.prepare.outputs.build-version }}
