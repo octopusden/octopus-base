@@ -5,8 +5,8 @@ on:
   workflow_call:
     inputs:
       java-version:
-        required: false
         type: string
+        required: false
         default: '8'
     secrets:
       OSSRH_USERNAME:
@@ -20,8 +20,9 @@ jobs:
     environment: Prod
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Maven Central Repository
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Set up Java
         uses: actions/setup-java@v3
         with:
           java-version: ${{ inputs.java-version }}
@@ -31,7 +32,7 @@ jobs:
           server-password: MAVEN_PASSWORD
       - name: Build with Maven
         run: mvn --batch-mode --update-snapshots package
-      - name: Publish package
+      - name: Publish snapshot to Sonatype Nexus
         run: mvn --batch-mode deploy
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
