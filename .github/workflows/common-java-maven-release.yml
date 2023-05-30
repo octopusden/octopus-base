@@ -8,6 +8,10 @@ on:
         required: false
         type: string
         default: '8'
+      increment-version-level:
+        required: false
+        type: string
+        default: patch
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -39,7 +43,7 @@ jobs:
         id: bump_semver
         with:
           current_version: ${{ steps.tag_version.outputs.tag }}
-          level: patch
+          level: ${{ inputs.increment-version-level }}
 
       - env:
           BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}
