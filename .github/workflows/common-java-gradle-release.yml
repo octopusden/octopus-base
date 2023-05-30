@@ -62,7 +62,6 @@ jobs:
           java-version: ${{ inputs.java-version }}
           docker-image: ${{ inputs.docker-image }}
           build-version: ${{ env.BUILD_VERSION }}
-          secrets: inherit
 
       - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }}  -s
