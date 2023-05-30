@@ -21,10 +21,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
-    # todo: get rid of the next parameter
-    permissions:
-      packages: write
-      contents: write
 
     steps:
       - name: Checkout
