@@ -79,14 +79,6 @@ jobs:
         if: ${{ inputs.docker-image }}
         run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -Pversion=${{ env.BUILD_VERSION }} --info -s
 
-      - name: Publish to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} --info -s
-        env:
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-
       - name: Log in to Docker Registry
         if: ${{ inputs.docker-image }}
         uses: docker/login-action@v2
@@ -98,6 +90,14 @@ jobs:
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
         run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
+
+      - name: Publish to Sonatype Nexus
+        run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} --info -s
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Create release
         # todo: use fixed version instead of master
