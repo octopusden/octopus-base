@@ -77,7 +77,7 @@ jobs:
         run: ./gradlew dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
         
       - name: Publish snapshot to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -s
+        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
