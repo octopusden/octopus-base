@@ -9,10 +9,10 @@ on:
         type: string
         default: '8'
       docker-image:
-        description: 'Publishing to docker registry'
+        description: 'Docker image name'
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: ''
       increment-version-level:
         description: 'One of: {major, premajor, minor, preminor, patch, prepatch, prerelease}'
         required: false
@@ -72,7 +72,7 @@ jobs:
         uses: gradle/wrapper-validation-action@v1
 
       - name: Gradle build
-        if: ${{ !inputs.docker-image }}
+        if: ${{ inputs.docker-image == '' }}
         run: ./gradlew build -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       - name: Gradle build docker image
@@ -89,7 +89,7 @@ jobs:
 
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
-        run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
+        run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
       - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} --info -s
