@@ -44,15 +44,22 @@ jobs:
           repository: ${{ github.repository }}
           regex: '^v([0-9]+)\..*'
 
-      - name: Prepare new version
+      - name: Prepare new tag version
         uses: actions-ecosystem/action-bump-semver@v1
-        id: bump_semver
+        id: new-tag-version
         with:
           current_version: ${{ steps.tag_version.outputs.tag }}
           level: ${{ inputs.increment-version-level }}
 
+      - name: Get new version
+        uses: octopusden/octopus-base/.github/actions/get-version@v1.0
+        id: new-version
+        with:
+          tag-value: ${{ steps.new-tag-version.outputs.new_version }}
+          exit-if-empty: true
+
       - run: |
-          echo "BUILD_VERSION = ${{ steps.bump_semver.outputs.new_version }}"
+          echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
 
       - name: Set up Java
         uses: actions/setup-java@v3
@@ -65,7 +72,7 @@ jobs:
         uses: gradle/wrapper-validation-action@v1
 
       - name: Build and publish to Sonatype Nexus
-        run: ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ steps.bump_semver.outputs.new_version }} -s
+        run: ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
@@ -82,7 +89,7 @@ jobs:
 
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
-        run: docker push ghcr.io/${{ github.repository }}:${{ steps.bump_semver.outputs.new_version }}
+        run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
     
       - name: Create release
         # todo: use fixed version instead of master
@@ -90,4 +97,4 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
-          automatic_release_tag: ${{ steps.bump_semver.outputs.new_version }}
+          automatic_release_tag: v${{ env.BUILD_VERSION }}
