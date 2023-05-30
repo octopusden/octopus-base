@@ -72,7 +72,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }} # gpg private key to import
           gpg-passphrase: GPG_PASSPHRASE # env variable for gpg signing in deploy
 
-      - name: Publish package
+      - name: Publish to Sonatype Nexus
         run: mvn --batch-mode deploy -P gpg
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
