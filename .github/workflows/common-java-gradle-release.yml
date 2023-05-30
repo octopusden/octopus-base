@@ -79,9 +79,10 @@ jobs:
           
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
-        run: docker push ghcr.io/octopusden/api-gateway:${{ env.BUILD_VERSION }}
+        run: docker push ghcr.io/octopusden/$GITHUB_REPOSITORY:${{ env.BUILD_VERSION }}
         
       - name: Create Release
+        # todo: use fixed version instead of master
         uses: marvinpinto/action-automatic-releases@master
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
