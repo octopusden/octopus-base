@@ -90,7 +90,7 @@ jobs:
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
         run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
-    
+
       - name: Create release
         # todo: use fixed version instead of master
         uses: marvinpinto/action-automatic-releases@master
