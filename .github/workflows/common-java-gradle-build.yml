@@ -29,30 +29,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-        
+
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
           java-version: ${{ inputs.java-version }}
           distribution: 'adopt'
           cache: 'gradle'
-          
+
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
-          
+
       - name: Gradle 
-      
         if: ${{ !inputs.docker-image }}
         run: ./gradlew build -P buildVersion=${{ inputs.build-version }}
-          
+
       - name: Gradle build docker image
         if: ${{ inputs.docker-image }}
         run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
-        
-      - name: Publish snapshot to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -Pversion=${{ inputs.build-version }} -s
-        env:
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-          # ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          # ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
