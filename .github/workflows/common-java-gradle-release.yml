@@ -49,8 +49,7 @@ jobs:
         with:
           current_version: ${{ steps.tag_version.outputs.tag }}
           level: ${{ inputs.increment-version-level }}
-
-      - env:
+        env:
           BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}
 
       - run: |
