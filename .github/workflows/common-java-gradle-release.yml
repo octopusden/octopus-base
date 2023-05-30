@@ -56,7 +56,7 @@ jobs:
       - run: |
           echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}
 
-      - name: Build
+      - name: Gradle build
         uses: octopus-base/common-java-gradle-build@gradle-templates
         with:
           java-version: ${{ inputs.java-version }}
