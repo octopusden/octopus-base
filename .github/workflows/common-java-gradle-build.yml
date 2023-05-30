@@ -5,22 +5,22 @@ on:
   workflow_call:
     inputs:
       java-version:
+        required: false
         type: string
-        required: false
         default: '8'
-      docker-package:
-        type: boolean
+      docker-image:
         required: false
+        type: boolean
         default: false
     secrets:
       OSSRH_USERNAME:
-        required: ${{ !inputs.DOCKER_PACKAGE }}
+        required: ${{ !inputs.docker-image }}
       OSSRH_TOKEN:
-        required: ${{ !inputs.DOCKER_PACKAGE }}
+        required: ${{ !inputs.docker-image }}
       GPG_PASSPHRASE:
-        required: ${{ !inputs.DOCKER_PACKAGE }}
+        required: ${{ !inputs.docker-image }}
       GPG_PRIVATE_KEY:
-        required: ${{ !inputs.DOCKER_PACKAGE }}
+        required: ${{ !inputs.docker-image }}
 
 jobs:
   build:
