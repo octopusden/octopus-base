@@ -29,11 +29,9 @@ on:
         required: true
 
 jobs:
-  prepare:
+  prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
-    outputs:
-      build-version: ${{ steps.bump_semver.outputs.new_version }}
 
     steps:
       - name: Checkout
@@ -54,24 +52,20 @@ jobs:
           level: ${{ inputs.increment-version-level }}
 
       - run: |
-          echo "BUILD_VERSION=${{ steps.bump_semver.outputs.new_version }}"
+          echo "BUILD_VERSION = ${{ steps.bump_semver.outputs.new_version }}"
 
-  build:
-    needs: prepare
-    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-build.yml@gradle-templates
-    with:
-      java-version: ${{ inputs.java-version }}
-      docker-image: ${{ inputs.docker-image }}
-      build-version: ${{ needs.prepare.outputs.build-version }}
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'adopt'
+          cache: 'gradle'
 
-  publish:
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    environment: Prod
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@v1
 
-    steps:
-      - name: Publish to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} -s
+      - name: Build and publish to Sonatype Nexus
+        run: ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ steps.bump_semver.outputs.new_version }} -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
@@ -88,18 +82,12 @@ jobs:
 
       - name: Push to docker registry
         if: ${{ inputs.docker-image }}
-        run: docker push ghcr.io/${{ github.repository }}:${{ needs.prepare.outputs.build-version }}
-
-  release:
-    needs: [prepare, build, publish]
-    runs-on: ubuntu-latest
-    environment: Prod
-
-    steps:    
-      - name: Create Release
+        run: docker push ghcr.io/${{ github.repository }}:${{ steps.bump_semver.outputs.new_version }}
+    
+      - name: Create release
         # todo: use fixed version instead of master
         uses: marvinpinto/action-automatic-releases@master
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
-          automatic_release_tag: v${{ needs.prepare.outputs.build-version }}
+          automatic_release_tag: v${{ steps.bump_semver.outputs.new_version }}
