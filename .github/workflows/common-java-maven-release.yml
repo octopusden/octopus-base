@@ -21,7 +21,8 @@ jobs:
       BUILD_VERSION: ${{ github.event.inputs.BUILD_VERSION }}
 
     steps:
-      - uses: actions/checkout@v1
+      - name: Checkout
+        uses: actions/checkout@v1
 
       - name: Get the tag version
         id: tag_version
@@ -29,14 +30,14 @@ jobs:
         with:
           repository: ${{ github.repository }}
           regex: '^v([0-9]+)\..*'
-      - uses: actions-ecosystem/action-regex-match@v2
+      - name: Prepare a version from a tag
+        uses: actions-ecosystem/action-regex-match@v2
         id: version
-
-        name: Prepare a version from a tag
         with:
           text: ${{ steps.tag_version.outputs.tag }}
           regex: '^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?'
           flags: gm
+          
       - run: |
           echo "MAJOR: ${{ steps.version.outputs.group1 }}"
           echo "MINOR: ${{ steps.version.outputs.group2 }}"
