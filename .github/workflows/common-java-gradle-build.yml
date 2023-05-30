@@ -70,14 +70,14 @@ jobs:
           
       - name: Gradle build
         if: ${{ !inputs.docker-image }}
-        run: ./gradlew build -P buildVersion=${{ env.BUILD_VERSION }}
+        run: ./gradlew build -P buildVersion=${{ steps.version.outputs.version }}
           
       - name: Gradle build docker image
         if: ${{ inputs.docker-image }}
         run: ./gradlew dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ steps.version.outputs.version }} -Pversion=${{ steps.version.outputs.version }}
         
       - name: Publish snapshot to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} -s
+        run: ./gradlew publishToSonatype closeSonatypeStagingRepository -Pversion=${{ steps.version.outputs.version }} -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
