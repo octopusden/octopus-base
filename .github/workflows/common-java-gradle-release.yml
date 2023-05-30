@@ -24,13 +24,9 @@ on:
         required: true
 
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
     environment: Prod
-    # todo: get rid of the next parameter
-    permissions:
-      packages: write
-      contents: write
 
     steps:
       - name: Checkout
@@ -55,13 +51,20 @@ jobs:
       - run: |
           echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}
 
-      - name: Gradle build
-        uses: octopusden/octopus-base/.github/workflows/common-java-gradle-build@gradle-templates
-        with:
-          java-version: ${{ inputs.java-version }}
-          docker-image: ${{ inputs.docker-image }}
-          build-version: ${{ env.BUILD_VERSION }}
+  build:
+    needs: prepare
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-build.yml@gradle-templates
+    with:
+      java-version: ${{ inputs.java-version }}
+      docker-image: ${{ inputs.docker-image }}
+      build-version: ${{ env.BUILD_VERSION }}
 
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    environment: Prod
+
+    steps:
       - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} -s
         env:
@@ -82,6 +85,12 @@ jobs:
         if: ${{ inputs.docker-image }}
         run: docker push ghcr.io/${{ github.repository }}:${{ env.BUILD_VERSION }}
 
+  release:
+    needs: [prepare, build, publish]
+    runs-on: ubuntu-latest
+    environment: Prod
+
+    steps:    
       - name: Create Release
         # todo: use fixed version instead of master
         uses: marvinpinto/action-automatic-releases@master
