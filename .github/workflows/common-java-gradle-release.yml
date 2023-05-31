@@ -79,6 +79,8 @@ jobs:
 
       - name: Skip tests
         if: ${{ inputs.flow-type == 'hybrid' }}
+        run: |
+          echo "Flow type: ${{ inputs.flow-type }}"
         env:
           SKIP_TESTS: '-x test'
 
