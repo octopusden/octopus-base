@@ -18,6 +18,9 @@ on:
         required: false
         type: string
         default: patch
+      flow-type:
+        required: true
+        type: string # one of { public, hybrid }
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -32,6 +35,8 @@ jobs:
   prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
+    env:
+      SKIP_TESTS: '' # do not skip for public flow
 
     steps:
       - name: Checkout
@@ -72,13 +77,18 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
 
+      - name: Skip tests
+        if: ${{ inputs.flow-type == 'hybrid' }}
+        env:
+          SKIP_TESTS: '-x test'
+
       - name: Gradle build
         if: ${{ inputs.docker-image == '' }}
-        run: ./gradlew build -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       - name: Gradle build docker image
         if: ${{ inputs.docker-image }}
-        run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       - name: Log in to Docker Registry
         if: ${{ inputs.docker-image }}
