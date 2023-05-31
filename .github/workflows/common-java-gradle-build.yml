@@ -4,6 +4,9 @@ name: Gradle Compile & UT
 on:
   workflow_call:
     inputs:
+      flow-type:
+        required: true
+        type: string # one of { public, hybrid }
       java-version:
         required: false
         type: string
@@ -12,16 +15,13 @@ on:
         required: false
         type: string
         default: ''
-      flow-type:
-        required: true
-        type: string # one of { public, hybrid }
 
 jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      SKIP_TESTS: '' # do not tests skip for public flow
+      SKIP_TESTS: '' # run tests for public flow only
       BUILD_VERSION: 1.0-SNAPSHOT # dummy version which is not really used
 
     steps:
