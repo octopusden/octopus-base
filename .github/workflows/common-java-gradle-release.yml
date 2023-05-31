@@ -58,7 +58,8 @@ jobs:
           tag-value: ${{ steps.new-tag-version.outputs.new_version }}
           exit-if-empty: true
 
-      - run: |
+      - name: Save new version to env
+        run: |
           echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
 
       - name: Set up Java
