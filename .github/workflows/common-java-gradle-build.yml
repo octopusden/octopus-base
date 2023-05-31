@@ -41,7 +41,7 @@ jobs:
         if: ${{ inputs.flow-type == 'hybrid' }}
         env:
           SKIP_TESTS: '-x test'
-      
+
       - name: Gradle build
         if: ${{ inputs.docker-image == '' }}
         run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
