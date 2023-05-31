@@ -49,7 +49,7 @@ jobs:
           BUILD_VERSION: ${{ steps.bump_semver.outputs.new_version }}
 
       - run: |
-          echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}
+          echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
 
       - name: Set new version for maven
         # todo: use release version instead of master
