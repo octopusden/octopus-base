@@ -4,6 +4,9 @@ name: Gradle Release
 on:
   workflow_call:
     inputs:
+      flow-type:
+        required: true
+        type: string # one of { public, hybrid }
       java-version:
         required: false
         type: string
@@ -18,9 +21,6 @@ on:
         required: false
         type: string
         default: patch
-      flow-type:
-        required: true
-        type: string # one of { public, hybrid }
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -36,9 +36,27 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      SKIP_TESTS: '' # do not skip for public flow
+      SKIP_TESTS: '' # run tests for public flow only
 
     steps:
+      - name: Public flow
+        if: inputs.flow-type == 'public'
+        run: |
+          echo "Public flow, run with tests"
+
+      - name: Hybrid flow
+        if: inputs.flow-type == 'hybrid'
+        run: |
+          echo "Hybrid flow, skip tests"
+        env:
+          SKIP_TESTS: '-x test'
+
+      - name: Unknown flow
+        if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        run: |
+          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v3
 
@@ -77,23 +95,16 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
 
-      - name: Skip tests
-        if: ${{ inputs.flow-type == 'hybrid' }}
-        run: |
-          echo "Flow type: ${{ inputs.flow-type }}"
-        env:
-          SKIP_TESTS: '-x test'
-
       - name: Gradle build
-        if: ${{ inputs.docker-image == '' }}
+        if: inputs.docker-image == ''
         run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       - name: Gradle build docker image
-        if: ${{ inputs.docker-image }}
+        if: inputs.docker-image
         run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       - name: Log in to Docker Registry
-        if: ${{ inputs.docker-image }}
+        if: inputs.docker-image
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
@@ -101,7 +112,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push to docker registry
-        if: ${{ inputs.docker-image }}
+        if: inputs.docker-image
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
       - name: Publish to Sonatype Nexus
