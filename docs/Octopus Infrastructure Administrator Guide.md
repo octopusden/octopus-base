@@ -6,6 +6,8 @@
 
 ## Octopus Root project
 
+**Name:** Octopus
+
 ### Parameters
 
 Add parameters:
@@ -30,6 +32,22 @@ Upload Meta-Runners:
 
 ## Octopus Module project
 
+### TeamCity project name
+
+For Octopus modules in TeamCity, use the following naming convention:
+
+`[h/p] module-name-without-octopus-prefix`
+
+where:
+- h - hybrid flow module
+- p - public flow module
+
+Examples:
+- [h] employee-service
+- [h] vcs-facade
+- [p] api-gateway
+- [p] config-server
+ 
 ### VCS Root
 
 * Auth method: Uploaded Key
