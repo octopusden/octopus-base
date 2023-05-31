@@ -8,9 +8,8 @@ on:
         required: true
         type: string # one of { public, hybrid }
       java-version:
-        required: false
+        required: true
         type: string
-        default: '8'
       docker-image:
         description: 'Docker image name'
         required: false
