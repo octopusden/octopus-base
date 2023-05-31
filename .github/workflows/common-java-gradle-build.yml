@@ -22,6 +22,7 @@ jobs:
     environment: Prod
     env:
       SKIP_TESTS: '' # do not tests skip for public flow
+      BUILD_VERSION: 1.0-SNAPSHOT # dummy version which is not really used
 
     steps:
       - name: Public flow
@@ -57,8 +58,8 @@ jobs:
 
       - name: Gradle build
         if: inputs.docker-image == ''
-        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
+        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }}
 
       - name: Gradle build docker image
         if: inputs.docker-image
-        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
+        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }}
