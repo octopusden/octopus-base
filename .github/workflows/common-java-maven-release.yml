@@ -5,9 +5,8 @@ on:
   workflow_call:
     inputs:
       java-version:
-        required: false
+        required: true
         type: string
-        default: '8'
       increment-version-level:
         required: false
         type: string
