@@ -12,15 +12,16 @@ on:
         required: false
         type: string
         default: ''
-      build-version:
-        required: false
-        type: string
-        default: '1.0-SNAPSHOT'
+      flow-type:
+        required: true
+        type: string # one of { public, hybrid }
 
 jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
+    env:
+      SKIP_TESTS: '' # do not skip for public flow
 
     steps:
       - name: Checkout
@@ -36,10 +37,15 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
 
+      - name: Skip tests
+        if: ${{ inputs.flow-type == 'hybrid' }}
+        env:
+          SKIP_TESTS: '-x test'
+      
       - name: Gradle build
         if: ${{ inputs.docker-image == '' }}
-        run: ./gradlew build -P buildVersion=${{ inputs.build-version }}
+        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
 
       - name: Gradle build docker image
         if: ${{ inputs.docker-image }}
-        run: ./gradlew build dockerBuildImage -x test -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
+        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
