@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      SKIP_TESTS: '' # do not skip for public flow
+      SKIP_TESTS: '' # do not tests skip for public flow
 
     steps:
       - name: Checkout
@@ -37,17 +37,28 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
 
-      - name: Skip tests
-        if: ${{ inputs.flow-type == 'hybrid' }}
+      - name: Public flow
+        if: inputs.flow-type == 'public'
         run: |
-          echo "Flow type: ${{ inputs.flow-type }}"
+          echo "Public flow, run with tests"
+
+      - name: Hybrid flow
+        if: inputs.flow-type == 'hybrid'
+        run: |
+          echo "Hybrid flow, skip tests"
         env:
           SKIP_TESTS: '-x test'
 
+      - name: Unknown flow
+        if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        run: |
+          echo "Unknown flow specified, should be one of {public, hybrid} " ${{ inputs.flow-type }}
+          exit 1
+
       - name: Gradle build
-        if: ${{ inputs.docker-image == '' }}
+        if: inputs.docker-image == ''
         run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
 
       - name: Gradle build docker image
-        if: ${{ inputs.docker-image }}
+        if: inputs.docker-image
         run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ inputs.build-version }} -Pversion=${{ inputs.build-version }}
