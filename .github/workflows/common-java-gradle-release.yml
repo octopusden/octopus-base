@@ -1,0 +1,131 @@
+# This is a basic release workflow for Octopus gradle Java modules with publishing to Sonatype Nexus and/or image registry
+name: Gradle Release
+
+on:
+  workflow_call:
+    inputs:
+      flow-type:
+        required: true
+        type: string # one of { public, hybrid }
+      java-version:
+        required: true
+        type: string
+      docker-image:
+        description: 'Docker image name'
+        required: false
+        type: string
+        default: ''
+      increment-version-level:
+        description: 'One of: {major, premajor, minor, preminor, patch, prepatch, prerelease}'
+        required: false
+        type: string
+        default: patch
+    secrets:
+      OSSRH_USERNAME:
+        required: true
+      OSSRH_TOKEN:
+        required: true
+      GPG_PASSPHRASE:
+        required: true
+      GPG_PRIVATE_KEY:
+        required: true
+
+jobs:
+  prepare-build-publish-release:
+    runs-on: ubuntu-latest
+    environment: Prod
+    env:
+      SKIP_TESTS: '' # run tests for public flow only
+
+    steps:
+      - name: Public flow
+        if: inputs.flow-type == 'public'
+        run: |
+          echo "Public flow, run with tests"
+
+      - name: Hybrid flow
+        if: inputs.flow-type == 'hybrid'
+        run: |
+          echo "Hybrid flow, skip tests"
+        env:
+          SKIP_TESTS: '-x test'
+
+      - name: Unknown flow
+        if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        run: |
+          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Get latest tag
+        id: tag_version
+        uses: oprypin/find-latest-tag@v1
+        with:
+          repository: ${{ github.repository }}
+          regex: '^v([0-9]+)\..*'
+
+      - name: Prepare new tag version
+        uses: actions-ecosystem/action-bump-semver@v1
+        id: new-tag-version
+        with:
+          current_version: ${{ steps.tag_version.outputs.tag }}
+          level: ${{ inputs.increment-version-level }}
+
+      - name: Get new version
+        uses: octopusden/octopus-base/.github/actions/get-version@v1.0
+        id: new-version
+        with:
+          tag-value: ${{ steps.new-tag-version.outputs.new_version }}
+          exit-if-empty: true
+
+      - name: Save new version to env
+        run: |
+          echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'adopt'
+          cache: 'gradle'
+
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@v1
+
+      - name: Gradle build
+        if: inputs.docker-image == ''
+        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+
+      - name: Gradle build docker image
+        if: inputs.docker-image
+        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+
+      - name: Log in to Docker Registry
+        if: inputs.docker-image
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to docker registry
+        if: inputs.docker-image
+        run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
+
+      - name: Publish to Sonatype Nexus
+        run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} --info -s
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Create release
+        # todo: use fixed version instead of master
+        uses: marvinpinto/action-automatic-releases@master
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: false
+          automatic_release_tag: v${{ env.BUILD_VERSION }}

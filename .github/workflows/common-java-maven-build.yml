@@ -1,18 +1,12 @@
-# This is a basic build workflow for Octopus Java modules published to Sonatype Central Repository
-name: Maven Compile&UT
+# This is a basic build workflow for Octopus maven Java modules
+name: Maven Compile & UT
 
 on:
   workflow_call:
     inputs:
       java-version:
-        required: false
+        required: true
         type: string
-        default: '8'
-    secrets:
-      OSSRH_USERNAME:
-        required: true
-      OSSRH_TOKEN:
-        required: true
 
 jobs:
   build:
@@ -20,8 +14,10 @@ jobs:
     environment: Prod
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Maven Central Repository
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Set up Java
         uses: actions/setup-java@v3
         with:
           java-version: ${{ inputs.java-version }}
@@ -29,10 +25,6 @@ jobs:
           server-id: ossrh
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
-      - name: Build with Maven
+          
+      - name: Maven build
         run: mvn --batch-mode --update-snapshots package
-      - name: Publish package
-        run: mvn --batch-mode deploy
-        env:
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}

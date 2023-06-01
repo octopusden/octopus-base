@@ -3,6 +3,14 @@ name: Maven Release
 
 on:
   workflow_call:
+    inputs:
+      java-version:
+        required: true
+        type: string
+      increment-version-level:
+        required: false
+        type: string
+        default: patch
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -17,52 +25,46 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
-    env:
-      BUILD_VERSION: ${{ github.event.inputs.BUILD_VERSION }}
 
     steps:
-      - uses: actions/checkout@v1
+      - name: Checkout
+        uses: actions/checkout@v1
 
-      - name: Get the tag version
+      - name: Get latest tag
         id: tag_version
         uses: oprypin/find-latest-tag@v1
         with:
           repository: ${{ github.repository }}
           regex: '^v([0-9]+)\..*'
-      - uses: actions-ecosystem/action-regex-match@v2
-        id: version
 
-        name: Prepare a version from a tag
+      - name: Prepare new tag version
+        uses: actions-ecosystem/action-bump-semver@v1
+        id: new-tag-version
         with:
-          text: ${{ steps.tag_version.outputs.tag }}
-          regex: '^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?'
-          flags: gm
-      - run: |
-          echo "MAJOR: ${{ steps.version.outputs.group1 }}"
-          echo "MINOR: ${{ steps.version.outputs.group2 }}"
-          echo "PATCH: ${{ steps.version.outputs.group3 }}"
-      - if: ${{ steps.version.outputs.group1 == ''}}
-        run: echo "BUILD_VERSION=2.0.0" >> $GITHUB_ENV
-      - if: ${{ steps.version.outputs.group2 == ''}}
-        run: echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.0.0" >> $GITHUB_ENV
-      - if: ${{ steps.version.outputs.group3 == ''}}
-        run: echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.0" >> $GITHUB_ENV
-      - if: ${{ steps.version.outputs.group3 != ''}}
-        run: |
-          VERSION_PATCH=${{ steps.version.outputs.group3 }}
-          echo "BUILD_VERSION=${{ steps.version.outputs.group1 }}.${{ steps.version.outputs.group2 }}.$(($VERSION_PATCH+1))" >> $GITHUB_ENV
-      - run: |
-          echo "BUILD_VERSION: ${{ env.BUILD_VERSION }}"
+          current_version: ${{ steps.tag_version.outputs.tag }}
+          level: ${{ inputs.increment-version-level }}
 
-      - name: Set Version
+      - name: Get new version
+        uses: octopusden/octopus-base/.github/actions/get-version@v1.0
+        id: new-version
+        with:
+          tag-value: ${{ steps.new-tag-version.outputs.new_version }}
+          exit-if-empty: true
+
+      - name: Save new version to env
+        run: |
+          echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
+
+      - name: Set new version for maven
+        # todo: use release version instead of master
         uses: qcastel/github-actions-maven-cmd@master
         with:
-          maven-args: "org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{env.BUILD_VERSION}}"
+          maven-args: "org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{ env.BUILD_VERSION }}"
 
-      - name: Set up Maven Central Repository
+      - name: Set up maven Central Repository
         uses: actions/setup-java@v3
         with:
-          java-version: '8'
+          java-version: ${{ inputs.java-version }}
           distribution: 'adopt'
           server-id: ossrh
           server-username: MAVEN_USERNAME
@@ -70,7 +72,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }} # gpg private key to import
           gpg-passphrase: GPG_PASSPHRASE # env variable for gpg signing in deploy
 
-      - name: Publish package
+      - name: Publish to Sonatype Nexus
         run: mvn --batch-mode deploy -P gpg
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
@@ -78,10 +80,11 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Create Release
+        # todo: use release version instead of master
         uses: "marvinpinto/action-automatic-releases@master"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           prerelease: false
-          automatic_release_tag: "v${{env.BUILD_VERSION}}"
+          automatic_release_tag: "v${{ env.BUILD_VERSION }}"
           files: |
             pom.xml
