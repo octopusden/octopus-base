@@ -1,10 +1,12 @@
 name: Get a version from the tag
+
 inputs:
   tag-value:
     required: true
   exit-if-empty:
     type: boolean
     default: false
+
 outputs:
   group1:
     description: Major version
@@ -18,18 +20,20 @@ outputs:
   version:
     description: Build version
     value: ${{ format('{0}.{1}.{2}', steps.version.outputs.group1, steps.version.outputs.group2, steps.version.outputs.group3) }}
+
 runs:
   using: "composite"
   steps:
-    - uses: actions-ecosystem/action-regex-match@v2
+    - name: Prepare a version from a tag
+      uses: actions-ecosystem/action-regex-match@v2
       id: version
-      name: Prepare a version from a tag
       with:
         text: ${{ inputs.tag-value }}
         regex: '^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?'
         flags: gm
-    - if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
+    - name: Print message if version is not found
+      if: ${{ inputs.exit-if-empty == true && steps.version.outputs.group1 == '' }}
       shell: bash
       run: |
-        echo "Version must to match format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but has value ${{ inputs.tag-value }}"
+        echo "The version must match the format 'v([0-9]+\.[0-9]+\.[0-9]+)$' but it has value ${{ inputs.tag-value }}"
         exit 1
