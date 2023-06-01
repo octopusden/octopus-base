@@ -73,7 +73,10 @@ jobs:
       - name: Hybrid flow
         if: inputs.flow-type == 'hybrid'
         run: |
-          echo "Hybrid flow, skip tests"
+          echo "Hybrid flow:"
+          echo "- Skipping tests"
+          echo "- Commit hash: ${{ inputs.commit-hash }}"
+          echo "- Version: ${{ inputs.build-version }}"
           # set hybrid flow variables
           echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
           echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
