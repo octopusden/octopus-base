@@ -33,8 +33,7 @@ jobs:
         if: inputs.flow-type == 'hybrid'
         run: |
           echo "Hybrid flow, skip tests"
-        env:
-          SKIP_TESTS: '-x test'
+          echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
 
       - name: Unknown flow
         if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
