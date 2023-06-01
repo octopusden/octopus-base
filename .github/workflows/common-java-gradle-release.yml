@@ -55,12 +55,12 @@ jobs:
           echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
           exit 1
 
-      - name: Check input commit-hash
+      - name: Fail if commit-hash is not set for hybrid flow
         if: inputs.flow-type == 'hybrid' && !inputs.commit-hash
         run: |
           echo "commit-hash input parameter must be set for hybrid flow
 
-      - name: Check input build-version
+      - name: Fail if build-version is not set for hybrid flow
         if: inputs.flow-type == 'hybrid' && !inputs.build-version
         run: |
           echo "build-version input parameter must be set for hybrid flow
