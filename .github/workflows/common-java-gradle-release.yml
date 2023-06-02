@@ -20,6 +20,16 @@ on:
         required: false
         type: string
         default: patch
+      commit-hash:
+        description: 'Hash of the commit to checkout (for hybrid flow)'
+        required: false
+        type: string
+        default: ''
+      build-version:
+        description: 'Version number to release (for hybrid flow)'
+        required: false
+        type: string
+        default: ''
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -36,8 +46,26 @@ jobs:
     environment: Prod
     env:
       SKIP_TESTS: '' # run tests for public flow only
+      BUILD_VERSION: ''
 
     steps:
+      # check input parameters
+      - name: Unknown flow
+        if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        run: |
+          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          exit 1
+
+      - name: Fail if commit-hash is not set for hybrid flow
+        if: inputs.flow-type == 'hybrid' && !inputs.commit-hash
+        run: |
+          echo "commit-hash input parameter must be set for hybrid flow
+
+      - name: Fail if build-version is not set for hybrid flow
+        if: inputs.flow-type == 'hybrid' && !inputs.build-version
+        run: |
+          echo "build-version input parameter must be set for hybrid flow
+
       - name: Public flow
         if: inputs.flow-type == 'public'
         run: |
@@ -46,19 +74,28 @@ jobs:
       - name: Hybrid flow
         if: inputs.flow-type == 'hybrid'
         run: |
-          echo "Hybrid flow, skip tests"
+          echo "Hybrid flow:"
+          echo "- Skipping tests"
+          echo "- Commit hash: ${{ inputs.commit-hash }}"
+          echo "- Version: ${{ inputs.build-version }}"
+          # set hybrid flow variables
           echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
+          echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
 
-      - name: Unknown flow
-        if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
-        run: |
-          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
-          exit 1
-
-      - name: Checkout
+      # checkout
+      - name: Checkout latest
+        if: inputs.flow-type == 'public'
         uses: actions/checkout@v3
 
+      - name: Checkout from commit hash
+        if: inputs.flow-type == 'hybrid' && inputs.commit-hash
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.commit-hash }}
+
+      # determine release version (for public flow)
       - name: Get latest tag
+        if: inputs.flow-type == 'public'
         id: tag_version
         uses: oprypin/find-latest-tag@v1
         with:
@@ -66,6 +103,7 @@ jobs:
           regex: '^v([0-9]+)\..*'
 
       - name: Prepare new tag version
+        if: inputs.flow-type == 'public'
         uses: actions-ecosystem/action-bump-semver@v1
         id: new-tag-version
         with:
@@ -73,6 +111,7 @@ jobs:
           level: ${{ inputs.increment-version-level }}
 
       - name: Get new version
+        if: inputs.flow-type == 'public'
         uses: octopusden/octopus-base/.github/actions/get-version@v1.0
         id: new-version
         with:
@@ -80,9 +119,11 @@ jobs:
           exit-if-empty: true
 
       - name: Save new version to env
+        if: inputs.flow-type == 'public'
         run: |
           echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
 
+      # setup env
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
@@ -93,6 +134,7 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@v1
 
+      # gradle build
       - name: Gradle build
         if: inputs.docker-image == ''
         run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
@@ -101,6 +143,7 @@ jobs:
         if: inputs.docker-image
         run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Ppublishing.docker.registry=ghcr.io/octopusden -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
+      # push to docker
       - name: Log in to Docker Registry
         if: inputs.docker-image
         uses: docker/login-action@v2
@@ -113,6 +156,7 @@ jobs:
         if: inputs.docker-image
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
+      # publish to nexus
       - name: Publish to Sonatype Nexus
         run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
@@ -121,6 +165,7 @@ jobs:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
 
+      # github release
       - name: Create release
         # todo: use fixed version instead of master
         uses: marvinpinto/action-automatic-releases@master
