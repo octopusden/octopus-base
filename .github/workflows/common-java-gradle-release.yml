@@ -46,6 +46,7 @@ jobs:
     environment: Prod
     env:
       SKIP_TESTS: '' # run tests for public flow only
+      BUILD_VERSION: ''
 
     steps:
       # check input parameters

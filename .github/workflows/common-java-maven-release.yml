@@ -26,6 +26,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
+    env:
+      BUILD_VERSION: ''
 
     steps:
       - name: Checkout
