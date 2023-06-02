@@ -8,6 +8,7 @@ on:
         required: true
         type: string
       increment-version-level:
+        description: 'One of: {major, premajor, minor, preminor, patch, prepatch, prerelease}'
         required: false
         type: string
         default: patch
@@ -25,6 +26,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: Prod
+    env:
+      BUILD_VERSION: ''
 
     steps:
       - name: Checkout
