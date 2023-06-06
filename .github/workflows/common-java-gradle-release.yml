@@ -158,12 +158,13 @@ jobs:
 
       # publish to nexus
       - name: Publish to Sonatype Nexus
-        run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew -Pnexus=true publishToSonatype closeAndReleaseSonatypeStagingRepository --info -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+          BUILD_VERSION: ${{ env.BUILD_VERSION }}
 
       # github release
       - name: Create release
