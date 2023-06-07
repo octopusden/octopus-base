@@ -59,6 +59,6 @@ Examples:
 
 Add parameters:
 
-| Name                      | Value                        | Description                                     |
-|---------------------------|------------------------------|-------------------------------------------------|
-| OCTOPUS_REPOSITORY_NAME   | \<VCS Root repository name\> | Utilized by OctopusCallGitHubAction meta-runner |
+| Name                      | Value                        | Description                                                                       |
+|---------------------------|------------------------------|-----------------------------------------------------------------------------------|
+| OCTOPUS_REPOSITORY_NAME   | \<VCS Root repository name\> | Utilized by OctopusCallGitHubAction meta-runner (only for hybrid-flow components) |
