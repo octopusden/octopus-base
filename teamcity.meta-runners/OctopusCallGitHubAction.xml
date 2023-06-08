@@ -12,7 +12,7 @@
     <build-runners>
       <runner name="Call GitHub build and release action" type="kotlinScript">
         <parameters>
-          <param name="kotlinArgs" value="%OCTOPUS_REPOSITORY_NAME% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %PROJECT_VERSION% %TIMEOUT%" />
+          <param name="kotlinArgs" value="%OCTOPUS_REPOSITORY_NAME% %OCTOPUS_GITHUB_TOKEN% %CURRENT_COMMIT% %PROJECT_VERSION% %TIMEOUT% %EVENT-TYPE%" />
           <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
           <param name="scriptContent"><![CDATA[@file:Repository("https://jcenter.bintray.com")
 @file:DependsOn("khttp:khttp:1.0.0")
