@@ -7,7 +7,7 @@
       <param name="CURRENT_COMMIT" value="%CURRENT_COMMIT%"/>
       <param name="PROJECT_VERSION" value="%PROJECT_VERSION%"/>
       <param name="TIMEOUT" value="%OCTOPUS_RELEASE_TIMEOUT%" spec="text display='normal' description='Timeout in minutes' validationMode='any'"/>
-      <param name="EVENT-TYPE" value="release" description='Event type for GitHub workflow'"/>
+      <param name="EVENT-TYPE" value="release" description="Event type for GitHub workflow"/>
     </parameters>
     <build-runners>
       <runner name="Call GitHub build and release action" type="kotlinScript">
