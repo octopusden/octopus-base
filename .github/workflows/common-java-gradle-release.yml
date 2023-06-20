@@ -141,7 +141,7 @@ jobs:
 
       - name: Gradle build docker image
         if: inputs.docker-image
-        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Pdocker.image=${{ inputs.docker-image }} -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       # push to docker
       - name: Log in to Docker Registry
