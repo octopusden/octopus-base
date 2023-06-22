@@ -102,4 +102,4 @@ where:
     - **Have to be free from extra garbage and spaces**. This means:
         - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
         - **Do NOT** use space characters in branch names.
-    - The most recent release have also to be pushed with `latest` tag suffix in this position.
+    - The most recent release have to be pushed with `latest` tag suffix in this position also.
