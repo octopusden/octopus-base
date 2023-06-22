@@ -75,3 +75,27 @@ Package name should start with `org.octopusden.octopus.` prefix.
 - **Module**: `oc_sql_helpers`
 - **Package**: `oc-sql-helpers`
 - **Repository**: `octopus-oc-corelibs-sql-helpers`
+
+## Additional rules for Docker images repository and tag name
+
+Docker image may be a side-build for *Python* or *Java* package (if it is an executable module), or a general image-only build.
+
+For *Java* and *Python* side-builds the repository and package names are described above.
+
+For *general image-only* builds the repository name should follow the same rules as for *Python* code except that `oc-` suffix is to be replaced with `di-` one (means `Docker Image`).
+
+It is also recommended to develop a signle image family from single repository. This means all tag part before *version separator* `:` should remain the same within images build from that repository and last part have to be different only.
+
+Image tagging should follow the template:
+
+`${DOCKER_REGISTRY_HOST}/${REPOSITORY_OWNER}/${REPOSITORY_NAME}:${BRANCH_OR_RELEASE_TAG}`
+
+where:
+- *DOCKER_REGISTRY_HOST*: the registry to deploy image to. Currently `ghcr.io`.
+- *REPOSITORY_OWNER*: the owner of the source repository, that is: **octopusden** always.
+- *REPOSITORY_NAME*: the short repository name the image is build from.
+- *BRANCH_OR_RELEASE_TAG*: the branch image is build from for development versions and release tag for releases:
+    - **Have to be free from extra garbage and spaces**. This means:
+        - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
+        - **Do NOT** use space characters in branch names.
+    - The most recent release have also to be pushed with `latest` tag.
