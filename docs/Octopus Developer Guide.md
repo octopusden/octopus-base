@@ -28,10 +28,10 @@
 
 - lowercase
 - hyphen as a delimiter
-- 'octopus-' prefix
+- `octopus-` prefix
 
-Template: 'octopus-abc-def'
-Examples: 'octopus-parent', 'octopus-versions-api'
+Template: `octopus-abc-def`
+Examples: `octopus-parent`, `octopus-versions-api`
 
 ## Project names
 
@@ -42,7 +42,7 @@ Project name is the same as a repository name
 - issueid-brief-description: if there is an issue for the change
 - brief-description: if there is no issue 
 
-Examples: 13-fix-npe-on-start, 12-support-security-champ, fix-typo
+Examples: `13-fix-npe-on-start`, `12-support-security-champ`, `fix-typo`
 
 ## Pull Request names
 
@@ -51,10 +51,10 @@ Use GitHub keywords to automatically close the related issue, for example 'fixes
 
 ## Group Id, Artifact Id
 
-- groupId should start with `org.octopusden.octopus.` prefix.
+- **groupId** should start with `org.octopusden.octopus.` prefix.
   - For example: groupId = `org.octopusden.octopus.employee`, groupId = `org.octopusden.octopus.vcsfacade`.
-- artifactId may optionally include `octopus` prefix if it is meaningful.
-  - For example: artifactId = `octopus-parent`, artifactId = `cloud-commons`.
+- **artifactId** may optionally include `octopus` prefix if it is meaningful.
+  - For example: *artifactId* = `octopus-parent`, *artifactId* = `cloud-commons`.
 
 ## Package names
 
