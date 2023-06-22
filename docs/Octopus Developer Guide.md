@@ -98,7 +98,7 @@ where:
 - *DOCKER_REGISTRY_HOST*: the registry to deploy image to. Currently `ghcr.io`.
 - *REPOSITORY_OWNER*: the owner of the source repository, that is: **octopusden** always.
 - *REPOSITORY_NAME*: the short repository name the image is build from.
-- *BRANCH_OR_RELEASE_TAG*: the branch image is build from for development versions and release tag for releases:
+- *BRANCH_OR_RELEASE_TAG*: the branch image is build from for development versions (short name, without `/refs/...` prefixes), or version tag for releases:
     - **Have to be free from extra garbage and spaces**. This means:
         - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
         - **Do NOT** use space characters in branch names.
