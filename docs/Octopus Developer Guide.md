@@ -18,6 +18,10 @@
 - The way recommended to run high-level code: `python -m <module_name>`.
 - The way recommended to run unit-tests: `python -m unittest discover -v`.
 
+## Additional policies for general Docker image-only code
+
+- Please use `ENTRYPOINT` directive for runnable images to start a container instead of `CMD` one.
+
 # Naming Conventions
 
 ## Repository names
@@ -98,4 +102,4 @@ where:
     - **Have to be free from extra garbage and spaces**. This means:
         - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
         - **Do NOT** use space characters in branch names.
-    - The most recent release have also to be pushed with `latest` tag.
+    - The most recent release have also to be pushed with `latest` tag suffix in this position.
