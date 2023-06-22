@@ -27,7 +27,7 @@
 ## Repository names
 
 - lowercase
-- hyphen as a delimiter
+- hyphen `-` as a delimiter
 - `octopus-` prefix
 
 Template: `octopus-abc-def`
