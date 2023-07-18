@@ -7,6 +7,9 @@ on:
       java-version:
         required: true
         type: string
+      mvn-parameters:
+        type: string
+        default: ""
 
 jobs:
   build:
@@ -27,4 +30,4 @@ jobs:
           server-password: MAVEN_PASSWORD
           
       - name: Maven build
-        run: mvn --batch-mode --update-snapshots package
+        run: mvn --batch-mode --update-snapshots package ${{ inputs.mvn-parameters }}
