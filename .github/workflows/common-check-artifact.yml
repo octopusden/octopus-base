@@ -20,7 +20,7 @@ jobs:
         run: |
           VER="${{ env.BUILD_VERSION }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
-          MODULE_NAME="${{ module-name }}"
+          MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
           
           echo "Artifact url to check $ART_URL"
