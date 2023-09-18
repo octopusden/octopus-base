@@ -180,7 +180,7 @@ jobs:
         run: |
           VER="${{ env.BUILD_VERSION }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
-          REPO_NAME="${{ steps.check-artifact.outputs.repo_name }}"
+          REPO_NAME="$(echo $GITHUB_REPOSITORY | awk -F'/' '{print $2}')"
           ART_URL="$BASE_URL/$REPO_NAME/$VER/$REPO_NAME-$VER.jar"
           
           echo "Artifact url to check $ART_URL"
