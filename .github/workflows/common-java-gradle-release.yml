@@ -173,3 +173,22 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
           automatic_release_tag: v${{ env.BUILD_VERSION }}
+
+      # check artifact exists on nexus - synchronous implementation
+      - name: Check Sonatype Nexus publish
+        run: |
+          VER="${{ env.BUILD_VERSION }}"
+          BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
+          REPO_NAME="${{ steps.repo-name.outputs.repo-name }}"
+          ART_URL="$BASE_URL/$REPO_NAME/$VER/$REPO_NAME-$VER.jar"
+          
+          for i in {1..30}; do
+            if curl -sSf "$ART_URL" -o artifact.jar; then
+              echo "Artifact found!"
+              break
+            else
+              echo "Artifact not found, retrying in 2 minutes..."
+              sleep 60
+            fi
+          done
+        continue-on-error: true
