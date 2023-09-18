@@ -2,9 +2,14 @@ name: Check for artifact
 
 on:
   workflow_call:
-    workflows: ["Gradle Release"]
-    types:
-      - completed
+    inputs:
+      build-version:
+        required: true
+        type: string
+      module-name:
+        required: true
+        type: string
+
 jobs:
   check-http-artifact:
     runs-on: ubuntu-latest
@@ -16,10 +21,10 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VER="${{ env.BUILD_VERSION }}"
+          VER="${{ inputs.build-version }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
-          REPO_NAME="$(echo $GITHUB_REPOSITORY | awk -F'/' '{print $2}')"
-          ART_URL="$BASE_URL/$REPO_NAME/$VER/$REPO_NAME-$VER.jar"
+          MODULE_NAME="${{ module-name }}"
+          ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
           
           echo "Artifact url to check $ART_URL"
           
