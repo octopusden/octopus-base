@@ -3,9 +3,6 @@ name: Check for artifact
 on:
   workflow_call:
     inputs:
-      build-version:
-        required: true
-        type: string
       module-name:
         required: true
         type: string
@@ -21,7 +18,7 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VER="${{ inputs.build-version }}"
+          VER="${{ env.BUILD_VERSION }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
           MODULE_NAME="${{ module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
