@@ -180,12 +180,12 @@ jobs:
         run: |
           VER="${{ env.BUILD_VERSION }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
-          REPO_NAME="${{ steps.repo-name.outputs.repo-name }}"
+          REPO_NAME="${{ steps.check-artifact.outputs.repo_name }}"
           ART_URL="$BASE_URL/$REPO_NAME/$VER/$REPO_NAME-$VER.jar"
           
           echo "Artifact url to check $ART_URL"
           
-          for i in {1..30}; do
+          for i in {1..4}; do
             if curl -sSf "$ART_URL" -o artifact.jar; then
               echo "Artifact found!"
               break
