@@ -28,7 +28,7 @@ jobs:
               echo "Artifact found!"
               break
             else
-              echo "Artifact not found, retrying in 2 minutes..."
+              echo "Artifact not found at $ART_URL, retrying in 2 minutes..."
               sleep 60
             fi
           done
