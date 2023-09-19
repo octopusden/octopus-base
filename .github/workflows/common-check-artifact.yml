@@ -31,7 +31,8 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VER="${{ steps.tag_version.outputs.tag }}"
+          VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"
+          VER="${VERSION_FROM_TAG#v}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
           MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
