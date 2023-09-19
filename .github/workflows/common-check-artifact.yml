@@ -28,7 +28,7 @@ jobs:
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
           MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
-          
+          echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
           
           for i in {1..30}; do
