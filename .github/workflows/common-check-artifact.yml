@@ -42,14 +42,10 @@ jobs:
           for i in {1..30}; do
             if curl -sSf "$ART_URL" -o artifact.jar; then
               echo "Artifact found!"
-              break
+              exit 0
             else
               echo "Artifact not found at $ART_URL, retrying in 2 minutes..."
               sleep 60
             fi
           done
-        continue-on-error: true
-
-      # check artifact exists on nexus - synchronous implementation
-      - name: Determine Success
-        run: exit $((! ${{ steps.check-artifact.outcome == 'success' }}))
+          exit 1
