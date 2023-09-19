@@ -6,7 +6,7 @@ on:
       module-name:
         required: true
         type: string
-      build-version:
+      prev_conclusion: 
         required: true
         type: string
 
@@ -14,8 +14,18 @@ jobs:
   check-http-artifact:
     runs-on: ubuntu-latest
     environment: Prod
+    env:
+      ATTEMPTS: 30
+      BASE_URL: "https://repo1.maven.org/maven2/org/octopusden"
 
     steps:
+
+      - name: Check Previous Workflow Outcome
+        run: |
+          if [ "${{ inputs.prev_conclusion }}" != "success" ]; then
+            echo "Release workflow was unsuccessful, exiting..."
+            exit 0     # ok
+          fi
     
       - name: Checkout
         uses: actions/checkout@v1
@@ -33,19 +43,19 @@ jobs:
         run: |
           VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"      # v2.3.4
           VER="${VERSION_FROM_TAG#v}"                                  # 2.3.4
-          BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
+           
           MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
           echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
           
-          for i in {1..30}; do
+          for i in {1..$ATTEMPTS}; do
             if curl -sSf "$ART_URL" -o artifact.jar; then
               echo "Artifact found!"
               exit 0
             else
               echo "Artifact not found at $ART_URL, retrying in 2 minutes..."
-              sleep 60
+              sleep 120
             fi
           done
           exit 1
