@@ -18,16 +18,20 @@ jobs:
     steps:
     
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v1
 
-      - uses: actions-ecosystem/action-get-latest-tag@v1
-        id: get-latest-tag
+      - name: Get latest tag
+        id: tag_version
+        uses: oprypin/find-latest-tag@v1
+        with:
+          repository: ${{ github.repository }}
+          regex: '^v([0-9]+)\..*'
 
       # check artifact exists on nexus - synchronous implementation
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VER="${{ steps.get-latest-tag.outputs.tag }}"
+          VER="${{ steps.tag_version.outputs.tag }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
           MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
