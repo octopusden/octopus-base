@@ -6,6 +6,9 @@ on:
       module-name:
         required: true
         type: string
+      build-version:
+        required: true
+        type: string
 
 jobs:
   check-http-artifact:
@@ -18,7 +21,7 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VER="${{ env.BUILD_VERSION }}"
+          VER="${{ inputs.build-version }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
           MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
