@@ -48,8 +48,8 @@ jobs:
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
           echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
-          
-          for i in {1..$ATTEMPTS}; do
+
+          for i in $(seq 1 $ATTEMPTS); do
             if curl -sSf "$ART_URL" -o artifact.jar; then
               echo "Artifact found!"
               exit 0
