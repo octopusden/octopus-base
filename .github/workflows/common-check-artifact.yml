@@ -16,8 +16,9 @@ jobs:
     environment: Prod
 
     steps:
-
-      - uses: actions/checkout@v2
+    
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
