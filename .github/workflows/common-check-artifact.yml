@@ -17,11 +17,14 @@ jobs:
 
     steps:
 
+      - uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+
       # check artifact exists on nexus - synchronous implementation
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VER="${{ inputs.build-version }}"
+          VER="${{ steps.get-latest-tag.outputs.tag }}"
           BASE_URL="https://repo1.maven.org/maven2/org/octopusden" 
           MODULE_NAME="${{ inputs.module-name }}"
           ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
