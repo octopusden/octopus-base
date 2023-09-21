@@ -35,7 +35,8 @@ jobs:
         uses: oprypin/find-latest-tag@v1
         with:
           repository: ${{ github.repository }}
-          regex: '^v([0-9]+)\..*'
+          # check for version like this v222.444.0 or v1.0.34
+          regex: '^v([0-9]|([1-9][0-9]*))\.([0-9]|([1-9][0-9]*))\.([0-9]|([1-9][0-9]*))$'
 
       # check artifact exists on nexus - synchronous implementation
       - name: Check Sonatype Nexus publish
