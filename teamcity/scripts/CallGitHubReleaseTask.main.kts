@@ -1,4 +1,4 @@
-@file:DependsOn("khttp:khttp:1.0.0")
+@file:DependsOn("org.danilopianini:khttp:1.3.2")
 
 import khttp.get
 import khttp.post
