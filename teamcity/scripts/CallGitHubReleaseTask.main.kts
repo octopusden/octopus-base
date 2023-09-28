@@ -1,3 +1,4 @@
+@file:Repository("http://jcenter.bintray.com")
 @file:DependsOn("khttp:khttp:1.0.0")
 
 import khttp.get
