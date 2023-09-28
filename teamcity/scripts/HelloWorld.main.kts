@@ -1,3 +1,5 @@
+@file:DependsOn("org.apache.maven:maven-artifact:3.9.4")
+
 import org.apache.maven.artifact.versioning.ComparableVersion
 
 println("Hello World!")
