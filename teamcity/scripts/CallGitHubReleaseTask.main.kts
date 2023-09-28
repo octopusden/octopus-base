@@ -1,5 +1,4 @@
-@file:Repository("http://jcenter.bintray.com")
-@file:DependsOn("khttp:khttp:1.0.0")
+@file:DependsOn("org.danilopianini:khttp:1.2.0")
 
 import khttp.get
 import khttp.post
