@@ -5,6 +5,11 @@ import khttp.post
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
+if (args.size != 6) {
+    System.err.println("Arguments: octopusModule githubToken currentCommit versionToRelease timeoutInMinutes eventType)
+    System.exit(-1)
+}
+
 val octopusModule = args[0]
 val githubToken = args[1]
 val currentCommit = args[2]
