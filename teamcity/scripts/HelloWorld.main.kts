@@ -1,4 +1,4 @@
-@file:DependsOn("org.apache.maven:maven-artifact:3.9.3")
+@file:DependsOn("org.apache.maven:maven-artifact:3.9.4")
 
 import org.apache.maven.artifact.versioning.ComparableVersion
 
