@@ -26,8 +26,8 @@ jobs:
         with:
           repository: octopusden/octopus-release-log
           path: release-log
-          persist-credentials: false
-          fetch-depth: 0
+          persist-credentials: true
+          ssh-key: ${{ secrets.GH_OCTOPUSDEN_PRIVATE_KEY }}
 
       - name: Register release
         run: |
@@ -54,6 +54,6 @@ jobs:
       - name: Push changes
         uses: ad-m/github-push-action@master
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          ssh: true
           repository: octopusden/octopus-release-log
           directory: release-log
