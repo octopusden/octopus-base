@@ -34,6 +34,8 @@ jobs:
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           cd release-log
           git pull
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           # git config user.name "gh-octopusden"
           # git config user.email "gh.octopusden@gmail.com"
           # git config --global core.autocrlf input
