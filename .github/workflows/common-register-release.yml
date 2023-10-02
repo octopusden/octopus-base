@@ -48,4 +48,5 @@ jobs:
           git commit -m"${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           git log
           git status
+          git config --list
           git push origin main
