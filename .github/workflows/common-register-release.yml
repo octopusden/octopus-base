@@ -1,0 +1,17 @@
+name: Register Release
+
+on:
+  workflow_call:
+    inputs:
+      octopus-module-name:
+        required: true
+        type: string
+      release-version:
+        required: true
+        type: string
+
+jobs:
+  fetch-release-log:
+    runs-on: ubuntu-latest
+    environment: Prod
+# todo
