@@ -27,12 +27,6 @@ jobs:
 #          repository: octopusden/octopus-release-log
 #          path: release-log
 
-      - name: Set up Git
-        run: |
-          git config user.name "gh-octopusden"
-          git config user.email "gh-octopusden@gmail.com"
-          git config --global core.autocrlf input
-          
       - name: Register release
         env:
           PAT_TOKEN: ${{ secrets.OCTOPUS-GITHUB-TOKEN }}`
@@ -40,6 +34,9 @@ jobs:
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           git clone https://github.com/octopusden/octopus-release-log.git
           cd octopus-release-log
+          git config user.name "gh-octopusden"
+          git config user.email "gh-octopusden@gmail.com"
+          git config --global core.autocrlf input
           # git config user.name github-actions
           # git config user.email github-actions@github.com
           ls -l
