@@ -26,9 +26,9 @@ jobs:
       - name: Register release
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
+          cd release-log
           git config --global user.name "gh-octopusden"
           git config --global user.email gh-octopusden@gmail.com
-          cd release-log
           ls -l
           git switch -c "${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           if [[ ! -e ${{ inputs.octopus-module-name }}.txt ]]; then
