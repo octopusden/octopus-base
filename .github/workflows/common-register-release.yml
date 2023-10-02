@@ -21,14 +21,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: octopusden/octopus-release-log
-          path: release-log
 
       - name: Register release
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           git config --global user.name "gh-octopusden"
           git config --global user.email gh-octopusden@gmail.com
-          cd release-log
+          cd octopus-release-log
+          ls -l
           if [[ ! -e ${{ inputs.octopus-module-name }}.txt ]]; then
             touch ${{ inputs.octopus-module-name }}.txt
           fi
