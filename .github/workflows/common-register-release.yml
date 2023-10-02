@@ -26,15 +26,14 @@ jobs:
         with:
           repository: octopusden/octopus-release-log
           path: release-log
+          token:  ${{ secrets.ACTIONS_GITHUB_TOKEN }}
 
       - name: Register release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           cd release-log
-          git config --global user.name "gh-octopusden"
-          git config --global user.email gh-octopusden@gmail.com
+          git config --local user.name "GitHub Actions Bot"
+          git config --local user.email "<>"
           ls -l
           if [[ ! -e ${{ inputs.octopus-module-name }}.txt ]]; then
             touch ${{ inputs.octopus-module-name }}.txt
@@ -42,4 +41,4 @@ jobs:
           echo "${{ inputs.release-version }}" | cat - ${{ inputs.octopus-module-name }}.txt > temp && mv temp ${{ inputs.octopus-module-name }}.txt
           git add ${{ inputs.octopus-module-name }}.txt
           git commit -m"${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
-          git push
+          git push origin master
