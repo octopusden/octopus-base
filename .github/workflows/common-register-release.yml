@@ -35,7 +35,7 @@ jobs:
           cd release-log
           git pull
           git config user.name "gh-octopusden"
-          git config user.email "gh-octopusden@gmail.com"
+          git config user.email "gh.octopusden@gmail.com"
           git config --global core.autocrlf input
           # git config user.name github-actions
           # git config user.email github-actions@github.com
