@@ -23,11 +23,6 @@ jobs:
           repository: ssh://github.com/octopusden/octopus-release-log.git
           path: release-log
 
-      - name: Fetch old
-        run: |
-          git clone ssh://github.com/octopusden/octopus-release-log.git release-log
-          cd release-log
-
       - name: Register release
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
