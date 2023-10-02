@@ -28,6 +28,8 @@ jobs:
           path: release-log
 
       - name: Register release
+        env:
+          GITHUB_TOKEN: ${{ secrets.OCTOPUS-GITHUB_TOKEN }}`
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           cd release-log
