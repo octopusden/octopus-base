@@ -3,7 +3,7 @@ name: Check for artifact
 on:
   workflow_call:
     inputs:
-      module-name:
+      artifact-pattern:
         required: true
         type: string
       prev_conclusion: 
@@ -45,8 +45,10 @@ jobs:
           VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"      # v2.3.4
           VER="${VERSION_FROM_TAG#v}"                                  # 2.3.4
            
-          MODULE_NAME="${{ inputs.module-name }}"
-          ART_URL="$BASE_URL/$MODULE_NAME/$VER/$MODULE_NAME-$VER.jar"
+          PATTERN="${{ inputs.artifact-pattern }}"
+          ART_PATH="${PATTERN//_VER_/${VER}}"
+          
+          ART_URL="${BASE_URL}/${ART_PATH}"
           echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
 
