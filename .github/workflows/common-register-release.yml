@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Fetch release log
         run: |
-          git clone ssh://git@bitbucket.spb.openwaygroup.com/f1/octopus-release-log.git release-log
+          git clone ssh://github.com/octopusden/octopus-release-log.git release-log
           cd release-log
       - name: Register release
         run: |
