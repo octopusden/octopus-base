@@ -25,7 +25,7 @@ jobs:
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           if [[ ! -e ${{ inputs.octopus-module-name }}.txt ]]; then
-	          touch ${{ inputs.octopus-module-name }}.txt
+	    touch ${{ inputs.octopus-module-name }}.txt
           fi
           echo "${{ inputs.release-version }}" | cat - ${{ inputs.octopus-module-name }}.txt > temp && mv temp ${{ inputs.octopus-module-name }}.txt
           git add ${{ inputs.octopus-module-name }}.txt
