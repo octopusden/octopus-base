@@ -46,4 +46,6 @@ jobs:
           echo "${{ inputs.release-version }}" | cat - ${{ inputs.octopus-module-name }}.txt > temp && mv temp ${{ inputs.octopus-module-name }}.txt
           git add ${{ inputs.octopus-module-name }}.txt
           git commit -m"${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
+          git log
+          git status
           git push origin main
