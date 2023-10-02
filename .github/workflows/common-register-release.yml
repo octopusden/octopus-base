@@ -21,19 +21,18 @@ jobs:
     environment: Prod
 
     steps:
-#      - name: Fetch release log
-#        uses: actions/checkout@v4
-#        with:
-#          repository: octopusden/octopus-release-log
-#          path: release-log
+      - name: Fetch release log
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-release-log
+          path: release-log
+          persist-credentials: false
+          fetch-depth: 0
 
       - name: Register release
-        env:
-          PAT_TOKEN: ${{ secrets.OCTOPUS-GITHUB-TOKEN }}`
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
-          git clone https://github.com/octopusden/octopus-release-log.git
-          cd octopus-release-log
+          cd release-log
           git config user.name "gh-octopusden"
           git config user.email "gh-octopusden@gmail.com"
           git config --global core.autocrlf input
@@ -49,4 +48,8 @@ jobs:
           git log
           git status
           git config --list
-          git push origin main
+          
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.OCTOPUS_GITHUB_TOKEN }
