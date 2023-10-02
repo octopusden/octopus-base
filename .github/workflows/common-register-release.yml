@@ -20,7 +20,7 @@ jobs:
       - name: Fetch release log
         uses: actions/checkout@v4
         with:
-          repository: ssh://github.com/octopusden/octopus-release-log.git
+          repository: octopusden/octopus-release-log
           path: release-log
 
       - name: Register release
