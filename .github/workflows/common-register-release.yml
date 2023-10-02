@@ -26,14 +26,13 @@ jobs:
         with:
           repository: octopusden/octopus-release-log
           path: release-log
-          token: ${{ secrets.OCTOPUS_GITHUB_TOKEN }}
 
       - name: Register release
         run: |
           echo "Register release ${{ inputs.octopus-module-name }}-${{ inputs.release-version }}"
           cd release-log
-          git config --local user.name "GitHub Actions Bot"
-          git config --local user.email "<>"
+          git config user.name github-actions
+          git config user.email github-actions@github.com
           ls -l
           if [[ ! -e ${{ inputs.octopus-module-name }}.txt ]]; then
             touch ${{ inputs.octopus-module-name }}.txt
