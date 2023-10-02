@@ -26,6 +26,7 @@ jobs:
         with:
           repository: octopusden/octopus-release-log
           path: release-log
+          token: ${{ secrets.OCTOPUS_GITHUB_TOKEN }}
 
       - name: Register release
         run: |
