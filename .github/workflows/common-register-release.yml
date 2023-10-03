@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Launch action using REST
         run: |
-          echo "OCTOPUS_MODULE_NAME=${{ inputs.octopus-repository }} | cut -d'/' -f2" >> $GITHUB_ENV
+          echo "OCTOPUS_MODULE_NAME='${{ inputs.octopus-repository }}' | cut -d'/' -f2" >> $GITHUB_ENV
           echo ${{ env.OCTOPUS_MODULE_NAME }}
           curl -L \
           -X POST \
