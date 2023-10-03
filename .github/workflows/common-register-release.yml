@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Launch action using REST
         run: |
-          echo "OCTOPUS_MODULE_NAME=$(echo ${{ inputs.octopus-repository }} | cut -d'/' -f2)"
+          OCTOPUS_MODULE_NAME=$(echo ${{ inputs.octopus-repository }} | cut -d'/' -f2)
           echo 'var: ' $OCTOPUS_MODULE_NAME
           echo $OCTOPUS_MODULE_NAME >> "$GITHUB_ENV"
           echo 'env: ' ${{ env.OCTOPUS_MODULE_NAME }}
