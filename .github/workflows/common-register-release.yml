@@ -22,9 +22,9 @@ jobs:
       - name: Launch action using REST
         run: |
           OCTOPUS_MODULE_NAME=$(echo ${{ inputs.octopus-repository }} | cut -d'/' -f2)
-          echo 'param $OCTOPUS_MODULE_NAME'
+          echo 'param' $OCTOPUS_MODULE_NAME
           echo $OCTOPUS_MODULE_NAME >> $GITHUB_ENV
-          echo 'env ${{ env.OCTOPUS_MODULE_NAME }}'
+          echo 'env' ${{ env.OCTOPUS_MODULE_NAME }}
           curl -L \
           -X POST \
           -H "Accept: application/vnd.github+json" \
