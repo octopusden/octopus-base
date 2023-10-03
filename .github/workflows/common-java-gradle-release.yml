@@ -185,6 +185,6 @@ jobs:
       uses: octopusden/octopus-base/.github/workflows/common-register-release.yml@release-reg
       name: Register release
       with:
-        octopus-repository: ${{ env.GITHUB_REPOSITORY }}
+        octopus-repository: ${{ github.repository }}
         release-version:  ${{ inputs.build-version }}
       secrets: inherit
