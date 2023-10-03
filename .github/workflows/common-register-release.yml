@@ -22,7 +22,7 @@ jobs:
       - name: Set module name
         id: set-module-name
         run: |
-          echo "OCTOPUS_MODULE_NAME=$(echo ${{ inputs.octopus-repository }} | cut -d'/' -f2)" >> "$GITHUB_OUTPUT"
+          echo "OCTOPUS_MODULE_NAME=$(echo ${{ inputs.octopus-repository }} | cut -d'/' -f2)" >> $GITHUB_OUTPUT
           echo "env = " ${{ env.OCTOPUS_MODULE_NAME }}
 
       - name: Launch action using REST
