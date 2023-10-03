@@ -2,7 +2,7 @@
 name: Register Release
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       octopus-module-name:
         type: string
