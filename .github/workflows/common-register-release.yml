@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      OCTOPUS_MODULE_NAME: 'default'
+      OCTOPUS_MODULE_NAME: ''
 
     steps:
       - name: Set module name
