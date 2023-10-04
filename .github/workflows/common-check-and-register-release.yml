@@ -6,9 +6,6 @@ on:
       artifact-pattern:
         required: true
         type: string
-      prev_conclusion: 
-        required: true
-        type: string
 
 jobs:
   check-http-artifact:
@@ -20,13 +17,6 @@ jobs:
 
     steps:
 
-      - name: Check Previous Workflow Outcome
-        run: |
-          if [ "${{ inputs.prev_conclusion }}" != "success" ]; then
-            echo "Release workflow was unsuccessful, exiting..."
-            exit 0     # ok
-          fi
-    
       - name: Checkout
         uses: actions/checkout@v1
 
