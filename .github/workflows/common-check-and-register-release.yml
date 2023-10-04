@@ -38,7 +38,7 @@ jobs:
           VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"        # v2.3.4
           echo "RELEASE_VERSION=${VERSION_FROM_TAG#v}" >> $GITHUB_ENV    # 2.3.4
 
-          if [ $RELEASE_VERSION = '' ]; then
+          if [ $RELEASE_VERSION == '' ]; then
             echo "RELEASE_VERSION was not set"
             exit 1
           fi
