@@ -39,10 +39,10 @@ jobs:
           echo "RELEASE_VERSION=${VERSION_FROM_TAG#v}" >> $GITHUB_ENV    # 2.3.4
            
           PATTERN="${{ inputs.artifact-pattern }}"
-          ART_PATH="${PATTERN//_VER_/${{ env.RELEASE_VERSION }}}"
+          ART_PATH="${PATTERN//_VER_/$RELEASE_VERSION}"
           
           ART_URL="${BASE_URL}/${ART_PATH}"
-          echo "Current version is ${{ env.RELEASE_VERSION }}"
+          echo "Current version is $RELEASE_VERSION"
           echo "Artifact url to check $ART_URL"
 
           success=false
@@ -70,5 +70,5 @@ jobs:
     name: Register release
     with:
       octopus-repository: ${{ github.repository }}
-      release-version:  ${{ env.RELEASE_VERSION }}
+      release-version: $RELEASE_VERSION
     secrets: inherit
