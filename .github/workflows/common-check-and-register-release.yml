@@ -62,3 +62,13 @@ jobs:
             fi
           done
           exit 1
+
+  register-release-in-log:
+    # register release in octopus-release-log
+    needs: check-http-artifact
+    uses: ./.github/workflows/common-register-release.yml
+    name: Register release
+    with:
+      octopus-repository: ${{ github.repository }}
+      release-version:  ${{ inputs.build-version }}
+    secrets: inherit
