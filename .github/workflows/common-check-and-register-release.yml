@@ -35,7 +35,7 @@ jobs:
         run: |
           VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"         # v2.3.4
           VER=${VERSION_FROM_TAG#v}                                       # 2.3.4
-          echo "RELEASE_VERSION=$VER" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_VERSION=$VER" >> $GITHUB_OUTPUT
 
           PATTERN="${{ inputs.artifact-pattern }}"
           ART_PATH="${PATTERN//_VER_/$VER}"
