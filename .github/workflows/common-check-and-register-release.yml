@@ -14,10 +14,10 @@ jobs:
     env:
       ATTEMPTS: 1 # 30
       BASE_URL: "https://repo1.maven.org/maven2/org/octopusden"
-      RELEASE_VERSION: ''
+    outputs:
+      RELEASE_VERSION: ${{ steps.check-artifact.outputs.RELEASE_VERSION }}
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v1
 
@@ -37,19 +37,19 @@ jobs:
           echo "VERSION WITH TAG: $VERSION_FROM_TAG"
           VERSION_WO_PREFIX=${VERSION_FROM_TAG#v}
           echo "VERSION WITHOUT PREFIX: $VERSION_WO_PREFIX"
-          echo "RELEASE_VERSION=$VERSION_WO_PREFIX" >> $GITHUB_ENV    # 2.3.4
-          echo "RELEASE VERSION: ${{ env.RELEASE_VERSION }}"
+          echo "RELEASE_VERSION=$VERSION_WO_PREFIX" >> "$GITHUB_OUTPUT"    # 2.3.4
+          echo "RELEASE VERSION: $RELEASE_VERSION"
 
-          if [ "${{ env.RELEASE_VERSION }}" == '' ]; then
+          if [ "$RELEASE_VERSION" == '' ]; then
             echo "RELEASE_VERSION was not set"
             exit 1
           fi
           
           PATTERN="${{ inputs.artifact-pattern }}"
-          ART_PATH="${PATTERN//_VER_/${{ env.RELEASE_VERSION }}}"
+          ART_PATH="${PATTERN//_VER_/$RELEASE_VERSION}"
           
           ART_URL="${BASE_URL}/${ART_PATH}"
-          echo "Current version is ${{ env.RELEASE_VERSION }}"
+          echo "Current version is $RELEASE_VERSION"
           echo "Artifact url to check $ART_URL"
 
           success=false
@@ -77,5 +77,5 @@ jobs:
     name: Register release
     with:
       octopus-repository: ${{ github.repository }}
-      release-version: 2.0.0 # ${{ env.RELEASE_VERSION }}
+      release-version: ${{ needs.check-http-artifact.outputs.RELEASE_VERSION }}
     secrets: inherit
