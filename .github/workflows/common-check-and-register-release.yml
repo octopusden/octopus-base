@@ -65,6 +65,7 @@ jobs:
   register-release-in-log:
     # register release in octopus-release-log
     needs: check-http-artifact
+    if: ${{ success() }}
     uses: ./.github/workflows/common-register-release.yml
     name: Register release
     with:
