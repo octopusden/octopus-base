@@ -1,4 +1,4 @@
-name: Check for artifact
+name: Check for artifact and register release in log
 
 on:
   workflow_call:
@@ -7,6 +7,9 @@ on:
         required: true
         type: string
 
+env:
+  RELEASE_VERSION: ''
+  
 jobs:
   check-http-artifact:
     runs-on: ubuntu-latest
@@ -32,14 +35,14 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"      # v2.3.4
-          VER="${VERSION_FROM_TAG#v}"                                  # 2.3.4
+          VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"        # v2.3.4
+          echo "RELEASE_VERSION=${VERSION_FROM_TAG#v}" >> $GITHUB_ENV    # 2.3.4
            
           PATTERN="${{ inputs.artifact-pattern }}"
-          ART_PATH="${PATTERN//_VER_/${VER}}"
+          ART_PATH="${PATTERN//_VER_/${{ env.RELEASE_VERSION }}}"
           
           ART_URL="${BASE_URL}/${ART_PATH}"
-          echo "Current version is $VER"
+          echo "Current version is ${{ env.RELEASE_VERSION }}"
           echo "Artifact url to check $ART_URL"
 
           success=false
