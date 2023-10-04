@@ -70,5 +70,5 @@ jobs:
     name: Register release
     with:
       octopus-repository: ${{ github.repository }}
-      release-version:  ${{ inputs.build-version }}
+      release-version:  ${{ env.RELEASE_VERSION }}
     secrets: inherit
