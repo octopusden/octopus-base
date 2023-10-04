@@ -183,7 +183,7 @@ jobs:
       # register release in octopus-release-log
       if: inputs.register-release-immediately
       needs: prepare-build-publish-release
-      uses: octopusden/octopus-base/.github/workflows/common-register-release.yml@release-reg
+      uses: ./.github/workflows/common-register-release.yml
       name: Register release
       with:
         octopus-repository: ${{ github.repository }}
