@@ -37,7 +37,9 @@ jobs:
         run: |
           VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"         # v2.3.4
           echo "VERSION WITH TAG: $VERSION_FROM_TAG"
-          echo "RELEASE_VERSION=$(echo ${VERSION_FROM_TAG#v})" >> $GITHUB_ENV    # 2.3.4
+          VERSION_WO_PREFIX=${VERSION_FROM_TAG#v}
+          echo "VERSION WITHOUT PREFIX: $VERSION_WO_PREFIX"
+          echo "RELEASE_VERSION=$VERSION_WO_PREFIX" >> $GITHUB_ENV    # 2.3.4
           echo "RELEASE VERSION: $RELEASE_VERSION"
 
           if [ "$RELEASE_VERSION" == '' ]; then
