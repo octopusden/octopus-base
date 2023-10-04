@@ -34,22 +34,14 @@ jobs:
         id: check-artifact
         run: |
           VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"         # v2.3.4
-          echo "VERSION WITH TAG: $VERSION_FROM_TAG"
-          VERSION_WO_PREFIX=${VERSION_FROM_TAG#v}
-          echo "VERSION WITHOUT PREFIX: $VERSION_WO_PREFIX"
-          echo "RELEASE_VERSION=$VERSION_WO_PREFIX" >> "$GITHUB_OUTPUT"    # 2.3.4
-          echo "RELEASE VERSION: $RELEASE_VERSION"
+          VER=${VERSION_FROM_TAG#v}                                       # 2.3.4
+          echo "RELEASE_VERSION=$VER" >> "$GITHUB_OUTPUT"
 
-          if [ "$RELEASE_VERSION" == '' ]; then
-            echo "RELEASE_VERSION was not set"
-            exit 1
-          fi
-          
           PATTERN="${{ inputs.artifact-pattern }}"
-          ART_PATH="${PATTERN//_VER_/$RELEASE_VERSION}"
+          ART_PATH="${PATTERN//_VER_/$VER}"
           
           ART_URL="${BASE_URL}/${ART_PATH}"
-          echo "Current version is $RELEASE_VERSION"
+          echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
 
           success=false
