@@ -15,7 +15,7 @@ jobs:
       ATTEMPTS: 1 # 30
       BASE_URL: "https://repo1.maven.org/maven2/org/octopusden"
     outputs:
-      RELEASE_VERSION: ${{ steps.check-artifact.outputs.RELEASE_VERSION }}
+      release-version: ${{ steps.check-artifact.outputs.RELEASE_VERSION }}
 
     steps:
       - name: Checkout
@@ -77,5 +77,5 @@ jobs:
     name: Register release
     with:
       octopus-repository: ${{ github.repository }}
-      release-version: ${{ needs.check-http-artifact.outputs.RELEASE_VERSION }}
+      release-version: ${{ needs.check-http-artifact.outputs.release-version }}
     secrets: inherit
