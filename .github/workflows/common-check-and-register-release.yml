@@ -52,16 +52,23 @@ jobs:
           echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
 
+          success=false
+
           for i in $(seq 1 $ATTEMPTS); do
             if curl -sSf "$ART_URL" -o artifact.jar; then
               echo "Artifact found!"
-              exit 0
+              success=true
+              break
             else
               echo "Artifact not found at $ART_URL, retrying in 2 minutes..."
               sleep 120
             fi
           done
-          exit 1
+
+          if [ "$success" = false ]; then
+            echo "All attempts failed. Exiting..."
+            exit 1
+          fi
 
   register-release-in-log:
     # register release in octopus-release-log
