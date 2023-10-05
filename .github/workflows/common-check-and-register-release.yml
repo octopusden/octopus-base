@@ -1,12 +1,9 @@
-name: Check for artifact
+name: Check for artifact and register release in log
 
 on:
   workflow_call:
     inputs:
       artifact-pattern:
-        required: true
-        type: string
-      prev_conclusion: 
         required: true
         type: string
 
@@ -15,18 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      ATTEMPTS: 30
+      ATTEMPTS: 45
       BASE_URL: "https://repo1.maven.org/maven2/org/octopusden"
+    outputs:
+      release-version: ${{ steps.check-artifact.outputs.RELEASE_VERSION }}
 
     steps:
-
-      - name: Check Previous Workflow Outcome
-        run: |
-          if [ "${{ inputs.prev_conclusion }}" != "success" ]; then
-            echo "Release workflow was unsuccessful, exiting..."
-            exit 0     # ok
-          fi
-    
       - name: Checkout
         uses: actions/checkout@v1
 
@@ -42,23 +33,42 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"      # v2.3.4
-          VER="${VERSION_FROM_TAG#v}"                                  # 2.3.4
-           
-          PATTERN="${{ inputs.artifact-pattern }}"
-          ART_PATH="${PATTERN//_VER_/${VER}}"
+          VERSION_FROM_TAG=${{ steps.tag_version.outputs.tag }}      # v2.3.4
+          VER=${VERSION_FROM_TAG#v}                                  # 2.3.4
+          echo "RELEASE_VERSION=$VER" >> $GITHUB_OUTPUT
+
+          PATTERN=${{ inputs.artifact-pattern }}
+          ART_PATH=${PATTERN//_VER_/$VER}
           
-          ART_URL="${BASE_URL}/${ART_PATH}"
+          ART_URL=${BASE_URL}/${ART_PATH}
           echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
+
+          success=false
 
           for i in $(seq 1 $ATTEMPTS); do
             if curl -sSf "$ART_URL" -o artifact.jar; then
               echo "Artifact found!"
-              exit 0
+              success=true
+              break
             else
               echo "Artifact not found at $ART_URL, retrying in 2 minutes..."
               sleep 120
             fi
           done
-          exit 1
+
+          if [ "$success" = false ]; then
+            echo "All attempts failed. Exiting..."
+            exit 1
+          fi
+
+  register-release-in-log:
+    # register release in octopus-release-log
+    needs: check-http-artifact
+    if: ${{ success() }}
+    uses: ./.github/workflows/common-register-release.yml
+    name: Register release
+    with:
+      octopus-repository: ${{ github.repository }}
+      release-version: ${{ needs.check-http-artifact.outputs.release-version }}
+    secrets: inherit

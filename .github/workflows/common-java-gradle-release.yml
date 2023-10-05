@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: ''
+      register-release-immediately:
+        description: 'Register release in octopus-release-log immediately (true) or wait for artifact check (false)'
+        required: false
+        type: boolean
+        default: false
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -173,3 +178,14 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
           automatic_release_tag: v${{ env.BUILD_VERSION }}
+
+  register-release-in-log:
+      # register release in octopus-release-log
+      if: inputs.register-release-immediately
+      needs: prepare-build-publish-release
+      uses: ./.github/workflows/common-register-release.yml
+      name: Register release
+      with:
+        octopus-repository: ${{ github.repository }}
+        release-version:  ${{ inputs.build-version }}
+      secrets: inherit
