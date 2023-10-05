@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      ATTEMPTS: 1 # 30
+      ATTEMPTS: 30
       BASE_URL: "https://repo1.maven.org/maven2/org/octopusden"
     outputs:
       release-version: ${{ steps.check-artifact.outputs.RELEASE_VERSION }}
