@@ -33,14 +33,14 @@ jobs:
       - name: Check Sonatype Nexus publish
         id: check-artifact
         run: |
-          VERSION_FROM_TAG="${{ steps.tag_version.outputs.tag }}"      # v2.3.4
-          VER=${VERSION_FROM_TAG#v}                                    # 2.3.4
+          VERSION_FROM_TAG=${{ steps.tag_version.outputs.tag }}      # v2.3.4
+          VER=${VERSION_FROM_TAG#v}                                  # 2.3.4
           echo "RELEASE_VERSION=$VER" >> $GITHUB_OUTPUT
 
-          PATTERN="${{ inputs.artifact-pattern }}"
-          ART_PATH="${PATTERN//_VER_/$VER}"
+          PATTERN=${{ inputs.artifact-pattern }}
+          ART_PATH=${PATTERN//_VER_/$VER}
           
-          ART_URL="${BASE_URL}/${ART_PATH}"
+          ART_URL=${BASE_URL}/${ART_PATH}
           echo "Current version is $VER"
           echo "Artifact url to check $ART_URL"
 
