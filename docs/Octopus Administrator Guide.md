@@ -54,6 +54,7 @@ List of commonly used topics:
 |sonatype-nexus|GPG_PASSPHRASE| - |
 |sonatype-nexus|GPG_PRIVATE_KEY| - |
 |pypi-package|PYPI_API_TOKEN|PYPI_API_TOKEN|
+|*|OCTOPUS_GITHUB_TOKEN| - |
 
 ## Variables
 
