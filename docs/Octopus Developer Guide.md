@@ -22,6 +22,14 @@
 
 - Please use `ENTRYPOINT` directive for runnable images to start a container instead of `CMD` one.
 
+# Working with issues and pull requests
+
+Fill in the following parameters for issues and pull requests (PR is treated the same way as issue in GitHub):
+- assignee - can be multiple
+- reviewers - assign only when your PR is ready for review
+- project - to be visible on a project board
+- labels (bug, documentation, enhancement, build, etc) - required for nice Release Notes
+
 # Naming Conventions
 
 ## Repository names
