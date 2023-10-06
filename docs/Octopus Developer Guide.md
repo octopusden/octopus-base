@@ -28,7 +28,16 @@ Fill in the following parameters for issues and pull requests (PR is treated the
 - assignee - can be multiple
 - reviewers - assign only when your PR is ready for review
 - project - to be visible on a project board
-- labels (bug, documentation, enhancement, build, etc) - required for nice Release Notes
+- labels (bug, documentation, enhancement, build, etc) - required for nice Release Notes (see the section 'How to use labels' for details)
+
+## How to use labels
+
+We use the following labels
+- bug - fixing defects in the code of the module
+- documentation - changes in documentation
+- enhancement - new functionality or improvement
+- build (custom) - changes in workflow actions
+- dependencies (automatic) - used by dependabot, will be introduced later
 
 # Naming Conventions
 
