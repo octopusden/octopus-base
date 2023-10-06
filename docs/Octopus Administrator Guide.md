@@ -4,6 +4,8 @@
   - Add files: .gitignore, LICENSE, README.md
 - About section
   - Add topics, see section 'Repository topics'
+- Issues -> Labels
+  - Add label 'build', color: #7E4442
 - Repository settings
   - General
     - Pull Requests
@@ -70,5 +72,6 @@ List of commonly used topics:
   - Manage access
   - Invite collaborators: add team members
 - Link the project to the corresponding repository
+
 
   

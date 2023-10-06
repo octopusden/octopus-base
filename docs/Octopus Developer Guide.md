@@ -22,6 +22,23 @@
 
 - Please use `ENTRYPOINT` directive for runnable images to start a container instead of `CMD` one.
 
+# Working with issues and pull requests
+
+Fill in the following parameters for issues and pull requests (PR is treated the same way as issue in GitHub):
+- assignee - can be multiple
+- reviewers - assign only when your PR is ready for review
+- project - to be visible on a project board
+- labels (bug, documentation, enhancement, build, etc) - required for nice Release Notes (see the section 'How to use labels' for details)
+
+## How to use labels
+
+We use the following labels
+- bug - fixing defects in the code of the module
+- documentation - changes in documentation
+- enhancement - new functionality or improvement
+- build (custom) - changes in workflow actions
+- dependencies (automatic) - used by dependabot, will be introduced later
+
 # Naming Conventions
 
 ## Repository names
