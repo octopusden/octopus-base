@@ -53,6 +53,8 @@ List of commonly used topics:
 |sonatype-nexus|SONATYPE_PROFILE_ID| - |
 |sonatype-nexus|GPG_PASSPHRASE| - |
 |sonatype-nexus|GPG_PRIVATE_KEY| - |
+|public-flow|OCTOPUS_GITHUB_TOKEN| - |
+|hybrid-flow|OCTOPUS_GITHUB_TOKEN| - |
 |pypi-package|PYPI_API_TOKEN|PYPI_API_TOKEN|
 
 ## Variables
