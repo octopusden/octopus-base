@@ -1,3 +1,5 @@
+:exclamation: **NOTE:** _This article needs to be revised_
+
 ## GitHub Action
 
 ### Setup a workflow trigger
