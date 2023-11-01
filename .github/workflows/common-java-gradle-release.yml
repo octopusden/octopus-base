@@ -117,7 +117,8 @@ jobs:
 
       - name: Get new version
         if: inputs.flow-type == 'public'
-        uses: ./.github/actions/get-version
+        # todo: remove main, use current version!
+        uses: octopusden/octopus-base/.github/actions/get-version@main
         id: new-version
         with:
           tag-value: ${{ steps.new-tag-version.outputs.new_version }}
