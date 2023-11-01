@@ -117,7 +117,7 @@ jobs:
 
       - name: Get new version
         if: inputs.flow-type == 'public'
-        uses: octopusden/octopus-base/.github/actions/get-version
+        uses: ./.github/actions/get-version
         id: new-version
         with:
           tag-value: ${{ steps.new-tag-version.outputs.new_version }}
