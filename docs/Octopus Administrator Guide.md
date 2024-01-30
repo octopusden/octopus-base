@@ -15,6 +15,7 @@
     - Add branch protection rule
       - name: 'main'
         - Enable 'Require a pull request before merging'
+          - Required number of approvals: 2
           - Enable 'Dismiss stale pull request approvals when new commits are pushed'
           - Enable 'Require review from Code Owners'
         - Enable 'Require linear history'
