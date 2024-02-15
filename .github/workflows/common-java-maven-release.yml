@@ -1,9 +1,12 @@
-# This is a basic release workflow for Octopus Java modules with publishing to Sonatype Nexus
+# This is a basic release workflow for Octopus Maven Java modules with publishing to Sonatype Nexus
 name: Maven Release
 
 on:
   workflow_call:
     inputs:
+      flow-type:
+        required: true
+        type: string # one of { public, hybrid }
       java-version:
         required: true
         type: string
@@ -12,6 +15,21 @@ on:
         required: false
         type: string
         default: patch
+      commit-hash:
+        description: 'Hash of the commit to checkout (for hybrid flow)'
+        required: false
+        type: string
+        default: ''
+      build-version:
+        description: 'Version number to release (for hybrid flow)'
+        required: false
+        type: string
+        default: ''
+      register-release-immediately:
+        description: 'Register release in octopus-release-log immediately (true) or wait for artifact check (false)'
+        required: false
+        type: boolean
+        default: false
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -23,17 +41,60 @@ on:
         required: true
 
 jobs:
-  build:
+  prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
     env:
       BUILD_VERSION: ''
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v1
+      # check input parameters
+      - name: Unknown flow
+        if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        run: |
+          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          exit 1
 
+      - name: Fail if commit-hash is not set for hybrid flow
+        if: inputs.flow-type == 'hybrid' && !inputs.commit-hash
+        run: |
+          echo "commit-hash input parameter must be set for hybrid flow
+
+      - name: Fail if build-version is not set for hybrid flow
+        if: inputs.flow-type == 'hybrid' && !inputs.build-version
+        run: |
+          echo "build-version input parameter must be set for hybrid flow
+
+      - name: Public flow
+        if: inputs.flow-type == 'public'
+        run: |
+          echo "Public flow, run with tests"
+
+      - name: Hybrid flow
+        if: inputs.flow-type == 'hybrid'
+        run: |
+          echo "Hybrid flow:"
+          echo "- Skipping tests"
+          echo "- Commit hash: ${{ inputs.commit-hash }}"
+          echo "- Version: ${{ inputs.build-version }}"
+          # set hybrid flow variables
+          echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
+          echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
+
+      # checkout
+      - name: Checkout latest
+        if: inputs.flow-type == 'public'
+        uses: actions/checkout@v3
+
+      - name: Checkout from commit hash
+        if: inputs.flow-type == 'hybrid' && inputs.commit-hash
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.commit-hash }}
+
+      # determine release version (for public flow)
       - name: Get latest tag
+        if: inputs.flow-type == 'public'
         id: tag_version
         uses: oprypin/find-latest-tag@v1
         with:
@@ -41,6 +102,7 @@ jobs:
           regex: '^v([0-9]+)\..*'
 
       - name: Prepare new tag version
+        if: inputs.flow-type == 'public'
         uses: actions-ecosystem/action-bump-semver@v1
         id: new-tag-version
         with:
@@ -48,6 +110,7 @@ jobs:
           level: ${{ inputs.increment-version-level }}
 
       - name: Get new version
+        if: inputs.flow-type == 'public'
         # todo: remove main, use current version!
         uses: octopusden/octopus-base/.github/actions/get-version@main
         id: new-version
@@ -56,6 +119,7 @@ jobs:
           exit-if-empty: true
 
       - name: Save new version to env
+        if: inputs.flow-type == 'public'
         run: |
           echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
 
@@ -83,12 +147,24 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Create Release
-        # todo: use release version instead of master
-        uses: "marvinpinto/action-automatic-releases@master"
+      # github release
+      - name: Create release
+        # todo: use fixed version instead of master
+        uses: marvinpinto/action-automatic-releases@master
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           prerelease: false
-          automatic_release_tag: "v${{ env.BUILD_VERSION }}"
+          automatic_release_tag: v${{ env.BUILD_VERSION }}
           files: |
             pom.xml
+
+  register-release-in-log:
+      # register release in octopus-release-log
+      if: inputs.register-release-immediately
+      needs: prepare-build-publish-release
+      uses: ./.github/workflows/common-register-release.yml
+      name: Register release
+      with:
+        octopus-repository: ${{ github.repository }}
+        release-version:  ${{ inputs.build-version }}
+      secrets: inherit
