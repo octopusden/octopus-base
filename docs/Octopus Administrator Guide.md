@@ -24,6 +24,8 @@
     - General
       - Workflow permissions
         - Enable 'Read and write permissions'
+  - Container package visibility (for modules with docker containers)
+      - Change from 'private' to 'public'
   - Environments
     - Create environments: Prod, Test
       - See 'Environment settings' for configuration
