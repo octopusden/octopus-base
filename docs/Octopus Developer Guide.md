@@ -66,6 +66,9 @@ Examples: `13-fix-npe-on-start`, `12-support-security-champ`, `fix-typo`
 If there is a related issue, specify its id in the PR description, e.g. `#123`. 
 Use GitHub keywords to automatically close the related issue, for example `fixes #123` or `closes #123`. See https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests
 
+If the change requires specific (explicit!) actions on deploy (for example, configuration changes), please mention it in the PR description, e.g. "Requires configuration changes!".
+This message will be visible in the Release Notes summary, which will help teams properly prepare to deployment.
+
 ## Group Id, Artifact Id
 
 - **groupId** should start with `org.octopusden.octopus.` prefix.
