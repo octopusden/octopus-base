@@ -18,6 +18,10 @@ on:
         required: false
         type: boolean
         default: true
+      publish-to-staging:
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -60,7 +64,17 @@ jobs:
 
       - name: Gradle build and publish to local
         if: inputs.docker-image == ''
-        run: ./gradlew build publishToMavenLocal ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+
+      # publish to nexus staging
+      - name: Publish to Sonatype Nexus Staging
+        if: inputs.publish-to-staging
+        run: ./gradlew -Pnexus=true publishToSonatype -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Gradle build docker image
         if: inputs.docker-image
