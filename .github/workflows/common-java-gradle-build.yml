@@ -22,6 +22,15 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      OSSRH_USERNAME:
+        required: true
+      OSSRH_TOKEN:
+        required: true
+      GPG_PASSPHRASE:
+        required: true
+      GPG_PRIVATE_KEY:
+        required: true
 
 jobs:
   build:
