@@ -24,13 +24,13 @@ on:
         default: false
     secrets:
       OSSRH_USERNAME:
-        required: true
+        required: false
       OSSRH_TOKEN:
-        required: true
+        required: false
       GPG_PASSPHRASE:
-        required: true
+        required: false
       GPG_PRIVATE_KEY:
-        required: true
+        required: false
 
 jobs:
   build:
