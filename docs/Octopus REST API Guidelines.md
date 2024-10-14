@@ -71,26 +71,26 @@ Use standard HTTP status codes to indicate the result of the request:
 ### 1.7 Handle Errors Gracefully
 Return meaningful error messages in a consistent format:
 
-\`\`\`json
+```json
 {
   "error": {
     "code": 404,
     "message": "User not found"
   }
 }
-\`\`\`
+```
 
 ### 1.8 Use JSON for Responses
 Use camelCase for field names in JSON.
 
-\`\`\`json
+```json
 {
   "id": "my-component",
   "componentOwner": "John",
   "releasesInDefaultBranch": true,
   "buildSystem": "MAVEN"
 }
-\`\`\`
+```
 
 ## 2. Specific Cases
 
@@ -98,17 +98,17 @@ Use camelCase for field names in JSON.
 Use POST when queries involve sending complex data that doesn't fit neatly into query parameters, such as extensive search criteria or bulk operations.
 
 **Example**:
-\`\`\`http
+```http
 POST /artifacts/search 
-\`\`\`
+```
 
 **JSON Body**:
-\`\`\`json
+```json
 { 
     "repositoryType": "DEBIAN", 
     "deb": "pool/s/some-app/some-app_0.1.2-3_amd64.deb"
 }
-\`\`\`
+```
 
 ### 2.2 Sub-Resources and Actions
 
