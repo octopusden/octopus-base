@@ -73,10 +73,19 @@ Return meaningful error messages in a consistent format:
 
 ```json
 {
-  "error": {
+   "error": {
     "code": 404,
     "message": "User not found"
-  }
+   }
+}
+```
+
+```json
+{
+   "error": {
+      "code": 400,
+      "message": "DMS-40011"
+   }
 }
 ```
 
