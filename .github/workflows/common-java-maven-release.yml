@@ -30,6 +30,9 @@ on:
         required: false
         type: boolean
         default: false
+      release-mvn-parameters:
+        type: string
+        default: ''
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -141,7 +144,7 @@ jobs:
           gpg-passphrase: GPG_PASSPHRASE # env variable for gpg signing in deploy
 
       - name: Publish to Sonatype Nexus
-        run: mvn --batch-mode deploy -P gpg
+        run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
