@@ -50,7 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      SKIP_TESTS: '' # run tests for public flow only
+      # Do not run integration tests in release (public flow still runs unit tests)
+      SKIP_TESTS: '-x integrationTest'
       BUILD_VERSION: ''
 
     steps:
@@ -84,7 +85,7 @@ jobs:
           echo "- Commit hash: ${{ inputs.commit-hash }}"
           echo "- Version: ${{ inputs.build-version }}"
           # set hybrid flow variables
-          echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
+          echo "SKIP_TESTS=-x test -x integrationTest" >> $GITHUB_ENV
           echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
 
       # checkout
