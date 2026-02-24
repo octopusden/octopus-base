@@ -29,3 +29,4 @@ To use release registration, the `Prod` environment must contain secret `OCTOPUS
 
 Workflow lint for this release action only:
 - `Lint Release octopus-base workflow` validates only `.github/workflows/release-octopus-base.yml`.
+- `Lint GitHub workflows` validates all `.github/workflows/*.yml` files (workflow syntax and expressions).
