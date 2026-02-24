@@ -1,0 +1,132 @@
+name: Release octopus-base
+
+on:
+  workflow_dispatch:
+    inputs:
+      increment-version-level:
+        description: 'One of: {major, minor, patch}'
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      target-ref:
+        description: 'Branch or commit to release'
+        required: true
+        type: string
+        default: main
+      register-release-immediately:
+        description: 'Register release in octopus-release-log'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target-ref }}
+
+      - name: Calculate next version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          latest_tag=$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)
+          if [[ -z "$latest_tag" ]]; then
+            latest_tag="v0.0.0"
+          fi
+
+          if [[ ! "$latest_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Latest tag '$latest_tag' has unsupported format. Expected vX.Y.Z"
+            exit 1
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+
+          case "${{ inputs.increment-version-level }}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            *)
+              echo "Unsupported increment level '${{ inputs.increment-version-level }}'"
+              exit 1
+              ;;
+          esac
+
+          next_tag="v${major}.${minor}.${patch}"
+          target_sha=$(git rev-parse HEAD)
+
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "next_tag=$next_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure target tag does not exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          next_tag="${{ steps.version.outputs.next_tag }}"
+          if git ls-remote --tags origin "refs/tags/$next_tag" | grep -q .; then
+            echo "Tag '$next_tag' already exists on origin"
+            exit 1
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create \
+            "${{ steps.version.outputs.next_tag }}" \
+            --title "V${{ steps.version.outputs.release_version }}" \
+            --target "${{ steps.version.outputs.target_sha }}" \
+            --generate-notes
+
+      - name: Print release details
+        shell: bash
+        run: |
+          echo "Release created:"
+          echo "- From tag: ${{ steps.version.outputs.latest_tag }}"
+          echo "- To tag: ${{ steps.version.outputs.next_tag }}"
+          echo "- Target SHA: ${{ steps.version.outputs.target_sha }}"
+
+  register-release-in-log:
+    if: ${{ inputs.register-release-immediately }}
+    needs: create-release
+    uses: ./.github/workflows/common-register-release.yml
+    name: Register release
+    with:
+      octopus-repository: ${{ github.repository }}
+      release-version: ${{ needs.create-release.outputs.release_version }}
+    secrets: inherit
