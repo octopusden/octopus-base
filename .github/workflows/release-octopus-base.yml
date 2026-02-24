@@ -17,11 +17,6 @@ on:
         required: true
         type: string
         default: main
-      register-release-immediately:
-        description: 'Register release in octopus-release-log'
-        required: true
-        type: boolean
-        default: true
 
 permissions:
   contents: write
@@ -122,7 +117,6 @@ jobs:
           echo "- Target SHA: ${{ steps.version.outputs.target_sha }}"
 
   register-release-in-log:
-    if: ${{ inputs.register-release-immediately }}
     needs: create-release
     uses: ./.github/workflows/common-register-release.yml
     name: Register release
