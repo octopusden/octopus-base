@@ -17,6 +17,11 @@ on:
         required: true
         type: string
         default: main
+      dry-run:
+        description: 'Validate and calculate version without creating a release'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -96,6 +101,7 @@ jobs:
           fi
 
       - name: Create release
+        if: ${{ !inputs.dry-run }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -108,6 +114,13 @@ jobs:
             --target "${{ steps.version.outputs.target_sha }}" \
             --generate-notes
 
+      - name: Dry run summary
+        if: ${{ inputs.dry-run }}
+        shell: bash
+        run: |
+          echo "Dry run enabled: no GitHub Release was created."
+          echo "Calculated tag: ${{ steps.version.outputs.next_tag }}"
+
       - name: Print release details
         shell: bash
         run: |
@@ -117,6 +130,7 @@ jobs:
           echo "- Target SHA: ${{ steps.version.outputs.target_sha }}"
 
   register-release-in-log:
+    if: ${{ !inputs.dry-run }}
     needs: create-release
     uses: ./.github/workflows/common-register-release.yml
     name: Register release
