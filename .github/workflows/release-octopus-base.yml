@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
+      next_tag: ${{ steps.version.outputs.next_tag }}
 
     steps:
       - name: Checkout target ref
@@ -42,6 +43,8 @@ jobs:
 
       - name: Calculate next version
         id: version
+        env:
+          INCREMENT_LEVEL: ${{ inputs.increment-version-level }}
         shell: bash
         run: |
           set -euo pipefail
@@ -62,7 +65,7 @@ jobs:
           minor="${BASH_REMATCH[2]}"
           patch="${BASH_REMATCH[3]}"
 
-          case "${{ inputs.increment-version-level }}" in
+          case "$INCREMENT_LEVEL" in
             major)
               major=$((major + 1))
               minor=0
@@ -76,7 +79,7 @@ jobs:
               patch=$((patch + 1))
               ;;
             *)
-              echo "Unsupported increment level '${{ inputs.increment-version-level }}'"
+              echo "Unsupported increment level '$INCREMENT_LEVEL'"
               exit 1
               ;;
           esac
@@ -112,9 +115,10 @@ jobs:
 
           gh release create \
             "${{ steps.version.outputs.next_tag }}" \
-            --title "V${{ steps.version.outputs.release_version }}" \
+            --title "v${{ steps.version.outputs.release_version }}" \
             --target "${{ steps.version.outputs.target_sha }}" \
-            --generate-notes
+            --generate-notes \
+            --notes-start-tag "${{ steps.version.outputs.latest_tag }}"
 
       - name: Dry run summary
         if: ${{ inputs.dry-run }}
@@ -124,6 +128,7 @@ jobs:
           echo "Calculated tag: ${{ steps.version.outputs.next_tag }}"
 
       - name: Print release details
+        if: ${{ !inputs.dry-run }}
         shell: bash
         run: |
           echo "Release created:"
