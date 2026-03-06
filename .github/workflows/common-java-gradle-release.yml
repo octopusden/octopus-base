@@ -35,6 +35,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip-extra-tasks:
+        description: 'Comma-separated Gradle task names to exclude from build (for example: integrationTest,ft)'
+        required: false
+        type: string
+        default: ''
     secrets:
       OSSRH_USERNAME:
         required: true
@@ -50,8 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Prod
     env:
-      # Do not run integration tests in release (public flow still runs unit tests)
-      SKIP_TESTS: '-x integrationTest'
+      SKIP_TESTS: ''
       BUILD_VERSION: ''
 
     steps:
@@ -85,8 +89,31 @@ jobs:
           echo "- Commit hash: ${{ inputs.commit-hash }}"
           echo "- Version: ${{ inputs.build-version }}"
           # set hybrid flow variables
-          echo "SKIP_TESTS=-x test -x integrationTest" >> $GITHUB_ENV
+          echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
           echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
+
+      - name: Apply extra skipped tasks
+        if: inputs.skip-extra-tasks != ''
+        env:
+          SKIP_EXTRA_TASKS: ${{ inputs.skip-extra-tasks }}
+        run: |
+          echo "Applying extra skipped tasks: $SKIP_EXTRA_TASKS"
+          EXTRA_SKIP_TESTS=""
+          IFS=',' read -r -a tasks <<< "$SKIP_EXTRA_TASKS"
+          for raw_task in "${tasks[@]}"; do
+            # Trim leading/trailing spaces around task names.
+            task="${raw_task#"${raw_task%%[![:space:]]*}"}"
+            task="${task%"${task##*[![:space:]]}"}"
+            if [[ -z "$task" ]]; then
+              continue
+            fi
+            if [[ ! "$task" =~ ^[A-Za-z0-9:_.-]+$ ]]; then
+              echo "Invalid task name in skip-extra-tasks: '$task'" >&2
+              exit 1
+            fi
+            EXTRA_SKIP_TESTS="${EXTRA_SKIP_TESTS} -x ${task}"
+          done
+          echo "SKIP_TESTS=${SKIP_TESTS}${EXTRA_SKIP_TESTS}" >> "$GITHUB_ENV"
 
       # checkout
       - name: Checkout latest
