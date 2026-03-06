@@ -94,14 +94,24 @@ jobs:
 
       - name: Apply extra skipped tasks
         if: inputs.skip-extra-tasks != ''
+        env:
+          SKIP_EXTRA_TASKS: ${{ inputs.skip-extra-tasks }}
         run: |
-          echo "Applying extra skipped tasks: ${{ inputs.skip-extra-tasks }}"
+          echo "Applying extra skipped tasks: $SKIP_EXTRA_TASKS"
           EXTRA_SKIP_TESTS=""
-          IFS=', ' read -r -a tasks <<< "${{ inputs.skip-extra-tasks }}"
-          for task in "${tasks[@]}"; do
-            if [[ -n "$task" ]]; then
-              EXTRA_SKIP_TESTS="${EXTRA_SKIP_TESTS} -x ${task}"
+          IFS=',' read -r -a tasks <<< "$SKIP_EXTRA_TASKS"
+          for raw_task in "${tasks[@]}"; do
+            # Trim leading/trailing spaces around task names.
+            task="${raw_task#"${raw_task%%[![:space:]]*}"}"
+            task="${task%"${task##*[![:space:]]}"}"
+            if [[ -z "$task" ]]; then
+              continue
             fi
+            if [[ ! "$task" =~ ^[A-Za-z0-9:_.-]+$ ]]; then
+              echo "Invalid task name in skip-extra-tasks: '$task'" >&2
+              exit 1
+            fi
+            EXTRA_SKIP_TESTS="${EXTRA_SKIP_TESTS} -x ${task}"
           done
           echo "SKIP_TESTS=${SKIP_TESTS}${EXTRA_SKIP_TESTS}" >> "$GITHUB_ENV"
 
