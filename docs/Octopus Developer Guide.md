@@ -123,3 +123,55 @@ where:
         - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
         - **Do NOT** use space characters in branch names.
     - The most recent release have to be pushed with `latest` tag suffix in this position also.
+
+# Functional Tests In Gradle And CI
+
+## Gradle task naming
+
+- Canonical task name for functional/integration tests in Octopus Java services is `ft`.
+- `integrationTest` is not a built-in Gradle task name. Add it only as a compatibility alias when required by external tooling.
+
+Example alias:
+
+```kotlin
+tasks.register("integrationTest") {
+    group = "verification"
+    description = "Compatibility alias for CI tooling"
+    dependsOn("ft")
+}
+```
+
+## Lifecycle wiring
+
+- Do not bind `ft` to `build`/`check` by default.
+- Keep `ft` explicit and run it in dedicated workflows/jobs.
+- If a repository intentionally requires FT in the default lifecycle, document this in the repository README and workflow comments.
+
+## GitHub Actions reusable workflows
+
+- `common-java-gradle-build` and `common-java-gradle-release` are shared across repositories.
+- Release workflow should not assume repository-specific task names.
+- Use `skip-extra-tasks` in `common-java-gradle-release` only for tasks that really exist in the target repository.
+
+Example for a repository that has `integrationTest` task:
+
+```yaml
+jobs:
+  build:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@<tag>
+    with:
+      flow-type: hybrid
+      java-version: '21'
+      skip-extra-tasks: integrationTest
+```
+
+Example for a repository that uses only `ft` and has no `integrationTest` task:
+
+```yaml
+jobs:
+  build:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@<tag>
+    with:
+      flow-type: hybrid
+      java-version: '21'
+```
