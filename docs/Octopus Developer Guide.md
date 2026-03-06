@@ -129,17 +129,6 @@ where:
 ## Gradle task naming
 
 - Canonical task name for functional/integration tests in Octopus Java services is `ft`.
-- `integrationTest` is not a built-in Gradle task name. Add it only as a compatibility alias when required by external tooling.
-
-Example alias:
-
-```kotlin
-tasks.register("integrationTest") {
-    group = "verification"
-    description = "Compatibility alias for CI tooling"
-    dependsOn("ft")
-}
-```
 
 ## Lifecycle wiring
 
@@ -153,7 +142,7 @@ tasks.register("integrationTest") {
 - Release workflow should not assume repository-specific task names.
 - Use `skip-extra-tasks` in `common-java-gradle-release` only for tasks that really exist in the target repository.
 
-Example for a repository that has `integrationTest` task:
+Example for a repository that requires explicit `ft` exclusion:
 
 ```yaml
 jobs:
@@ -162,10 +151,10 @@ jobs:
     with:
       flow-type: hybrid
       java-version: '21'
-      skip-extra-tasks: integrationTest
+      skip-extra-tasks: ft
 ```
 
-Example for a repository that uses only `ft` and has no `integrationTest` task:
+Example for a repository that does not need extra exclusions:
 
 ```yaml
 jobs:
