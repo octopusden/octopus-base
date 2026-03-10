@@ -54,7 +54,7 @@ jobs:
     env:
       OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
       REQUIRED_WORKFLOWS_JSON: '["Build Gradle Public","Build Gradle Hybrid","Build Gradle Hybrid Docker","Build Maven Public"]'
-      OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
+      OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN || secrets.OCTOPUS_GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
@@ -67,7 +67,7 @@ jobs:
 
           if [[ -z "${OCTOPUS_TEST_PUSH_TOKEN}" ]]; then
             echo "Missing token for octopus-test push/check access."
-            echo "Configure repository secret OCTOPUS_TEST_PUSH_TOKEN or pass workflow_call secret octopus_test_push_token."
+            echo "Configure OCTOPUS_TEST_PUSH_TOKEN or OCTOPUS_GITHUB_TOKEN, or pass workflow_call secret octopus_test_push_token."
             exit 1
           fi
 

@@ -39,7 +39,7 @@ jobs:
     with:
       octopus_base_ref: ${{ inputs.target-ref }}
     secrets:
-      octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN }}
+      octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN || secrets.OCTOPUS_GITHUB_TOKEN }}
 
   create-release:
     name: Create GitHub release
