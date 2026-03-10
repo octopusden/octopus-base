@@ -1,0 +1,208 @@
+name: Gradle Security Reports
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: Java version used for security checks
+        required: true
+        type: string
+      java-distribution:
+        description: Java distribution passed to actions/setup-java
+        required: false
+        type: string
+        default: temurin
+      runs-on:
+        description: GitHub runner label
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Timeout in minutes for every security job
+        required: false
+        type: number
+        default: 20
+      enable-codeql:
+        description: Enable CodeQL analysis job
+        required: false
+        type: boolean
+        default: true
+      enable-trivy:
+        description: Enable Trivy scan job
+        required: false
+        type: boolean
+        default: true
+      enable-dependency-check:
+        description: Enable OWASP Dependency-Check report job
+        required: false
+        type: boolean
+        default: false
+      codeql-languages:
+        description: CodeQL languages
+        required: false
+        type: string
+        default: java-kotlin
+      codeql-category:
+        description: CodeQL SARIF category
+        required: false
+        type: string
+        default: /language:java-kotlin
+      codeql-continue-on-error:
+        description: Continue workflow when CodeQL fails
+        required: false
+        type: boolean
+        default: true
+      codeql-results-path:
+        description: Path pattern to CodeQL SARIF artifacts
+        required: false
+        type: string
+        default: results/**/*.sarif
+      trivy-version:
+        description: Trivy engine version
+        required: false
+        type: string
+        default: v0.69.3
+      trivy-scan-type:
+        description: Trivy scan type
+        required: false
+        type: string
+        default: fs
+      trivy-scan-ref:
+        description: Trivy scan target
+        required: false
+        type: string
+        default: .
+      trivy-scanners:
+        description: Trivy scanners list
+        required: false
+        type: string
+        default: vuln,misconfig,secret
+      trivy-severity:
+        description: Trivy severities filter
+        required: false
+        type: string
+        default: MEDIUM,HIGH,CRITICAL
+      trivy-sarif-output:
+        description: Trivy SARIF output file
+        required: false
+        type: string
+        default: trivy-results.sarif
+      trivy-continue-on-error:
+        description: Continue workflow when Trivy scan fails
+        required: false
+        type: boolean
+        default: true
+      dependency-check-command:
+        description: Gradle command to generate dependency-check report
+        required: false
+        type: string
+        default: ./gradlew securityReport --no-daemon --stacktrace
+      dependency-check-sarif-path:
+        description: Path to dependency-check SARIF file
+        required: false
+        type: string
+        default: build/reports/dependency-check/dependency-check-report.sarif
+      dependency-check-reports-path:
+        description: Path pattern for dependency-check report artifacts
+        required: false
+        type: string
+        default: build/reports/dependency-check/**
+      dependency-check-continue-on-error:
+        description: Continue workflow when dependency-check fails
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  dependency-check:
+    name: security/dependency-check
+    if: ${{ inputs.enable-dependency-check }}
+    runs-on: ${{ inputs.runs-on }}
+    continue-on-error: ${{ inputs.dependency-check-continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Run OWASP Dependency-Check (report-only)
+        run: ${{ inputs.dependency-check-command }}
+      - name: Upload Dependency-Check SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.dependency-check-sarif-path }}
+      - name: Upload Dependency-Check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-reports
+          path: ${{ inputs.dependency-check-reports-path }}
+          if-no-files-found: warn
+
+  codeql:
+    name: security/codeql
+    if: ${{ inputs.enable-codeql }}
+    runs-on: ${{ inputs.runs-on }}
+    continue-on-error: ${{ inputs.codeql-continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ inputs.codeql-languages }}
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: ${{ inputs.codeql-category }}
+      - name: Upload CodeQL report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: ${{ inputs.codeql-results-path }}
+          if-no-files-found: warn
+
+  trivy:
+    name: security/trivy
+    if: ${{ inputs.enable-trivy }}
+    runs-on: ${{ inputs.runs-on }}
+    continue-on-error: ${{ inputs.trivy-continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan (report-only)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.34.2
+        with:
+          version: ${{ inputs.trivy-version }}
+          scan-type: ${{ inputs.trivy-scan-type }}
+          scan-ref: ${{ inputs.trivy-scan-ref }}
+          scanners: ${{ inputs.trivy-scanners }}
+          format: sarif
+          output: ${{ inputs.trivy-sarif-output }}
+          severity: ${{ inputs.trivy-severity }}
+          exit-code: "0"
+      - name: Upload Trivy SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.trivy-sarif-output }}
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif
+          path: ${{ inputs.trivy-sarif-output }}
+          if-no-files-found: warn

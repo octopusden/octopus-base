@@ -105,3 +105,84 @@ To publish to the docker registry:
 - [Release workflow(non-docker)](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/release.yml)
 - [Release workflow(with docker)](https://github.com/octopusden/octopus-employee-service/blob/main/.github/workflows/buildAndRelease.yml)
 - [Build workflow](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/build.yml)
+
+## Reusable Quality and Security Gates (Gradle)
+
+Use reusable workflows from `octopus-base` to avoid copy-paste between repositories.
+
+### Quality gates workflow
+
+Reusable workflow: `.github/workflows/common-java-gradle-quality-gates.yml`
+
+It provides:
+- `quality/wrapper-validation`
+- `quality/static`
+- `quality/tests-coverage`
+
+Consumer workflow example:
+
+```yaml
+name: Quality Gates
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  quality:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-quality-gates.yml@<octopus-base-tag>
+    with:
+      java-version: "21"
+      static-command: ./gradlew qualityStatic --no-daemon --stacktrace
+      coverage-command: ./gradlew qualityCoverage --no-daemon --stacktrace
+```
+
+### Security reports workflow
+
+Reusable workflow: `.github/workflows/common-java-gradle-security-reports.yml`
+
+It provides:
+- `security/codeql`
+- `security/trivy`
+- `security/dependency-check` (report-only, optional)
+
+Consumer workflow example:
+
+```yaml
+name: Security Reports
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  security:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-security-reports.yml@<octopus-base-tag>
+    with:
+      java-version: "21"
+      enable-dependency-check: false
+      dependency-check-command: ./gradlew securityReport --no-daemon --stacktrace
+```
+
+### Gradle prerequisites in consumer repository
+
+- `qualityStatic` task for static checks
+- `qualityCoverage` task for tests + coverage
+- `securityReport` task for dependency-check report (if dependency-check is enabled)
+
+### Suggested required checks in branch protection
+
+- `quality/wrapper-validation`
+- `quality/static`
+- `quality/tests-coverage`
+
+Security checks are usually report-only and can stay non-blocking by default:
+- `security/codeql`
+- `security/trivy`
+- `security/dependency-check`
