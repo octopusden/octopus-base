@@ -1,0 +1,91 @@
+name: Gradle Quality Gates
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: Java version used for quality checks
+        required: true
+        type: string
+      runs-on:
+        description: GitHub runner label
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Timeout in minutes for every quality job
+        required: false
+        type: number
+        default: 20
+      static-command:
+        description: Command for static quality checks
+        required: false
+        type: string
+        default: ./gradlew qualityStatic --no-daemon --stacktrace
+      coverage-command:
+        description: Command for tests and coverage quality checks
+        required: false
+        type: string
+        default: ./gradlew qualityCoverage --no-daemon --stacktrace
+      static-reports-path:
+        description: Multiline glob with static quality reports
+        required: false
+        type: string
+        default: |
+          **/build/reports/detekt/**
+          **/build/reports/ktlint/**
+      coverage-reports-path:
+        description: Multiline glob with test and coverage reports
+        required: false
+        type: string
+        default: |
+          **/build/reports/kover/**
+          **/build/reports/jacoco/**
+          **/build/reports/tests/**
+          **/build/test-results/**
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    name: quality/static
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Run static checks
+        run: ${{ inputs.static-command }}
+      - name: Upload static analysis reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-analysis-reports
+          path: ${{ inputs.static-reports-path }}
+          if-no-files-found: warn
+
+  tests-coverage:
+    name: quality/tests-coverage
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Run tests and coverage verification
+        run: ${{ inputs.coverage-command }}
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: ${{ inputs.coverage-reports-path }}
+          if-no-files-found: warn
