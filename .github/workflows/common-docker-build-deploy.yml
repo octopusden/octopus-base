@@ -61,4 +61,3 @@ jobs:
           push: ${{ inputs.tags != '' }}
           build-args: ${{ inputs.build-args }}
           tags: ${{ inputs.tags }}
-
