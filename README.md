@@ -33,9 +33,18 @@ Note: `Prod` environment secrets are not available to `pull_request` checks unle
 Workflow lint for this release action only:
 - `Lint Release octopus-base workflow` validates only `.github/workflows/release-octopus-base.yml`.
 
-## Manual consumer verification in octopus-test
+## Automated consumer verification in octopus-test
 
-Use this check before merge/release when reusable workflows are changed.
+Default path:
+- PR changes in `.github/workflows/**`, `.github/actions/**`, and `.github/scripts/update-octopus-test-refs.sh` trigger `Check octopus-test consumer`.
+- Release flow can run the same gate when `verify_octopus_test=true`.
+
+Required secret:
+- repository secret `OCTOPUS_TEST_PUSH_TOKEN`
+
+## Manual fallback: consumer verification in octopus-test
+
+Use this only for debugging or emergency verification when automation cannot be used.
 
 1. Get the PR head SHA from `octopus-base`:
 ```bash
