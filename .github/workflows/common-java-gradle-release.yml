@@ -152,7 +152,7 @@ jobs:
       # push to docker
       - name: Log in to Docker Registry
         if: inputs.docker-image
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
