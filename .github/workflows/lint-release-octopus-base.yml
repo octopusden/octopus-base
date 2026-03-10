@@ -3,8 +3,12 @@ name: Lint Release octopus-base workflow
 on:
   pull_request:
     paths:
+      - .github/workflows/check-octopus-test-consumer.yml
       - .github/workflows/release-octopus-base.yml
+      - .github/workflows/verify-octopus-test-consumer.yml
       - .github/workflows/lint-release-octopus-base.yml
+      - .github/scripts/sync-internal-action-refs.sh
+      - .github/scripts/update-octopus-test-refs.sh
   workflow_dispatch:
 
 permissions:
@@ -24,4 +28,13 @@ jobs:
           set -euo pipefail
           docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 \
             -color \
-            .github/workflows/release-octopus-base.yml
+            .github/workflows/check-octopus-test-consumer.yml \
+            .github/workflows/release-octopus-base.yml \
+            .github/workflows/verify-octopus-test-consumer.yml
+
+      - name: Validate verification helper script
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n .github/scripts/sync-internal-action-refs.sh
+          bash -n .github/scripts/update-octopus-test-refs.sh

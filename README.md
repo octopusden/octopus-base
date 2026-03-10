@@ -29,3 +29,37 @@ To use release registration, the `Prod` environment must contain secret `OCTOPUS
 
 Workflow lint for this release action only:
 - `Lint Release octopus-base workflow` validates only `.github/workflows/release-octopus-base.yml`.
+
+## Manual consumer verification in octopus-test
+
+Use this check before merge/release when reusable workflows are changed.
+
+1. Get the PR head SHA from `octopus-base`:
+```bash
+gh pr view <PR_NUMBER> --repo octopusden/octopus-base --json headRefOid -q .headRefOid
+```
+2. Prepare a temporary branch in `octopus-test` from `main` and rewrite refs to that SHA:
+```bash
+repo=/private/tmp/octopus-test-repo
+script=/path/to/octopus-base/.github/scripts/update-octopus-test-refs.sh
+branch=test/verify-octopus-base-pr<PR_NUMBER>-$(date -u +%Y%m%d-%H%M%S)
+sha=<PR_HEAD_SHA>
+
+git -C "$repo" fetch origin main
+git -C "$repo" checkout -B "$branch" origin/main
+bash "$script" "$repo" "$sha"
+git -C "$repo" add .github/workflows
+git -C "$repo" commit -m "ci: verify octopus-base PR<PR_NUMBER> $sha"
+git -C "$repo" push -u origin "$branch"
+```
+3. Wait for required `octopus-test` workflows and check all are `success`:
+```bash
+gh run list -R octopusden/octopus-test --branch "$branch" --limit 20 \
+  --json workflowName,status,conclusion,url
+```
+
+Required workflows:
+- `Build Gradle Public`
+- `Build Gradle Hybrid`
+- `Build Gradle Hybrid Docker`
+- `Build Maven Public`

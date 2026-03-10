@@ -1,0 +1,209 @@
+name: Verify octopus-test consumer
+
+on:
+  workflow_dispatch:
+    inputs:
+      octopus_base_ref:
+        description: 'Tag, branch, or SHA from octopus-base to verify in octopus-test'
+        required: false
+        type: string
+        default: ''
+      octopus_test_base_ref:
+        description: 'Base branch in octopus-test used for the verification branch'
+        required: true
+        type: string
+        default: main
+      verify_branch:
+        description: 'Optional octopus-test branch name override'
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: 'How long to wait for octopus-test build workflows'
+        required: true
+        type: number
+        default: 30
+  workflow_call:
+    inputs:
+      octopus_base_ref:
+        required: false
+        type: string
+        default: ''
+      octopus_test_base_ref:
+        required: false
+        type: string
+        default: main
+      verify_branch:
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        required: false
+        type: number
+        default: 30
+    secrets:
+      octopus_test_push_token:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
+      REQUIRED_WORKFLOWS_JSON: '["Build Gradle Public","Build Gradle Hybrid","Build Gradle Hybrid Docker","Build Maven Public"]'
+      OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate token
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${OCTOPUS_TEST_PUSH_TOKEN}" ]]; then
+            echo "Missing token for octopus-test push/check access."
+            echo "Configure repository secret OCTOPUS_TEST_PUSH_TOKEN or pass workflow_call secret octopus_test_push_token."
+            exit 1
+          fi
+
+      - name: Resolve verification context
+        id: context
+        shell: bash
+        env:
+          INPUT_OCTOPUS_BASE_REF: ${{ inputs.octopus_base_ref }}
+          INPUT_OCTOPUS_TEST_BASE_REF: ${{ inputs.octopus_test_base_ref }}
+          INPUT_VERIFY_BRANCH: ${{ inputs.verify_branch }}
+        run: |
+          set -euo pipefail
+
+          octopus_base_ref="${INPUT_OCTOPUS_BASE_REF:-$GITHUB_SHA}"
+          octopus_test_base_ref="${INPUT_OCTOPUS_TEST_BASE_REF:-main}"
+
+          if [[ -n "${INPUT_VERIFY_BRANCH}" ]]; then
+            verify_branch="${INPUT_VERIFY_BRANCH}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            verify_branch="verify/octopus-base-pr-${{ github.event.pull_request.number }}"
+          else
+            verify_branch="verify/octopus-base-run-${GITHUB_RUN_ID}"
+          fi
+
+          {
+            echo "octopus_base_ref=$octopus_base_ref"
+            echo "octopus_test_base_ref=$octopus_test_base_ref"
+            echo "verify_branch=$verify_branch"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### octopus-test verification"
+            echo "- octopus-base ref: \`$octopus_base_ref\`"
+            echo "- octopus-test base: \`$octopus_test_base_ref\`"
+            echo "- verification branch: \`$verify_branch\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clone octopus-test
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${OCTOPUS_TEST_REPOSITORY}.git" /tmp/octopus-test-consumer
+
+      - name: Prepare verification branch
+        id: push
+        shell: bash
+        env:
+          OCTOPUS_BASE_REF: ${{ steps.context.outputs.octopus_base_ref }}
+          OCTOPUS_TEST_BASE_REF: ${{ steps.context.outputs.octopus_test_base_ref }}
+          VERIFY_BRANCH: ${{ steps.context.outputs.verify_branch }}
+        run: |
+          set -euo pipefail
+
+          cd /tmp/octopus-test-consumer
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "$OCTOPUS_TEST_BASE_REF"
+          git checkout -B "$VERIFY_BRANCH" "origin/$OCTOPUS_TEST_BASE_REF"
+
+          bash "$GITHUB_WORKSPACE/.github/scripts/update-octopus-test-refs.sh" "$PWD" "$OCTOPUS_BASE_REF"
+
+          git add .github/workflows
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "ci: retrigger octopus-test verification for $OCTOPUS_BASE_REF"
+          else
+            git commit -m "ci: verify octopus-base $OCTOPUS_BASE_REF in octopus-test"
+          fi
+
+          git push --force-with-lease origin "HEAD:$VERIFY_BRANCH"
+
+          verify_sha="$(git rev-parse HEAD)"
+          echo "verify_sha=$verify_sha" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "- verification commit: \`$verify_sha\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for octopus-test build workflows
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          VERIFY_BRANCH: ${{ steps.context.outputs.verify_branch }}
+          VERIFY_SHA: ${{ steps.push.outputs.verify_sha }}
+        run: |
+          set -euo pipefail
+
+          deadline=$((SECONDS + TIMEOUT_MINUTES * 60))
+          expected_count=$(jq 'length' <<<"${REQUIRED_WORKFLOWS_JSON}")
+
+          while (( SECONDS < deadline )); do
+            runs_json="$(gh run list \
+              -R "${OCTOPUS_TEST_REPOSITORY}" \
+              --branch "${VERIFY_BRANCH}" \
+              --limit 50 \
+              --json workflowName,status,conclusion,headSha,url)"
+
+            matching_runs="$(jq \
+              --arg sha "${VERIFY_SHA}" \
+              --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
+              '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $required | index($workflow)))]' \
+              <<<"${runs_json}")"
+
+            found_count=$(jq 'length' <<<"${matching_runs}")
+            if (( found_count < expected_count )); then
+              sleep 15
+              continue
+            fi
+
+            pending_count=$(jq '[.[] | select(.status != "completed")] | length' <<<"${matching_runs}")
+            if (( pending_count > 0 )); then
+              sleep 15
+              continue
+            fi
+
+            {
+              echo ""
+              echo "#### octopus-test build workflows"
+              jq -r '.[] | "- \(.workflowName): \(.conclusion) ([run](\(.url)))"' <<<"${matching_runs}"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            failed_runs="$(jq '[.[] | select(.conclusion != "success")]' <<<"${matching_runs}")"
+            if [[ "$(jq 'length' <<<"${failed_runs}")" != "0" ]]; then
+              echo "octopus-test verification failed:"
+              jq -r '.[] | "- \(.workflowName): \(.conclusion) (\(.url))"' <<<"${failed_runs}"
+              exit 1
+            fi
+
+            echo "octopus-test verification passed."
+            exit 0
+          done
+
+          echo "Timed out waiting for octopus-test workflows on branch '${VERIFY_BRANCH}'."
+          exit 1
