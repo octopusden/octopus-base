@@ -42,4 +42,4 @@ jobs:
       verify_branch: ${{ inputs.verify_branch || (github.event_name == 'pull_request' && format('verify/octopus-base-pr-{0}', github.event.pull_request.number) || '') }}
       timeout_minutes: ${{ inputs.timeout_minutes || 30 }}
     secrets:
-      octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN || secrets.OCTOPUS_GITHUB_TOKEN }}
+      octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN }}

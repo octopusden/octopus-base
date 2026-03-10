@@ -28,7 +28,6 @@ The workflow:
 To use release registration, the `Prod` environment must contain secret `OCTOPUS_GITHUB_TOKEN`.
 
 To use automated `octopus-test` consumer verification (`Check octopus-test consumer` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
-As a fallback, repository secret `OCTOPUS_GITHUB_TOKEN` is also supported.
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
 
 Workflow lint for this release action only:
