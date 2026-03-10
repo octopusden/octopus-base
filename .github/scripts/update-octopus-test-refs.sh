@@ -17,15 +17,27 @@ if [[ ! -d "$workflow_dir" ]]; then
 fi
 
 workflow_files=()
-while IFS= read -r workflow_file; do
-  workflow_files+=("$workflow_file")
-done < <(
-  rg -l "uses:\\s+octopusden/octopus-base/\\.github/workflows/" \
-    "$workflow_dir" \
-    -g '*.yml' \
-    -g '*.yaml' \
-    | sort
-)
+if command -v rg >/dev/null 2>&1; then
+  while IFS= read -r workflow_file; do
+    workflow_files+=("$workflow_file")
+  done < <(
+    rg -l "uses:\\s+octopusden/octopus-base/\\.github/workflows/" \
+      "$workflow_dir" \
+      -g '*.yml' \
+      -g '*.yaml' \
+      | sort
+  )
+else
+  while IFS= read -r -d '' workflow_file; do
+    if grep -qE "uses:[[:space:]]+octopusden/octopus-base/\\.github/workflows/" "$workflow_file"; then
+      workflow_files+=("$workflow_file")
+    fi
+  done < <(find "$workflow_dir" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+
+  if [[ ${#workflow_files[@]} -gt 0 ]]; then
+    mapfile -t workflow_files < <(printf '%s\n' "${workflow_files[@]}" | sort)
+  fi
+fi
 
 if [[ ${#workflow_files[@]} -eq 0 ]]; then
   echo "No octopus-base reusable workflow references found under '$workflow_dir'"
