@@ -176,7 +176,7 @@ jobs:
             exit 1
           fi
 
-          target_branch="${TARGET_BRANCH}"
+          target_branch="${TARGET_BRANCH:-}"
           if [[ -z "${target_branch}" ]]; then
             echo "target-ref '${{ inputs.target-ref }}' is not a branch."
             echo "Release with sync requires a branch target."
