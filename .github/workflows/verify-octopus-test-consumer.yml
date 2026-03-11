@@ -54,6 +54,7 @@ jobs:
     env:
       OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
       REQUIRED_WORKFLOWS_JSON: '["Build Gradle Public","Build Gradle Hybrid","Build Gradle Hybrid Docker","Build Maven Public"]'
+      # Uppercase fallback keeps manual workflow_dispatch compatible with repository-level secret.
       OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
     steps:
@@ -141,7 +142,8 @@ jobs:
             git commit -m "ci: verify octopus-base $OCTOPUS_BASE_REF in octopus-test"
           fi
 
-          git push --force-with-lease origin "HEAD:$VERIFY_BRANCH"
+          # Verification branch is disposable; force push avoids lease races across reruns.
+          git push --force origin "HEAD:$VERIFY_BRANCH"
 
           verify_sha="$(git rev-parse HEAD)"
           echo "verify_sha=$verify_sha" >> "$GITHUB_OUTPUT"
@@ -178,12 +180,20 @@ jobs:
 
             found_count=$(jq 'length' <<<"${matching_runs}")
             if (( found_count < expected_count )); then
+              missing_workflows="$(jq \
+                --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
+                --argjson runs "${matching_runs}" \
+                -r '[ $required[] as $workflow | select(($runs | map(.workflowName) | index($workflow)) | not) ] | join(", ")' \
+              )"
+              echo "Waiting for workflow runs to appear (found ${found_count}/${expected_count}). Missing: ${missing_workflows}"
               sleep 15
               continue
             fi
 
             pending_count=$(jq '[.[] | select(.status != "completed")] | length' <<<"${matching_runs}")
             if (( pending_count > 0 )); then
+              pending_workflows="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${matching_runs}")"
+              echo "Waiting for workflows to complete (pending ${pending_count}/${expected_count}): ${pending_workflows}"
               sleep 15
               continue
             fi

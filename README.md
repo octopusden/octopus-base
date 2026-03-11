@@ -52,7 +52,7 @@ gh pr view <PR_NUMBER> --repo octopusden/octopus-base --json headRefOid -q .head
 ```
 2. Prepare a temporary branch in `octopus-test` from `main` and rewrite refs to that SHA:
 ```bash
-repo=/private/tmp/octopus-test-repo
+repo=/tmp/octopus-test-repo
 script=/path/to/octopus-base/.github/scripts/update-octopus-test-refs.sh
 branch=test/verify-octopus-base-pr<PR_NUMBER>-$(date -u +%Y%m%d-%H%M%S)
 sha=<PR_HEAD_SHA>

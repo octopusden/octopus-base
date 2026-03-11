@@ -44,7 +44,7 @@ jobs:
   create-release:
     name: Create GitHub release
     needs: verify-octopus-test
-    if: ${{ !inputs.verify_octopus_test || needs.verify-octopus-test.result == 'success' }}
+    if: ${{ always() && (!inputs.verify_octopus_test || needs.verify-octopus-test.result == 'success') }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
@@ -131,6 +131,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ -z "${NEXT_TAG}" ]]; then
+            echo "NEXT_TAG is empty"
+            exit 1
+          fi
 
           target_branch="${TARGET_REF#refs/heads/}"
           if ! git ls-remote --exit-code --heads origin "${target_branch}" >/dev/null 2>&1; then

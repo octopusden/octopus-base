@@ -10,6 +10,8 @@ fi
 repo_dir=$1
 octopus_base_ref=$2
 workflow_dir="$repo_dir/.github/workflows"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+collect_script="${script_dir}/collect-workflow-files.sh"
 
 if [[ ! -d "$workflow_dir" ]]; then
   echo "Workflow directory '$workflow_dir' does not exist"
@@ -17,29 +19,12 @@ if [[ ! -d "$workflow_dir" ]]; then
 fi
 
 workflow_files=()
-if command -v rg >/dev/null 2>&1; then
-  while IFS= read -r workflow_file; do
-    workflow_files+=("$workflow_file")
-  done < <(
-    rg -l "uses:\\s+octopusden/octopus-base/\\.github/workflows/" \
-      "$workflow_dir" \
-      -g '*.yml' \
-      -g '*.yaml' \
-      | sort
-  )
-else
-  while IFS= read -r -d '' workflow_file; do
-    if grep -qE "uses:[[:space:]]+octopusden/octopus-base/\\.github/workflows/" "$workflow_file"; then
-      workflow_files+=("$workflow_file")
-    fi
-  done < <(find "$workflow_dir" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
-
-  if [[ ${#workflow_files[@]} -gt 0 ]]; then
-    mapfile -t workflow_files < <(printf '%s\n' "${workflow_files[@]}" | sort)
-  fi
-fi
+while IFS= read -r workflow_file; do
+  workflow_files+=("$workflow_file")
+done < <(bash "$collect_script" "$workflow_dir" "uses:[[:space:]]+octopusden/octopus-base/\\.github/workflows/")
 
 if [[ ${#workflow_files[@]} -eq 0 ]]; then
+  # For consumer verification this is mandatory; fail fast if no refs were rewritten.
   echo "No octopus-base reusable workflow references found under '$workflow_dir'"
   exit 1
 fi
