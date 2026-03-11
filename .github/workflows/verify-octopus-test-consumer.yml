@@ -170,12 +170,15 @@ jobs:
               -R "${OCTOPUS_TEST_REPOSITORY}" \
               --branch "${VERIFY_BRANCH}" \
               --limit 50 \
-              --json workflowName,status,conclusion,headSha,url)"
+              --json workflowName,status,conclusion,headSha,url,createdAt)"
 
             matching_runs="$(jq \
               --arg sha "${VERIFY_SHA}" \
               --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
-              '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $required | index($workflow)))]' \
+              '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $required | index($workflow)))] 
+               | sort_by(.workflowName, .createdAt)
+               | group_by(.workflowName)
+               | map(last)' \
               <<<"${runs_json}")"
 
             found_count=$(jq 'length' <<<"${matching_runs}")

@@ -31,7 +31,7 @@ To use automated `octopus-test` consumer verification (`Check octopus-test consu
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
 
 Workflow lint for this release action only:
-- `Lint Release octopus-base workflow` validates only `.github/workflows/release-octopus-base.yml`.
+- `Lint Release octopus-base workflow` validates `.github/workflows/check-octopus-test-consumer.yml`, `.github/workflows/release-octopus-base.yml`, `.github/workflows/verify-octopus-test-consumer.yml`, and runs `bash -n` for related helper scripts.
 
 ## Automated consumer verification in octopus-test
 
