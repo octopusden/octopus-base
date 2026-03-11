@@ -20,14 +20,13 @@ if command -v rg >/dev/null 2>&1; then
     "$workflow_dir" \
     -g '*.yml' \
     -g '*.yaml' \
-    | sort
-  exit 0
+    | sort || [ $? -eq 1 ]
+else
+  {
+    while IFS= read -r -d '' workflow_file; do
+      if grep -qE "$uses_regex" "$workflow_file"; then
+        printf '%s\n' "$workflow_file"
+      fi
+    done < <(find "$workflow_dir" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+  } | sort
 fi
-
-{
-  while IFS= read -r -d '' workflow_file; do
-    if grep -qE "$uses_regex" "$workflow_file"; then
-      printf '%s\n' "$workflow_file"
-    fi
-  done < <(find "$workflow_dir" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
-} | sort

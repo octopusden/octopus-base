@@ -7,6 +7,7 @@ on:
       - .github/workflows/release-octopus-base.yml
       - .github/workflows/verify-octopus-test-consumer.yml
       - .github/workflows/lint-release-octopus-base.yml
+      - .github/scripts/collect-workflow-files.sh
       - .github/scripts/sync-internal-action-refs.sh
       - .github/scripts/update-octopus-test-refs.sh
   workflow_dispatch:
@@ -36,5 +37,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash -n .github/scripts/collect-workflow-files.sh
           bash -n .github/scripts/sync-internal-action-refs.sh
           bash -n .github/scripts/update-octopus-test-refs.sh
