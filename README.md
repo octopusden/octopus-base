@@ -27,5 +27,65 @@ The workflow:
 
 To use release registration, the `Prod` environment must contain secret `OCTOPUS_GITHUB_TOKEN`.
 
+To use automated `octopus-test` consumer verification (`Check octopus-test consumer` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
+Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
+
 Workflow lint for this release action only:
-- `Lint Release octopus-base workflow` validates only `.github/workflows/release-octopus-base.yml`.
+- `Lint Release octopus-base workflow` validates `.github/workflows/check-octopus-test-consumer.yml`, `.github/workflows/release-octopus-base.yml`, `.github/workflows/verify-octopus-test-consumer.yml`, and runs `bash -n` for related helper scripts.
+
+## Automated consumer verification in octopus-test
+
+What this is:
+- A CI gate that validates changes in `octopus-base` workflows/actions against a real consumer repository (`octopus-test`) before merge/release.
+- The gate creates/updates verification branch `verify/octopus-base-pr-<PR_NUMBER>` in `octopus-test`, rewrites `octopus-base` workflow refs to the tested SHA, and waits for required consumer build workflows.
+- If any required consumer workflow fails (or does not complete in time), the check fails.
+
+How a developer uses it:
+1. For PRs that touch `.github/workflows/**`, `.github/actions/**`, or `.github/scripts/update-octopus-test-refs.sh`, just open/update the PR and wait for `Check octopus-test consumer`.
+2. If you need to run the same check manually, start `Actions` -> `Check octopus-test consumer` and provide optional inputs (`octopus_base_ref`, `verify_branch`, `timeout_minutes`).
+3. Before cutting a release, you can run the same gate from `Release octopus-base` by setting `verify_octopus_test=true`.
+
+Where to look for results:
+- PR checks show pass/fail summary for `Verify octopus-test consumer / verify`.
+- Detailed links to required `octopus-test` workflow runs are written into the workflow job summary.
+
+Default path:
+- PR changes in `.github/workflows/**`, `.github/actions/**`, and `.github/scripts/update-octopus-test-refs.sh` trigger `Check octopus-test consumer`.
+- Release flow can run the same gate when `verify_octopus_test=true`.
+
+Required secret:
+- repository secret `OCTOPUS_TEST_PUSH_TOKEN`
+
+## Manual fallback: consumer verification in octopus-test
+
+Use this only for debugging or emergency verification when automation cannot be used.
+
+1. Get the PR head SHA from `octopus-base`:
+```bash
+gh pr view <PR_NUMBER> --repo octopusden/octopus-base --json headRefOid -q .headRefOid
+```
+2. Prepare a temporary branch in `octopus-test` from `main` and rewrite refs to that SHA:
+```bash
+repo=/tmp/octopus-test-repo
+script=/path/to/octopus-base/.github/scripts/update-octopus-test-refs.sh
+branch=test/verify-octopus-base-pr<PR_NUMBER>-$(date -u +%Y%m%d-%H%M%S)
+sha=<PR_HEAD_SHA>
+
+git -C "$repo" fetch origin main
+git -C "$repo" checkout -B "$branch" origin/main
+bash "$script" "$repo" "$sha"
+git -C "$repo" add .github/workflows
+git -C "$repo" commit -m "ci: verify octopus-base PR<PR_NUMBER> $sha"
+git -C "$repo" push -u origin "$branch"
+```
+3. Wait for required `octopus-test` workflows and check all are `success`:
+```bash
+gh run list -R octopusden/octopus-test --branch "$branch" --limit 20 \
+  --json workflowName,status,conclusion,url
+```
+
+Required workflows:
+- `Build Gradle Public`
+- `Build Gradle Hybrid`
+- `Build Gradle Hybrid Docker`
+- `Build Maven Public`

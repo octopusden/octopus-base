@@ -1,0 +1,45 @@
+name: Check octopus-test consumer
+
+on:
+  pull_request:
+    paths:
+      - .github/actions/**
+      - .github/scripts/update-octopus-test-refs.sh
+      - .github/workflows/**
+  workflow_dispatch:
+    inputs:
+      octopus_base_ref:
+        description: 'Optional tag, branch, or SHA to verify in octopus-test'
+        required: false
+        type: string
+        default: ''
+      octopus_test_base_ref:
+        description: 'Base branch in octopus-test used for the verification branch'
+        required: true
+        type: string
+        default: main
+      verify_branch:
+        description: 'Optional octopus-test branch name override'
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: 'How long to wait for octopus-test build workflows'
+        required: true
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify octopus-test consumer
+    uses: ./.github/workflows/verify-octopus-test-consumer.yml
+    with:
+      octopus_base_ref: ${{ inputs.octopus_base_ref || (github.event_name == 'pull_request' && github.event.pull_request.head.sha || '') }}
+      octopus_test_base_ref: ${{ inputs.octopus_test_base_ref || 'main' }}
+      verify_branch: ${{ inputs.verify_branch || (github.event_name == 'pull_request' && format('verify/octopus-base-pr-{0}', github.event.pull_request.number) || '') }}
+      timeout_minutes: ${{ inputs.timeout_minutes || 30 }}
+    secrets:
+      octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN }}
