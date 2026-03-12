@@ -91,3 +91,7 @@ Required workflows:
 - `Build Gradle Hybrid`
 - `Build Gradle Hybrid Docker`
 - `Build Maven Public`
+
+Optional workflows (checked when present in `octopus-test`):
+- `Quality Gates`
+- `Security Reports`

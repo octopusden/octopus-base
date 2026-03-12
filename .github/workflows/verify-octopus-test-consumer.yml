@@ -19,7 +19,7 @@ on:
         type: string
         default: ''
       timeout_minutes:
-        description: 'How long to wait for octopus-test build workflows'
+        description: 'How long to wait for octopus-test workflows'
         required: true
         type: number
         default: 30
@@ -54,6 +54,7 @@ jobs:
     env:
       OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
       REQUIRED_WORKFLOWS_JSON: '["Build Gradle Public","Build Gradle Hybrid","Build Gradle Hybrid Docker","Build Maven Public"]'
+      OPTIONAL_WORKFLOWS_JSON: '["Quality Gates","Security Reports"]'
       # Uppercase fallback keeps manual workflow_dispatch compatible with repository-level secret.
       OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
@@ -152,7 +153,7 @@ jobs:
             echo "- verification commit: \`$verify_sha\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Wait for octopus-test build workflows
+      - name: Wait for octopus-test workflows
         shell: bash
         env:
           GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
@@ -172,7 +173,7 @@ jobs:
               --limit 50 \
               --json workflowName,status,conclusion,headSha,url,createdAt)"
 
-            matching_runs="$(jq \
+            required_runs="$(jq \
               --arg sha "${VERIFY_SHA}" \
               --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
               '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $required | index($workflow)))] 
@@ -181,11 +182,20 @@ jobs:
                | map(last)' \
               <<<"${runs_json}")"
 
-            found_count=$(jq 'length' <<<"${matching_runs}")
+            optional_runs="$(jq \
+              --arg sha "${VERIFY_SHA}" \
+              --argjson optional "${OPTIONAL_WORKFLOWS_JSON}" \
+              '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $optional | index($workflow)))] 
+               | sort_by(.workflowName, .createdAt)
+               | group_by(.workflowName)
+               | map(last)' \
+              <<<"${runs_json}")"
+
+            found_count=$(jq 'length' <<<"${required_runs}")
             if (( found_count < expected_count )); then
               missing_workflows="$(jq \
                 --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
-                --argjson runs "${matching_runs}" \
+                --argjson runs "${required_runs}" \
                 -r '[ $required[] as $workflow | select(($runs | map(.workflowName) | index($workflow)) | not) ] | join(", ")' \
               )"
               echo "Waiting for workflow runs to appear (found ${found_count}/${expected_count}). Missing: ${missing_workflows}"
@@ -193,17 +203,22 @@ jobs:
               continue
             fi
 
+            matching_runs="$(jq -n \
+              --argjson required "${required_runs}" \
+              --argjson optional "${optional_runs}" \
+              '$required + $optional')"
+
             pending_count=$(jq '[.[] | select(.status != "completed")] | length' <<<"${matching_runs}")
             if (( pending_count > 0 )); then
               pending_workflows="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${matching_runs}")"
-              echo "Waiting for workflows to complete (pending ${pending_count}/${expected_count}): ${pending_workflows}"
+              echo "Waiting for workflows to complete (pending ${pending_count}): ${pending_workflows}"
               sleep 15
               continue
             fi
 
             {
               echo ""
-              echo "#### octopus-test build workflows"
+              echo "#### octopus-test workflows"
               jq -r '.[] | "- \(.workflowName): \(.conclusion) ([run](\(.url)))"' <<<"${matching_runs}"
             } >> "$GITHUB_STEP_SUMMARY"
 
