@@ -188,3 +188,10 @@ Security checks are usually report-only and can stay non-blocking by default:
 - `security/codeql`
 - `security/trivy`
 - `security/dependency-check`
+
+### Required check for octopus-base
+
+In `octopus-base` repository itself, configure branch protection so this check is required:
+- `Verify octopus-test consumer / verify`
+
+This makes canary verification in `octopus-test` a merge blocker for workflow/action changes in `octopus-base`.
