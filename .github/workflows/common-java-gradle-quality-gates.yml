@@ -84,7 +84,7 @@ jobs:
         with:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
-      - uses: gradle/actions/setup-gradle@v3
+      - uses: gradle/actions/setup-gradle@v4
       - name: Run static checks
         run: ${{ inputs.static-command }}
       - name: Upload static analysis reports
@@ -107,7 +107,7 @@ jobs:
         with:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
-      - uses: gradle/actions/setup-gradle@v3
+      - uses: gradle/actions/setup-gradle@v4
       - name: Run tests and coverage verification
         run: ${{ inputs.coverage-command }}
       - name: Upload coverage reports

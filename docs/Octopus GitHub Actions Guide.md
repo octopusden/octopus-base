@@ -110,6 +110,9 @@ To publish to the docker registry:
 
 Use reusable workflows from `octopus-base` to avoid copy-paste between repositories.
 
+Pin reusable workflow references to a released tag (for example `@v1.2.0`), not `@main`.
+This protects consumer repositories from unreviewed breaking changes.
+
 ### Quality gates workflow
 
 Reusable workflow: `.github/workflows/common-java-gradle-quality-gates.yml`

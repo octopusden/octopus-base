@@ -165,6 +165,7 @@ jobs:
 
           deadline=$((SECONDS + TIMEOUT_MINUTES * 60))
           expected_count=$(jq 'length' <<<"${REQUIRED_WORKFLOWS_JSON}")
+          optional_stabilized=false
 
           while (( SECONDS < deadline )); do
             runs_json="$(gh run list \
@@ -199,6 +200,22 @@ jobs:
                 -r '[ $required[] as $workflow | select(($runs | map(.workflowName) | index($workflow)) | not) ] | join(", ")' \
               )"
               echo "Waiting for workflow runs to appear (found ${found_count}/${expected_count}). Missing: ${missing_workflows}"
+              sleep 15
+              continue
+            fi
+
+            required_pending_count=$(jq '[.[] | select(.status != "completed")] | length' <<<"${required_runs}")
+            if (( required_pending_count > 0 )); then
+              pending_required="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${required_runs}")"
+              echo "Waiting for required workflows to complete (pending ${required_pending_count}): ${pending_required}"
+              sleep 15
+              continue
+            fi
+
+            # Optional workflows are non-blocking by design; wait one extra cycle to reduce late-start race.
+            if [[ "${optional_stabilized}" != "true" ]]; then
+              optional_stabilized=true
+              echo "Required workflows completed. Waiting one extra poll cycle for optional workflows."
               sleep 15
               continue
             fi

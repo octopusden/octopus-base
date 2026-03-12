@@ -130,7 +130,7 @@ jobs:
         with:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
-      - uses: gradle/actions/setup-gradle@v3
+      - uses: gradle/actions/setup-gradle@v4
       - name: Run OWASP Dependency-Check (report-only)
         run: ${{ inputs.dependency-check-command }}
       - name: Upload Dependency-Check SARIF
@@ -155,6 +155,10 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -182,7 +186,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run Trivy filesystem scan (report-only)
-        continue-on-error: true
         uses: aquasecurity/trivy-action@0.34.2
         with:
           version: ${{ inputs.trivy-version }}
