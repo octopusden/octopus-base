@@ -176,6 +176,8 @@ jobs:
 - `qualityCoverage` task for tests + coverage
 - `securityReport` task for dependency-check report (if dependency-check is enabled)
 
+For mixed JVM repositories (`Java` + `Kotlin` + `Groovy`), keep these tasks language-agnostic and aggregate all enabled tools (for example `checkstyle`/`pmd`/`spotbugs`/`codenarc`/`detekt`/`ktlint`) under `qualityStatic`.
+
 ### Suggested required checks in branch protection
 
 - `quality/wrapper-validation`

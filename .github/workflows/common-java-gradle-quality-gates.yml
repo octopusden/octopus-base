@@ -42,6 +42,10 @@ on:
         required: false
         type: string
         default: |
+          **/build/reports/checkstyle/**
+          **/build/reports/pmd/**
+          **/build/reports/spotbugs/**
+          **/build/reports/codenarc/**
           **/build/reports/detekt/**
           **/build/reports/ktlint/**
       coverage-reports-path:

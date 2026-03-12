@@ -1,12 +1,14 @@
-# Octopus Kotlin Style Guidelines
+# Octopus JVM Style Guidelines
 
-This document defines common Kotlin style checks for Octopus services using `detekt` and `ktlint`.
+This document defines common static-analysis and style conventions for JVM services (`Java`, `Kotlin`, `Groovy`).
 
 ## Scope
 
-- `detekt` config: `config/detekt/detekt.yml`
-- `ktlint` config: `.editorconfig`
-- Baseline files: `*/detekt-baseline.xml`, `*/ktlint-baseline.xml`
+- Kotlin linters: `detekt`, `ktlint`
+- Java linters: `checkstyle`, `pmd`, `spotbugs` (as applicable)
+- Groovy linter: `codenarc` (as applicable)
+- Coverage reports: `jacoco` and/or `kover`
+- Baseline/suppression files: repository-specific
 - Technical debt references: `docs/Octopus Tech Debt Register.md`
 
 ## CI Quality Gate
@@ -19,10 +21,17 @@ Recommended CI tasks:
 ```
 
 Where:
-- `qualityStatic` runs static checks (for example detekt/ktlint).
+- `qualityStatic` runs repository static checks (toolset depends on language mix).
 - `qualityCoverage` runs tests and coverage validation.
 
-## Enabled Checks
+## Recommended Tool Matrix
+
+- Kotlin-heavy repositories: `detekt`, `ktlint`, `kover` or `jacoco`
+- Java-heavy repositories: `checkstyle`, `pmd`, `spotbugs`, `jacoco`
+- Groovy repositories: `codenarc`, `jacoco`
+- Mixed repositories: use only tools that are already integrated, but keep one common entrypoint: `qualityStatic` and `qualityCoverage`
+
+## Kotlin Rule Examples
 
 ### `ktlint:standard:chain-method-continuation`
 
@@ -144,6 +153,23 @@ Catch the narrowest exception type that can be handled.
 
 Do not silently ignore exceptions. Handle, log with context, or rethrow.
 
+## Java And Groovy Rules
+
+### `checkstyle`
+
+- Keep code formatting and naming consistent.
+- Prefer fail-fast on newly introduced violations.
+
+### `pmd` / `spotbugs`
+
+- Enable bug-prone and correctness categories first.
+- Tune noise with explicit suppressions instead of disabling full rule groups.
+
+### `codenarc` (Groovy)
+
+- Keep rules aligned with project style and gradually reduce legacy suppressions.
+- Track intentional suppressions with `TD-xxx` references.
+
 ## Default Thresholds To Review
 
 If enabled for a repository, start with defaults and tune only when there is a clear reason:
@@ -156,9 +182,9 @@ If enabled for a repository, start with defaults and tune only when there is a c
 
 ## Baseline Strategy
 
-- Baseline is allowed only for existing violations.
+- Baseline/suppressions are allowed only for existing violations.
 - New code must pass without introducing extra baseline entries.
-- Every baseline item must have a cleanup plan if it is non-trivial.
+- Every baseline/suppression item must have a cleanup plan if it is non-trivial.
 
 ## Recommended Review Process
 
