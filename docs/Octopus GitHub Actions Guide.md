@@ -178,6 +178,10 @@ jobs:
 
 For mixed JVM repositories (`Java` + `Kotlin` + `Groovy`), keep these tasks language-agnostic and aggregate all enabled tools (for example `checkstyle`/`pmd`/`spotbugs`/`codenarc`/`detekt`/`ktlint`) under `qualityStatic`.
 
+Style references:
+- `docs/Octopus JVM Style Guidelines.md`
+- `docs/Octopus Kotlin Style Guide.md`
+
 ### Suggested required checks in branch protection
 
 - `quality/wrapper-validation`

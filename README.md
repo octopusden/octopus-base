@@ -9,6 +9,7 @@ Octopus project basic stuff - workflow templates, documentation, etc
 - [Octopus GitHub Actions Guide](docs/Octopus%20GitHub%20Actions%20Guide.md)
 - [Octopus Infrastructure Administrator Guide](docs/Octopus%20Infrastructure%20Administrator%20Guide.md)
 - [Octopus JVM Style Guidelines](docs/Octopus%20JVM%20Style%20Guidelines.md)
+- [Octopus Kotlin Style Guide](docs/Octopus%20Kotlin%20Style%20Guide.md)
 - [Octopus Tech Debt Register](docs/Octopus%20Tech%20Debt%20Register.md)
 
 ## Release octopus-base
