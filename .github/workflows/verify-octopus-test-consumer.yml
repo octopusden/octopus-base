@@ -212,7 +212,9 @@ jobs:
               continue
             fi
 
-            # Optional workflows are non-blocking by design; wait one extra cycle to reduce late-start race.
+            # Optional workflows are optional by presence:
+            # they may be absent, but if they appear they must complete successfully.
+            # Wait one extra cycle to reduce late-start race for newly triggered optional runs.
             if [[ "${optional_stabilized}" != "true" ]]; then
               optional_stabilized=true
               echo "Required workflows completed. Waiting one extra poll cycle for optional workflows."
