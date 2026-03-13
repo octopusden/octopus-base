@@ -51,7 +51,7 @@ on:
         description: Continue workflow when CodeQL fails
         required: false
         type: boolean
-        default: true
+        default: false
       codeql-results-path:
         description: Path pattern to CodeQL SARIF artifacts
         required: false
@@ -91,7 +91,7 @@ on:
         description: Continue workflow when Trivy scan fails
         required: false
         type: boolean
-        default: true
+        default: false
       dependency-check-command:
         description: Gradle command to generate dependency-check report
         required: false
@@ -111,7 +111,7 @@ on:
         description: Continue workflow when dependency-check fails
         required: false
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
