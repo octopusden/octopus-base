@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ''
+      dry-run:
+        description: 'Run release flow without external side effects such as publishing or release creation'
+        required: false
+        type: boolean
+        default: false
       register-release-immediately:
         description: 'Register release in octopus-release-log immediately (true) or wait for artifact check (false)'
         required: false
@@ -35,13 +40,13 @@ on:
         default: ''
     secrets:
       OSSRH_USERNAME:
-        required: true
+        required: false
       OSSRH_TOKEN:
-        required: true
+        required: false
       GPG_PASSPHRASE:
-        required: true
+        required: false
       GPG_PRIVATE_KEY:
-        required: true
+        required: false
 
 jobs:
   prepare-build-publish-release:
@@ -85,6 +90,14 @@ jobs:
           # set hybrid flow variables
           echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
           echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
+
+      - name: Dry run mode
+        if: inputs.dry-run
+        run: |
+          echo "Dry run mode enabled:"
+          echo "- External publishing steps will be skipped"
+          echo "- GitHub release creation will be skipped"
+          echo "- Release log registration will be skipped"
 
       # checkout
       - name: Checkout latest
@@ -144,6 +157,7 @@ jobs:
           gpg-passphrase: GPG_PASSPHRASE # env variable for gpg signing in deploy
 
       - name: Publish to Sonatype Nexus
+        if: ${{ !inputs.dry-run }}
         run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
@@ -152,6 +166,7 @@ jobs:
 
       # github release
       - name: Create release
+        if: ${{ !inputs.dry-run }}
         uses: marvinpinto/action-automatic-releases@v1.2.1
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -162,7 +177,7 @@ jobs:
 
   register-release-in-log:
       # register release in octopus-release-log
-      if: inputs.register-release-immediately
+      if: inputs.register-release-immediately && !inputs.dry-run
       needs: prepare-build-publish-release
       uses: ./.github/workflows/common-register-release.yml
       name: Register release
