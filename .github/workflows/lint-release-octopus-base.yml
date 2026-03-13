@@ -1,15 +1,10 @@
-name: Lint Release octopus-base workflow
+name: Lint GitHub workflows
 
 on:
   pull_request:
     paths:
-      - .github/workflows/check-octopus-test-consumer.yml
-      - .github/workflows/release-octopus-base.yml
-      - .github/workflows/verify-octopus-test-consumer.yml
-      - .github/workflows/lint-release-octopus-base.yml
-      - .github/scripts/collect-workflow-files.sh
-      - .github/scripts/sync-internal-action-refs.sh
-      - .github/scripts/update-octopus-test-refs.sh
+      - .github/workflows/**
+      - .github/scripts/**
   workflow_dispatch:
 
 permissions:
@@ -27,16 +22,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 \
-            -color \
-            .github/workflows/check-octopus-test-consumer.yml \
-            .github/workflows/release-octopus-base.yml \
-            .github/workflows/verify-octopus-test-consumer.yml
+          docker run --rm --entrypoint sh -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -lc '
+            set -euo pipefail
+            actionlint -color \
+              -ignore "the runner of \".+\" action is too old to run on GitHub Actions" \
+              -ignore "shellcheck reported issue in this script: SC2034:" \
+              -ignore "shellcheck reported issue in this script: SC2046:" \
+              -ignore "shellcheck reported issue in this script: SC2086:" \
+              $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
+          '
 
-      - name: Validate verification helper script
+      - name: Validate helper scripts
         shell: bash
         run: |
           set -euo pipefail
-          bash -n .github/scripts/collect-workflow-files.sh
-          bash -n .github/scripts/sync-internal-action-refs.sh
-          bash -n .github/scripts/update-octopus-test-refs.sh
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find .github/scripts -type f -name '*.sh' | sort)
