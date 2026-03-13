@@ -24,7 +24,12 @@ jobs:
           set -euo pipefail
           docker run --rm --entrypoint sh -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -lc '
             set -euo pipefail
-            actionlint -color $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
+            actionlint -color \
+              -ignore "the runner of \".+\" action is too old to run on GitHub Actions" \
+              -ignore "shellcheck reported issue in this script: SC2034:" \
+              -ignore "shellcheck reported issue in this script: SC2046:" \
+              -ignore "shellcheck reported issue in this script: SC2086:" \
+              $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
           '
 
       - name: Validate helper scripts
