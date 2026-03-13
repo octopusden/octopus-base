@@ -140,11 +140,6 @@ jobs:
         run: |
           echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
 
-      - name: Set new version for maven
-        uses: qcastel/github-actions-maven-cmd@1.0.1
-        with:
-          maven-args: "org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{ env.BUILD_VERSION }}"
-
       - name: Set up maven Central Repository
         uses: actions/setup-java@v4
         with:
@@ -155,6 +150,9 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }} # gpg private key to import
           gpg-passphrase: GPG_PASSPHRASE # env variable for gpg signing in deploy
+
+      - name: Set new version for maven
+        run: mvn --batch-mode org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{ env.BUILD_VERSION }}
 
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
