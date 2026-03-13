@@ -228,7 +228,12 @@ jobs:
         run: |
           set -euo pipefail
           results='${{ toJson(needs) }}'
-          jq -e 'all(.[]; .result == "success")' <<<"${results}" >/dev/null
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"${results}")"
+          if [[ -n "${failed}" ]]; then
+            echo "Merge gate failed:"
+            echo "${failed}"
+            exit 1
+          fi
 ```
 
 For repositories where some gate is not applicable, keep the job but make it explicit no-op with `success`.
