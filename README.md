@@ -30,7 +30,7 @@ The workflow:
 
 To use release registration, the `Prod` environment must contain secret `OCTOPUS_GITHUB_TOKEN`.
 
-To use automated `octopus-test` consumer verification (`Check octopus-test consumer` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
+To use automated `octopus-test` consumer verification (`Merge Gate` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
 
 Workflow lint for this release action only:
@@ -44,16 +44,17 @@ What this is:
 - If any required consumer workflow fails (or does not complete in time), the check fails.
 
 How a developer uses it:
-1. For PRs that touch `.github/workflows/**`, `.github/actions/**`, or `.github/scripts/update-octopus-test-refs.sh`, just open/update the PR and wait for `Check octopus-test consumer`.
-2. If you need to run the same check manually, start `Actions` -> `Check octopus-test consumer` and provide optional inputs (`octopus_base_ref`, `verify_branch`, `timeout_minutes`).
+1. Open/update a PR and wait for `Merge Gate`.
+2. If you need to run the same check manually, start `Actions` -> `Merge Gate` and provide optional inputs (`octopus_base_ref`, `verify_branch`, `timeout_minutes`).
 3. Before cutting a release, you can run the same gate from `Release octopus-base` by setting `verify_octopus_test=true`.
 
 Where to look for results:
-- PR checks show pass/fail summary for `Verify octopus-test consumer / verify`.
+- PR checks show pass/fail summary for `Merge Gate / gate/merge`.
 - Detailed links to required `octopus-test` workflow runs are written into the workflow job summary.
 
 Default path:
-- PR changes in `.github/workflows/**`, `.github/actions/**`, and `.github/scripts/update-octopus-test-refs.sh` trigger `Check octopus-test consumer`.
+- Every PR triggers `Merge Gate`.
+- Canary verification in `build` runs when PR changes touch `.github/workflows/**`, `.github/actions/**`, or `.github/scripts/update-octopus-test-refs.sh`.
 - Release flow can run the same gate when `verify_octopus_test=true`.
 
 Required secret:

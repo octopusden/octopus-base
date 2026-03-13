@@ -16,7 +16,7 @@
       - name: 'main'
         - Enable 'Require status checks to pass before merging'
           - Add required checks for repository workflows
-          - For `octopus-base`, include `Verify octopus-test consumer / verify`
+          - Use a single required merge contract check: `Merge Gate / gate/merge`
         - Enable 'Require a pull request before merging'
           - Required number of approvals: 2
           - Enable 'Dismiss stale pull request approvals when new commits are pushed'

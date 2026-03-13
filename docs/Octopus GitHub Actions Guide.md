@@ -185,20 +185,62 @@ Style references:
 - `docs/Octopus JVM Style Guidelines.md`
 - `docs/Octopus Kotlin Style Guide.md`
 
+### Merge contract (stack-agnostic)
+
+Keep human-readable workflows in repositories:
+- `Quality Gates`
+- `Security Reports`
+
+Add one orchestrator workflow (for example, `Merge Gate`) that aggregates merge decision:
+
+```yaml
+name: Merge Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-quality-gates.yml@<octopus-base-tag>
+    with:
+      java-version: "21"
+
+  security:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-security-reports.yml@<octopus-base-tag>
+    with:
+      java-version: "21"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./gradlew build --no-daemon --stacktrace
+
+  gate-merge:
+    name: gate/merge
+    if: ${{ always() }}
+    needs: [quality, security, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when any gate failed
+        shell: bash
+        run: |
+          set -euo pipefail
+          results='${{ toJson(needs) }}'
+          jq -e 'all(.[]; .result == "success")' <<<"${results}" >/dev/null
+```
+
+For repositories where some gate is not applicable, keep the job but make it explicit no-op with `success`.
+
 ### Suggested required checks in branch protection
 
-- `quality/wrapper-validation`
-- `quality/static`
-- `quality/tests-coverage`
+Use one required merge contract check:
+- `Merge Gate / gate/merge`
 
-Security checks are usually report-only and can stay non-blocking by default:
-- `security/codeql`
-- `security/trivy`
-- `security/dependency-check`
+This keeps branch protection independent from implementation details (Gradle, Maven, Python, etc.).
 
-### Required check for octopus-base
+### octopus-base specifics
 
-In `octopus-base` repository itself, configure branch protection so this check is required:
-- `Verify octopus-test consumer / verify`
-
-This makes canary verification in `octopus-test` a merge blocker for workflow/action changes in `octopus-base`.
+In `octopus-base`, `Merge Gate` delegates `build` to reusable canary verification in `octopus-test`.
+This makes downstream consumer verification a merge blocker while preserving the same external check contract:
+- `Merge Gate / gate/merge`

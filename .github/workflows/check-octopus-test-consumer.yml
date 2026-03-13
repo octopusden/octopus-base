@@ -1,11 +1,7 @@
-name: Check octopus-test consumer
+name: Merge Gate
 
 on:
   pull_request:
-    paths:
-      - .github/actions/**
-      - .github/scripts/update-octopus-test-refs.sh
-      - .github/workflows/**
   workflow_dispatch:
     inputs:
       octopus_base_ref:
@@ -33,13 +29,115 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Verify octopus-test consumer
+  resolve-gate-scope:
+    name: gate/scope
+    runs-on: ubuntu-latest
+    outputs:
+      run_verify: ${{ steps.scope.outputs.run_verify }}
+      scope_reason: ${{ steps.scope.outputs.scope_reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve canary scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_verify=true
+          scope_reason="manual run or non-PR event"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            changed_files="$(git diff --name-only "$base_sha" "$head_sha")"
+
+            if grep -Eq '^(\.github/actions/|\.github/workflows/|\.github/scripts/update-octopus-test-refs\.sh$)' <<<"${changed_files}"; then
+              run_verify=true
+              scope_reason="PR changes include workflows/actions/update-octopus-test-refs.sh"
+            else
+              run_verify=false
+              scope_reason="PR changes are outside canary-related paths"
+            fi
+          fi
+
+          {
+            echo "run_verify=${run_verify}"
+            echo "scope_reason=${scope_reason}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Merge gate scope"
+            echo "- run canary verify: \`${run_verify}\`"
+            echo "- reason: ${scope_reason}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository quality scope
+        shell: bash
+        run: |
+          {
+            echo "### quality"
+            echo "- No repository-specific quality checks are defined for octopus-base."
+            echo "- Required merge decision is aggregated by \`gate/merge\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository security scope
+        shell: bash
+        run: |
+          {
+            echo "### security"
+            echo "- No repository-specific security checks are defined for octopus-base."
+            echo "- Security gates are validated in consumer repositories."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: build
+    needs: resolve-gate-scope
     uses: ./.github/workflows/verify-octopus-test-consumer.yml
     with:
+      enabled: ${{ needs.resolve-gate-scope.outputs.run_verify == 'true' }}
       octopus_base_ref: ${{ inputs.octopus_base_ref || (github.event_name == 'pull_request' && github.event.pull_request.head.sha || '') }}
       octopus_test_base_ref: ${{ inputs.octopus_test_base_ref || 'main' }}
       verify_branch: ${{ inputs.verify_branch || (github.event_name == 'pull_request' && format('verify/octopus-base-pr-{0}', github.event.pull_request.number) || '') }}
       timeout_minutes: ${{ inputs.timeout_minutes || 30 }}
     secrets:
       octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN }}
+
+  gate-merge:
+    name: gate/merge
+    if: ${{ always() }}
+    needs:
+      - quality
+      - security
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate gate results
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          results='${{ toJson(needs) }}'
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"${results}")"
+
+          {
+            echo "### Merge gate results"
+            jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<<"${results}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -n "${failed}" ]]; then
+            echo "Merge gate failed:"
+            echo "${failed}"
+            exit 1
+          fi
+
+          echo "Merge gate passed."

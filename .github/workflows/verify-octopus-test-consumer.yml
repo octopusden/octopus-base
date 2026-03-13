@@ -3,6 +3,11 @@ name: Verify octopus-test consumer
 on:
   workflow_dispatch:
     inputs:
+      enabled:
+        description: 'Enable consumer verification steps'
+        required: true
+        type: boolean
+        default: true
       octopus_base_ref:
         description: 'Tag, branch, or SHA from octopus-base to verify in octopus-test'
         required: false
@@ -25,6 +30,10 @@ on:
         default: 30
   workflow_call:
     inputs:
+      enabled:
+        required: false
+        type: boolean
+        default: true
       octopus_base_ref:
         required: false
         type: string
@@ -43,7 +52,7 @@ on:
         default: 30
     secrets:
       octopus_test_push_token:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -59,10 +68,23 @@ jobs:
       OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
     steps:
+      - name: Skip verification (disabled)
+        if: ${{ !inputs.enabled }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### octopus-test verification"
+            echo "- status: skipped"
+            echo "- reason: disabled by caller"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout
+        if: ${{ inputs.enabled }}
         uses: actions/checkout@v4
 
       - name: Validate token
+        if: ${{ inputs.enabled }}
         shell: bash
         run: |
           set -euo pipefail
@@ -74,6 +96,7 @@ jobs:
           fi
 
       - name: Resolve verification context
+        if: ${{ inputs.enabled }}
         id: context
         shell: bash
         env:
@@ -108,6 +131,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clone octopus-test
+        if: ${{ inputs.enabled }}
         shell: bash
         env:
           GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
@@ -117,6 +141,7 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${OCTOPUS_TEST_REPOSITORY}.git" /tmp/octopus-test-consumer
 
       - name: Prepare verification branch
+        if: ${{ inputs.enabled }}
         id: push
         shell: bash
         env:
@@ -154,6 +179,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Wait for octopus-test workflows
+        if: ${{ inputs.enabled }}
         shell: bash
         env:
           GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
