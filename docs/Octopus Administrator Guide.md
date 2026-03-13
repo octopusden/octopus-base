@@ -16,7 +16,8 @@
       - name: 'main'
         - Enable 'Require status checks to pass before merging'
           - Add required checks for repository workflows
-          - Use a single required merge contract check: `Merge Gate / gate/merge`
+          - Use the exact check name reported by repository PR checks
+          - For the unified merge contract, require `gate/merge`
         - Enable 'Require a pull request before merging'
           - Required number of approvals: 2
           - Enable 'Dismiss stale pull request approvals when new commits are pushed'

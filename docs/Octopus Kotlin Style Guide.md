@@ -285,7 +285,7 @@ Do not keep unused private functions or properties.
 
 Catch the narrowest exception type that you can handle.
 
-### `detekt:style:SwallowedException`
+### `detekt:exceptions:SwallowedException`
 
 Do not ignore exceptions silently. Handle with context, log, or rethrow.
 

@@ -166,6 +166,8 @@ on:
 
 jobs:
   security:
+    permissions:
+      security-events: write
     uses: octopusden/octopus-base/.github/workflows/common-java-gradle-security-reports.yml@<octopus-base-tag>
     with:
       java-version: "21"
@@ -207,6 +209,8 @@ jobs:
       java-version: "21"
 
   security:
+    permissions:
+      security-events: write
     uses: octopusden/octopus-base/.github/workflows/common-java-gradle-security-reports.yml@<octopus-base-tag>
     with:
       java-version: "21"
@@ -240,8 +244,21 @@ For repositories where some gate is not applicable, keep the job but make it exp
 
 ### Suggested required checks in branch protection
 
-Use one required merge contract check:
-- `Merge Gate / gate/merge`
+Use exact check names as they appear in the consumer repository PR.
+
+Real check names from `octopus-test`:
+- `quality / quality / quality/static`
+- `quality / quality / quality/tests-coverage`
+- `security / security / security/codeql`
+- `security / security / security/trivy`
+- `build/gradle-public / build`
+- `release-smoke / release/maven-public / prepare-build-publish-release`
+- `gate/merge`
+
+If the repository uses a unified merge contract, require only:
+- `gate/merge`
+
+Do not mark disabled or intentionally skipped jobs as required in branch protection.
 
 This keeps branch protection independent from implementation details (Gradle, Maven, Python, etc.).
 
@@ -254,8 +271,8 @@ From a developer point of view, the PR flow is intentionally simple:
 - `Merge Gate` is the final merge contract check.
 
 In practice, developers only need to know one rule:
-- if `Merge Gate / gate/merge` is green, all required gates for that repository passed
-- if `Merge Gate / gate/merge` is red, open the failed upstream check and fix that specific problem
+- if `gate/merge` is green, all required gates for that repository passed
+- if `gate/merge` is red, open the failed upstream check and fix that specific problem
 
 Where to look when a PR is red:
 
@@ -274,4 +291,4 @@ Reference repository:
 
 In `octopus-base`, `Merge Gate` delegates `build` to reusable canary verification in `octopus-test`.
 This makes downstream consumer verification a merge blocker while preserving the same external check contract:
-- `Merge Gate / gate/merge`
+- `gate/merge`

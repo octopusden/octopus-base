@@ -131,6 +131,28 @@ jobs:
           echo "- GitHub release creation will be skipped"
           echo "- Release log registration will be skipped"
 
+      - name: Fail if release secrets are not set for non-dry-run
+        if: ${{ !inputs.dry-run }}
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for secret_name in OSSRH_USERNAME OSSRH_TOKEN GPG_PASSPHRASE GPG_PRIVATE_KEY; do
+            if [[ -z "${!secret_name}" ]]; then
+              missing+=("${secret_name}")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required release secrets for non-dry-run: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
       # checkout
       - name: Checkout latest
         if: inputs.flow-type == 'public'

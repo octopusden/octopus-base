@@ -49,7 +49,7 @@ How a developer uses it:
 3. Before cutting a release, you can run the same gate from `Release octopus-base` by setting `verify_octopus_test=true`.
 
 Where to look for results:
-- PR checks show pass/fail summary for `Merge Gate / gate/merge`.
+- PR checks show pass/fail summary for `gate/merge`.
 - Detailed links to required `octopus-test` workflow runs are written into the workflow job summary.
 
 Default path:
