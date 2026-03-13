@@ -61,12 +61,14 @@ jobs:
       - name: Fail if commit-hash is not set for hybrid flow
         if: inputs.flow-type == 'hybrid' && !inputs.commit-hash
         run: |
-          echo "commit-hash input parameter must be set for hybrid flow
+          echo "commit-hash input parameter must be set for hybrid flow"
+          exit 1
 
       - name: Fail if build-version is not set for hybrid flow
         if: inputs.flow-type == 'hybrid' && !inputs.build-version
         run: |
-          echo "build-version input parameter must be set for hybrid flow
+          echo "build-version input parameter must be set for hybrid flow"
+          exit 1
 
       - name: Public flow
         if: inputs.flow-type == 'public'
