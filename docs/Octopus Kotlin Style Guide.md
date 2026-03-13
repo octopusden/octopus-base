@@ -16,11 +16,13 @@ This document defines Kotlin-focused style rules and examples for repositories u
 In multiline call chains, place a newline before `.`.
 
 Wrong:
+
 ```kotlin
 val value = source.map { it.id }.filter { it > 0 }
 ```
 
 Right:
+
 ```kotlin
 val value =
     source
@@ -33,11 +35,13 @@ val value =
 Wrap multiline class and constructor signatures consistently.
 
 Wrong:
+
 ```kotlin
 data class CommitDTO(val id: String, val author: String, val message: String)
 ```
 
 Right:
+
 ```kotlin
 data class CommitDTO(
     val id: String,
@@ -55,6 +59,7 @@ File must end with one trailing newline.
 Prefer expression bodies for single-expression functions.
 
 Wrong:
+
 ```kotlin
 fun isEmpty(value: String): Boolean {
     return value.isEmpty()
@@ -62,6 +67,7 @@ fun isEmpty(value: String): Boolean {
 ```
 
 Right:
+
 ```kotlin
 fun isEmpty(value: String): Boolean = value.isEmpty()
 ```
@@ -71,12 +77,14 @@ fun isEmpty(value: String): Boolean = value.isEmpty()
 Wrap long binary expressions consistently.
 
 Wrong:
+
 ```kotlin
 val allowed = isEnabled &&
 user.isActive && user.hasRole("ADMIN")
 ```
 
 Right:
+
 ```kotlin
 val allowed =
     isEnabled &&
@@ -89,6 +97,7 @@ val allowed =
 Keep indentation consistent in multiline string templates.
 
 Wrong:
+
 ```kotlin
 val message = """
     Build: ${buildId}
@@ -97,6 +106,7 @@ val message = """
 ```
 
 Right:
+
 ```kotlin
 val message = """
     Build: ${buildId}
@@ -109,11 +119,13 @@ val message = """
 Use repository-configured `max_line_length` (for example, `140`) consistently.
 
 Wrong:
+
 ```kotlin
 val longMessage = "This line is intentionally too long ... (more than configured max length) ... to illustrate max-line-length violation"
 ```
 
 Right:
+
 ```kotlin
 val longMessage =
     "This line is split " +
@@ -125,6 +137,7 @@ val longMessage =
 Use consistent multiline lambda formatting.
 
 Wrong:
+
 ```kotlin
 val names = values.map({
     it.name
@@ -132,6 +145,7 @@ val names = values.map({
 ```
 
 Right:
+
 ```kotlin
 val names =
     values.map {
@@ -144,11 +158,13 @@ val names =
 Wrap long argument lists when calls span multiple lines.
 
 Wrong:
+
 ```kotlin
 client.createMandatoryUpdate(dryRun, component, version, projectKey, epicName, dueDate, notice, customer)
 ```
 
 Right:
+
 ```kotlin
 client.createMandatoryUpdate(
     dryRun,
@@ -167,6 +183,7 @@ client.createMandatoryUpdate(
 Align leading `*` in block comments.
 
 Wrong:
+
 ```kotlin
 /*
 * first line
@@ -175,6 +192,7 @@ Wrong:
 ```
 
 Right:
+
 ```kotlin
 /*
  * first line
@@ -189,6 +207,7 @@ Right:
 Place `companion object` at the end of class body.
 
 Wrong:
+
 ```kotlin
 class VelocityEngine {
     companion object { ... }
@@ -197,6 +216,7 @@ class VelocityEngine {
 ```
 
 Right:
+
 ```kotlin
 class VelocityEngine {
     fun generate(...) = ...
@@ -210,11 +230,13 @@ class VelocityEngine {
 Do not use wildcard imports.
 
 Wrong:
+
 ```kotlin
 import org.example.dto.*
 ```
 
 Right:
+
 ```kotlin
 import org.example.dto.BuildDTO
 import org.example.dto.BuildFilterDTO
@@ -226,11 +248,13 @@ Do not use `TODO`, `FIXME`, or `STOPSHIP` in committed code without tracking.
 Use `TD-xxx` with a link to the tech debt register.
 
 Wrong:
+
 ```kotlin
 // TODO: remove after release
 ```
 
 Right:
+
 ```kotlin
 // TD-002: switch to stable API after client migration (see docs/Octopus Tech Debt Register.md).
 ```
@@ -240,6 +264,7 @@ Right:
 Prefer `require`, `check`, or `error` for guard conditions.
 
 Wrong:
+
 ```kotlin
 if (prop == null) {
     throw IllegalStateException("Property must be provided")
@@ -247,6 +272,7 @@ if (prop == null) {
 ```
 
 Right:
+
 ```kotlin
 check(prop != null) { "Property must be provided" }
 ```

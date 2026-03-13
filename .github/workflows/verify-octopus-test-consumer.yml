@@ -220,7 +220,7 @@ jobs:
 
             found_count=$(jq 'length' <<<"${required_runs}")
             if (( found_count < expected_count )); then
-              missing_workflows="$(jq \
+              missing_workflows="$(jq -n \
                 --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
                 --argjson runs "${required_runs}" \
                 -r '[ $required[] as $workflow | select(($runs | map(.workflowName) | index($workflow)) | not) ] | join(", ")' \

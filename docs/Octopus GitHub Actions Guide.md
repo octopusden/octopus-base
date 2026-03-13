@@ -214,6 +214,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - run: ./gradlew build --no-daemon --stacktrace
 
   gate-merge:
