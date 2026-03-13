@@ -245,6 +245,31 @@ Use one required merge contract check:
 
 This keeps branch protection independent from implementation details (Gradle, Maven, Python, etc.).
 
+### Merge Gates For Developers
+
+From a developer point of view, the PR flow is intentionally simple:
+
+- `Quality Gates` runs style, static analysis, tests, and coverage checks.
+- `Security Reports` runs security scanners and publishes their results.
+- `Merge Gate` is the final merge contract check.
+
+In practice, developers only need to know one rule:
+- if `Merge Gate / gate/merge` is green, all required gates for that repository passed
+- if `Merge Gate / gate/merge` is red, open the failed upstream check and fix that specific problem
+
+Where to look when a PR is red:
+
+- Workflow summary for the failed check
+- Job logs for the concrete failed step
+- Workflow artifacts for raw reports
+- `Security -> Code scanning alerts` for repositories that publish SARIF findings
+
+Developers do not need to understand the reusable workflow internals or the `octopus-base` canary verification flow to work with the contract above.
+
+Reference repository:
+- `octopus-test` shows the intended developer-facing layout with `Quality Gates`, `Security Reports`, and `Merge Gate`
+- Demo PR: `octopus-test#39` — https://github.com/octopusden/octopus-test/pull/39
+
 ### octopus-base specifics
 
 In `octopus-base`, `Merge Gate` delegates `build` to reusable canary verification in `octopus-test`.
