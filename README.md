@@ -89,10 +89,7 @@ gh run list -R octopusden/octopus-test --branch "$branch" --limit 20 \
 ```
 
 Required workflows:
-- `Build Gradle Public`
-- `Build Gradle Hybrid`
-- `Build Gradle Hybrid Docker`
-- `Build Maven Public`
+- `Merge Gate`
 
 Optional workflows (checked when present in `octopus-test`):
 - `Quality Gates`

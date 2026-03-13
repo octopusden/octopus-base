@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
-      REQUIRED_WORKFLOWS_JSON: '["Build Gradle Public","Build Gradle Hybrid","Build Gradle Hybrid Docker","Build Maven Public"]'
-      OPTIONAL_WORKFLOWS_JSON: '["Quality Gates","Security Reports"]'
+      REQUIRED_WORKFLOWS_JSON: '["Merge Gate"]'
+      OPTIONAL_WORKFLOWS_JSON: '[]'
       # Uppercase fallback keeps manual workflow_dispatch compatible with repository-level secret.
       OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
