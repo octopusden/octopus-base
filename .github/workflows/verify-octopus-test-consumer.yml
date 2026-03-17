@@ -3,6 +3,11 @@ name: Verify octopus-test consumer
 on:
   workflow_dispatch:
     inputs:
+      enabled:
+        description: 'Enable consumer verification steps'
+        required: true
+        type: boolean
+        default: true
       octopus_base_ref:
         description: 'Tag, branch, or SHA from octopus-base to verify in octopus-test'
         required: false
@@ -19,12 +24,16 @@ on:
         type: string
         default: ''
       timeout_minutes:
-        description: 'How long to wait for octopus-test build workflows'
+        description: 'How long to wait for octopus-test workflows'
         required: true
         type: number
         default: 30
   workflow_call:
     inputs:
+      enabled:
+        required: false
+        type: boolean
+        default: true
       octopus_base_ref:
         required: false
         type: string
@@ -43,7 +52,7 @@ on:
         default: 30
     secrets:
       octopus_test_push_token:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -53,15 +62,29 @@ jobs:
     runs-on: ubuntu-latest
     env:
       OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
-      REQUIRED_WORKFLOWS_JSON: '["Build Gradle Public","Build Gradle Hybrid","Build Gradle Hybrid Docker","Build Maven Public"]'
+      REQUIRED_WORKFLOWS_JSON: '["Merge Gate"]'
+      OPTIONAL_WORKFLOWS_JSON: '[]'
       # Uppercase fallback keeps manual workflow_dispatch compatible with repository-level secret.
       OCTOPUS_TEST_PUSH_TOKEN: ${{ secrets.octopus_test_push_token || secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
     steps:
+      - name: Skip verification (disabled)
+        if: ${{ !inputs.enabled }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### octopus-test verification"
+            echo "- status: skipped"
+            echo "- reason: disabled by caller"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout
+        if: ${{ inputs.enabled }}
         uses: actions/checkout@v4
 
       - name: Validate token
+        if: ${{ inputs.enabled }}
         shell: bash
         run: |
           set -euo pipefail
@@ -73,6 +96,7 @@ jobs:
           fi
 
       - name: Resolve verification context
+        if: ${{ inputs.enabled }}
         id: context
         shell: bash
         env:
@@ -107,6 +131,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clone octopus-test
+        if: ${{ inputs.enabled }}
         shell: bash
         env:
           GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
@@ -116,6 +141,7 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${OCTOPUS_TEST_REPOSITORY}.git" /tmp/octopus-test-consumer
 
       - name: Prepare verification branch
+        if: ${{ inputs.enabled }}
         id: push
         shell: bash
         env:
@@ -152,7 +178,8 @@ jobs:
             echo "- verification commit: \`$verify_sha\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Wait for octopus-test build workflows
+      - name: Wait for octopus-test workflows
+        if: ${{ inputs.enabled }}
         shell: bash
         env:
           GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
@@ -164,6 +191,7 @@ jobs:
 
           deadline=$((SECONDS + TIMEOUT_MINUTES * 60))
           expected_count=$(jq 'length' <<<"${REQUIRED_WORKFLOWS_JSON}")
+          optional_stabilized=false
 
           while (( SECONDS < deadline )); do
             runs_json="$(gh run list \
@@ -172,7 +200,7 @@ jobs:
               --limit 50 \
               --json workflowName,status,conclusion,headSha,url,createdAt)"
 
-            matching_runs="$(jq \
+            required_runs="$(jq \
               --arg sha "${VERIFY_SHA}" \
               --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
               '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $required | index($workflow)))] 
@@ -181,11 +209,20 @@ jobs:
                | map(last)' \
               <<<"${runs_json}")"
 
-            found_count=$(jq 'length' <<<"${matching_runs}")
+            optional_runs="$(jq \
+              --arg sha "${VERIFY_SHA}" \
+              --argjson optional "${OPTIONAL_WORKFLOWS_JSON}" \
+              '[.[] | select(.headSha == $sha and (.workflowName as $workflow | $optional | index($workflow)))] 
+               | sort_by(.workflowName, .createdAt)
+               | group_by(.workflowName)
+               | map(last)' \
+              <<<"${runs_json}")"
+
+            found_count=$(jq 'length' <<<"${required_runs}")
             if (( found_count < expected_count )); then
-              missing_workflows="$(jq \
+              missing_workflows="$(jq -n \
                 --argjson required "${REQUIRED_WORKFLOWS_JSON}" \
-                --argjson runs "${matching_runs}" \
+                --argjson runs "${required_runs}" \
                 -r '[ $required[] as $workflow | select(($runs | map(.workflowName) | index($workflow)) | not) ] | join(", ")' \
               )"
               echo "Waiting for workflow runs to appear (found ${found_count}/${expected_count}). Missing: ${missing_workflows}"
@@ -193,17 +230,40 @@ jobs:
               continue
             fi
 
+            required_pending_count=$(jq '[.[] | select(.status != "completed")] | length' <<<"${required_runs}")
+            if (( required_pending_count > 0 )); then
+              pending_required="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${required_runs}")"
+              echo "Waiting for required workflows to complete (pending ${required_pending_count}): ${pending_required}"
+              sleep 15
+              continue
+            fi
+
+            # Optional workflows are optional by presence:
+            # they may be absent, but if they appear they must complete successfully.
+            # Wait one extra cycle to reduce late-start race for newly triggered optional runs.
+            if [[ "${optional_stabilized}" != "true" ]]; then
+              optional_stabilized=true
+              echo "Required workflows completed. Waiting one extra poll cycle for optional workflows."
+              sleep 15
+              continue
+            fi
+
+            matching_runs="$(jq -n \
+              --argjson required "${required_runs}" \
+              --argjson optional "${optional_runs}" \
+              '$required + $optional')"
+
             pending_count=$(jq '[.[] | select(.status != "completed")] | length' <<<"${matching_runs}")
             if (( pending_count > 0 )); then
               pending_workflows="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${matching_runs}")"
-              echo "Waiting for workflows to complete (pending ${pending_count}/${expected_count}): ${pending_workflows}"
+              echo "Waiting for workflows to complete (pending ${pending_count}): ${pending_workflows}"
               sleep 15
               continue
             fi
 
             {
               echo ""
-              echo "#### octopus-test build workflows"
+              echo "#### octopus-test workflows"
               jq -r '.[] | "- \(.workflowName): \(.conclusion) ([run](\(.url)))"' <<<"${matching_runs}"
             } >> "$GITHUB_STEP_SUMMARY"
 

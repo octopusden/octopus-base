@@ -30,6 +30,11 @@ on:
         required: false
         type: string
         default: ''
+      dry-run:
+        description: 'Run release flow without external side effects such as publishing or release creation'
+        required: false
+        type: boolean
+        default: false
       register-release-immediately:
         description: 'Register release in octopus-release-log immediately (true) or wait for artifact check (false)'
         required: false
@@ -42,13 +47,13 @@ on:
         default: ''
     secrets:
       OSSRH_USERNAME:
-        required: true
+        required: false
       OSSRH_TOKEN:
-        required: true
+        required: false
       GPG_PASSPHRASE:
-        required: true
+        required: false
       GPG_PRIVATE_KEY:
-        required: true
+        required: false
 
 jobs:
   prepare-build-publish-release:
@@ -69,12 +74,14 @@ jobs:
       - name: Fail if commit-hash is not set for hybrid flow
         if: inputs.flow-type == 'hybrid' && !inputs.commit-hash
         run: |
-          echo "commit-hash input parameter must be set for hybrid flow
+          echo "commit-hash input parameter must be set for hybrid flow"
+          exit 1
 
       - name: Fail if build-version is not set for hybrid flow
         if: inputs.flow-type == 'hybrid' && !inputs.build-version
         run: |
-          echo "build-version input parameter must be set for hybrid flow
+          echo "build-version input parameter must be set for hybrid flow"
+          exit 1
 
       - name: Public flow
         if: inputs.flow-type == 'public'
@@ -114,6 +121,37 @@ jobs:
             EXTRA_SKIP_TESTS="${EXTRA_SKIP_TESTS} -x ${task}"
           done
           echo "SKIP_TESTS=${SKIP_TESTS}${EXTRA_SKIP_TESTS}" >> "$GITHUB_ENV"
+
+      - name: Dry run mode
+        if: inputs.dry-run
+        run: |
+          echo "Dry run mode enabled:"
+          echo "- External publishing steps will be skipped"
+          echo "- Docker push will be skipped"
+          echo "- GitHub release creation will be skipped"
+          echo "- Release log registration will be skipped"
+
+      - name: Fail if release secrets are not set for non-dry-run
+        if: ${{ !inputs.dry-run }}
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for secret_name in OSSRH_USERNAME OSSRH_TOKEN GPG_PASSPHRASE GPG_PRIVATE_KEY; do
+            if [[ -z "${!secret_name}" ]]; then
+              missing+=("${secret_name}")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required release secrets for non-dry-run: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
 
       # checkout
       - name: Checkout latest
@@ -178,7 +216,7 @@ jobs:
 
       # push to docker
       - name: Log in to Docker Registry
-        if: inputs.docker-image
+        if: inputs.docker-image && !inputs.dry-run
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
@@ -186,11 +224,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push to docker registry
-        if: inputs.docker-image
+        if: inputs.docker-image && !inputs.dry-run
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
       # publish to nexus
       - name: Publish to Sonatype Nexus
+        if: ${{ !inputs.dry-run }}
         run: ./gradlew -Pnexus=true publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
@@ -200,6 +239,7 @@ jobs:
 
       # github release
       - name: Create release
+        if: ${{ !inputs.dry-run }}
         uses: marvinpinto/action-automatic-releases@v1.2.1
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -208,7 +248,7 @@ jobs:
 
   register-release-in-log:
       # register release in octopus-release-log
-      if: inputs.register-release-immediately
+      if: inputs.register-release-immediately && !inputs.dry-run
       needs: prepare-build-publish-release
       uses: ./.github/workflows/common-register-release.yml
       name: Register release
