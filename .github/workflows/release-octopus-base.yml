@@ -37,7 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
-      target_branch: ${{ steps.resolve.outputs.target_branch }}
 
     steps:
       - name: Checkout target ref
@@ -50,6 +49,7 @@ jobs:
         id: resolve
         env:
           INPUT_TARGET_REF: ${{ inputs.target-ref }}
+          INPUT_DRY_RUN: ${{ inputs.dry-run }}
         shell: bash
         run: |
           set -euo pipefail
@@ -59,13 +59,18 @@ jobs:
 
           if [[ "$INPUT_TARGET_REF" == refs/heads/* ]]; then
             target_branch="${INPUT_TARGET_REF#refs/heads/}"
-          elif git ls-remote --exit-code --heads origin "$INPUT_TARGET_REF" >/dev/null 2>&1; then
+          elif git show-ref --verify --quiet "refs/remotes/origin/$INPUT_TARGET_REF"; then
             target_branch="$INPUT_TARGET_REF"
+          fi
+
+          if [[ "${INPUT_DRY_RUN}" != "true" && -z "${target_branch}" ]]; then
+            echo "target-ref '${INPUT_TARGET_REF}' is not a branch." >&2
+            echo "Non-dry-run releases must target a branch that exists on origin." >&2
+            exit 1
           fi
 
           {
             echo "target_sha=$target_sha"
-            echo "target_branch=$target_branch"
           } >> "$GITHUB_OUTPUT"
 
   verify-octopus-test:
@@ -88,7 +93,7 @@ jobs:
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
       next_tag: ${{ steps.version.outputs.next_tag }}
-      target_sha: ${{ steps.release-target.outputs.target_sha }}
+      target_sha: ${{ steps.version.outputs.target_sha }}
 
     steps:
       - name: Checkout target ref
@@ -161,64 +166,6 @@ jobs:
             exit 1
           fi
 
-      - name: Sync internal action refs and push branch/tag
-        if: ${{ !inputs.dry-run }}
-        id: sync-internal-refs
-        env:
-          NEXT_TAG: ${{ steps.version.outputs.next_tag }}
-          TARGET_BRANCH: ${{ needs.resolve-target.outputs.target_branch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${NEXT_TAG}" ]]; then
-            echo "NEXT_TAG is empty"
-            exit 1
-          fi
-
-          target_branch="${TARGET_BRANCH:-}"
-          if [[ -z "${target_branch}" ]]; then
-            echo "target-ref '${{ inputs.target-ref }}' is not a branch."
-            echo "Release with sync requires a branch target."
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          bash .github/scripts/sync-internal-action-refs.sh "$PWD" "$NEXT_TAG"
-
-          git add .github/workflows
-          if git diff --cached --quiet; then
-            echo "No internal action refs changed."
-          else
-            git commit -m "chore(ci): sync internal action refs to ${NEXT_TAG}"
-          fi
-
-          release_target_sha="$(git rev-parse HEAD)"
-          echo "release_target_sha=${release_target_sha}" >> "$GITHUB_OUTPUT"
-
-          if git rev-parse "${NEXT_TAG}" >/dev/null 2>&1; then
-            git tag -d "${NEXT_TAG}"
-          fi
-
-          git tag "${NEXT_TAG}" "${release_target_sha}"
-          git push --atomic origin "HEAD:${target_branch}" "refs/tags/${NEXT_TAG}"
-
-      - name: Resolve release target
-        id: release-target
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${{ inputs.dry-run }}" == "true" ]]; then
-            target_sha="${{ steps.version.outputs.target_sha }}"
-          else
-            target_sha="${{ steps.sync-internal-refs.outputs.release_target_sha }}"
-          fi
-
-          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
-
       - name: Create release
         if: ${{ !inputs.dry-run }}
         env:
@@ -230,7 +177,7 @@ jobs:
           gh release create \
             "${{ steps.version.outputs.next_tag }}" \
             --title "v${{ steps.version.outputs.release_version }}" \
-            --verify-tag \
+            --target "${{ steps.version.outputs.target_sha }}" \
             --generate-notes \
             --notes-start-tag "${{ steps.version.outputs.latest_tag }}"
 
@@ -248,7 +195,7 @@ jobs:
           echo "Release created:"
           echo "- From tag: ${{ steps.version.outputs.latest_tag }}"
           echo "- To tag: ${{ steps.version.outputs.next_tag }}"
-          echo "- Target SHA: ${{ steps.release-target.outputs.target_sha }}"
+          echo "- Target SHA: ${{ steps.version.outputs.target_sha }}"
 
   register-release-in-log:
     if: ${{ !inputs.dry-run }}
