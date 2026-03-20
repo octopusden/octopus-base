@@ -181,13 +181,26 @@ jobs:
           current_version: ${{ steps.tag_version.outputs.tag }}
           level: ${{ inputs.increment-version-level }}
 
-      - name: Get new version
+      - name: Parse new version
         if: inputs.flow-type == 'public'
-        uses: octopusden/octopus-base/.github/actions/get-version@v2.1.11
         id: new-version
-        with:
-          tag-value: ${{ steps.new-tag-version.outputs.new_version }}
-          exit-if-empty: true
+        env:
+          TAG_VALUE: ${{ steps.new-tag-version.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${TAG_VALUE}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "The version must match the format 'v<major>.<minor>.<patch>' but it has value ${TAG_VALUE}" >&2
+            exit 1
+          fi
+
+          {
+            echo "group1=${BASH_REMATCH[1]}"
+            echo "group2=${BASH_REMATCH[2]}"
+            echo "group3=${BASH_REMATCH[3]}"
+            echo "version=${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Save new version to env
         if: inputs.flow-type == 'public'
