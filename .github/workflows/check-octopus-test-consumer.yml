@@ -90,13 +90,21 @@ jobs:
     name: security
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Validate external action refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/validate-github-action-refs.sh "$GITHUB_WORKSPACE"
       - name: Repository security scope
         shell: bash
         run: |
           {
             echo "### security"
-            echo "- No repository-specific security checks are defined for octopus-base."
-            echo "- Security gates are validated in consumer repositories."
+            echo "- External \`uses@ref\` references are validated for resolvable refs."
+            echo "- Security gates are also validated in consumer repositories."
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
