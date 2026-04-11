@@ -29,7 +29,11 @@ dependencies {
 }
 
 kotlin {
-    jvmToolchain(17)
+    // JDK 11 = minimum CI runtime across all target repos.
+    // Gradle 8.x requires JDK 11+, quality tools (Checkstyle 10.x) require JDK 11+.
+    // Repos with bytecode target 1.8 (octopus-rm-gradle-plugin, octopus-license-gradle-plugin)
+    // run CI on JDK 11+ — only bytecode target stays 1.8, not the build JVM.
+    jvmToolchain(11)
 }
 
 detekt {
