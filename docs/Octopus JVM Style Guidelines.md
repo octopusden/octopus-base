@@ -68,7 +68,7 @@ If enabled for a repository, start with defaults and tune only when there is a c
 
 ## Convention Plugin Setup
 
-The `org.octopusden.octopus-quality` convention plugin (in `gradle-quality-plugin/`) auto-configures all quality tools listed above. Consumer repos apply one plugin and get `qualityStatic`, `qualityCoverage`, and `qualityCheck` tasks.
+The `org.octopusden.octopus-quality` convention plugin (in `gradle-quality-plugin/`) provides shared configuration (rules, baselines, reports, task wiring) for quality tools. Consumer repos declare and apply the quality tool plugins themselves (with their own versions), and the convention plugin configures them. This gives repos `qualityStatic`, `qualityCoverage`, and `qualityCheck` aggregate tasks.
 
 ### Prerequisites
 
