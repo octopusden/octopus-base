@@ -3,6 +3,8 @@ plugins {
     `maven-publish`
     signing
     id("org.jetbrains.kotlin.jvm") version "2.2.0"
+    id("io.gitlab.arturbosch.detekt") version "1.23.8"
+    id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
 }
 
 val detektVersion: String by project
@@ -27,6 +29,16 @@ dependencies {
 
 kotlin {
     jvmToolchain(17)
+}
+
+detekt {
+    buildUponDefaultConfig = true
+    allRules = false
+    config.setFrom(file("src/main/resources/org/octopusden/octopus/quality/config/detekt.yml"))
+}
+
+ktlint {
+    outputToConsole.set(true)
 }
 
 gradlePlugin {

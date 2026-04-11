@@ -11,8 +11,10 @@ import org.octopusden.octopus.quality.OctopusQualityExtension
  * Called from `gradle.projectsEvaluated` so all subproject plugins and tasks are already resolved.
  */
 internal object TaskRegistrar {
-
-    fun register(rootProject: Project, extension: OctopusQualityExtension) {
+    fun register(
+        rootProject: Project,
+        extension: OctopusQualityExtension,
+    ) {
         val targetProjects = targetProjects(rootProject, extension)
         val excludedTasks = extension.excludedTasks.get()
 
@@ -21,7 +23,11 @@ internal object TaskRegistrar {
         registerQualityCheck(rootProject)
     }
 
-    private fun registerQualityStatic(rootProject: Project, targets: List<Project>, excludedTasks: Set<String>) {
+    private fun registerQualityStatic(
+        rootProject: Project,
+        targets: List<Project>,
+        excludedTasks: Set<String>,
+    ) {
         rootProject.tasks.register("qualityStatic") { task ->
             task.group = "verification"
             task.description = "Runs static analysis checks for all modules"
@@ -68,11 +74,12 @@ internal object TaskRegistrar {
 
         rootProject.tasks.register("qualityCoverage") { task ->
             task.group = "verification"
-            task.description = if (coverageEnabled) {
-                "Runs tests and coverage verification for all modules"
-            } else {
-                "Runs tests for all modules (coverage verification disabled)"
-            }
+            task.description =
+                if (coverageEnabled) {
+                    "Runs tests and coverage verification for all modules"
+                } else {
+                    "Runs tests for all modules (coverage verification disabled)"
+                }
 
             for (project in targets) {
                 dependOnIfExists(task, project, "test", excludedTasks)
@@ -133,49 +140,90 @@ internal object TaskRegistrar {
 
             task.dependsOn(targets.map { "${it.path}:test" })
 
-            task.executionData.from(rootProject.files(targets.map { project ->
-                project.fileTree(project.layout.buildDirectory) { tree ->
-                    tree.include("jacoco/test.exec")
-                }
-            }))
-            task.sourceDirectories.from(rootProject.files(targets.mapNotNull { project ->
-                project.extensions.findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                    ?.sourceSets?.findByName("main")?.allSource?.srcDirs
-            }))
-            task.classDirectories.from(rootProject.files(targets.mapNotNull { project ->
-                project.extensions.findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                    ?.sourceSets?.findByName("main")?.output
-            }))
+            task.executionData.from(
+                rootProject.files(
+                    targets.map { project ->
+                        project.fileTree(project.layout.buildDirectory) { tree ->
+                            tree.include("jacoco/test.exec")
+                        }
+                    },
+                ),
+            )
+            task.sourceDirectories.from(
+                rootProject.files(
+                    targets.mapNotNull { project ->
+                        project.extensions
+                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+                            ?.sourceSets
+                            ?.findByName("main")
+                            ?.allSource
+                            ?.srcDirs
+                    },
+                ),
+            )
+            task.classDirectories.from(
+                rootProject.files(
+                    targets.mapNotNull { project ->
+                        project.extensions
+                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+                            ?.sourceSets
+                            ?.findByName("main")
+                            ?.output
+                    },
+                ),
+            )
 
-            task.reports.xml.required.set(true)
-            task.reports.html.required.set(true)
+            task.reports.xml.required
+                .set(true)
+            task.reports.html.required
+                .set(true)
             task.reports.xml.outputLocation.set(
-                rootProject.layout.buildDirectory.file("reports/jacoco/overallCoverage/jacocoOverallCoverageReport.xml")
+                rootProject.layout.buildDirectory.file("reports/jacoco/overallCoverage/jacocoOverallCoverageReport.xml"),
             )
             task.reports.html.outputLocation.set(
-                rootProject.layout.buildDirectory.dir("reports/jacoco/overallCoverage/html")
+                rootProject.layout.buildDirectory.dir("reports/jacoco/overallCoverage/html"),
             )
         }
 
-        rootProject.tasks.register("jacocoOverallCoverageVerification", org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java) { task ->
+        val verificationType = org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java
+        rootProject.tasks.register("jacocoOverallCoverageVerification", verificationType) { task ->
             task.group = "verification"
             task.description = "Verifies aggregated JaCoCo coverage across all coverage modules"
 
             task.dependsOn(targets.map { "${it.path}:test" })
 
-            task.executionData.from(rootProject.files(targets.map { project ->
-                project.fileTree(project.layout.buildDirectory) { tree ->
-                    tree.include("jacoco/test.exec")
-                }
-            }))
-            task.sourceDirectories.from(rootProject.files(targets.mapNotNull { project ->
-                project.extensions.findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                    ?.sourceSets?.findByName("main")?.allSource?.srcDirs
-            }))
-            task.classDirectories.from(rootProject.files(targets.mapNotNull { project ->
-                project.extensions.findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                    ?.sourceSets?.findByName("main")?.output
-            }))
+            task.executionData.from(
+                rootProject.files(
+                    targets.map { project ->
+                        project.fileTree(project.layout.buildDirectory) { tree ->
+                            tree.include("jacoco/test.exec")
+                        }
+                    },
+                ),
+            )
+            task.sourceDirectories.from(
+                rootProject.files(
+                    targets.mapNotNull { project ->
+                        project.extensions
+                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+                            ?.sourceSets
+                            ?.findByName("main")
+                            ?.allSource
+                            ?.srcDirs
+                    },
+                ),
+            )
+            task.classDirectories.from(
+                rootProject.files(
+                    targets.mapNotNull { project ->
+                        project.extensions
+                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+                            ?.sourceSets
+                            ?.findByName("main")
+                            ?.output
+                    },
+                ),
+            )
 
             task.violationRules.rule { rule ->
                 rule.element = "BUNDLE"
@@ -196,7 +244,10 @@ internal object TaskRegistrar {
         return if (languages.isKotlinOnly) CoverageExtension.Tool.KOVER else CoverageExtension.Tool.JACOCO
     }
 
-    private fun targetProjects(rootProject: Project, extension: OctopusQualityExtension): List<Project> {
+    private fun targetProjects(
+        rootProject: Project,
+        extension: OctopusQualityExtension,
+    ): List<Project> {
         val excluded = extension.coverageExcludedProjects.get()
         return if (rootProject.subprojects.isEmpty()) {
             listOf(rootProject)
@@ -205,7 +256,12 @@ internal object TaskRegistrar {
         }
     }
 
-    private fun dependOnIfExists(task: Task, project: Project, taskName: String, excludedTasks: Set<String>) {
+    private fun dependOnIfExists(
+        task: Task,
+        project: Project,
+        taskName: String,
+        excludedTasks: Set<String>,
+    ) {
         val fullPath = "${project.path}:$taskName"
         if (taskName in excludedTasks || fullPath in excludedTasks) return
         if (taskName in project.tasks.names) {
@@ -213,7 +269,11 @@ internal object TaskRegistrar {
         }
     }
 
-    private fun dependOnRootIfExists(task: Task, rootProject: Project, taskName: String) {
+    private fun dependOnRootIfExists(
+        task: Task,
+        rootProject: Project,
+        taskName: String,
+    ) {
         if (taskName in rootProject.tasks.names) {
             task.dependsOn(taskName)
         }

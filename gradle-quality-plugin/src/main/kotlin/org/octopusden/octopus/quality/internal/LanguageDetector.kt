@@ -12,7 +12,6 @@ internal data class DetectedLanguages(
 }
 
 internal object LanguageDetector {
-
     private val SOURCE_DIRS = listOf("src/main", "src/test", "src/integrationTest", "src/testFixtures")
 
     fun detect(project: Project): DetectedLanguages {
@@ -32,12 +31,16 @@ internal object LanguageDetector {
     /**
      * Detect languages across all subprojects (or the root project if single-module).
      */
-    fun detectAll(rootProject: Project, excludedProjects: Set<String>): DetectedLanguages {
-        val projects = if (rootProject.subprojects.isEmpty()) {
-            listOf(rootProject)
-        } else {
-            rootProject.subprojects.filter { it.name !in excludedProjects }
-        }
+    fun detectAll(
+        rootProject: Project,
+        excludedProjects: Set<String>,
+    ): DetectedLanguages {
+        val projects =
+            if (rootProject.subprojects.isEmpty()) {
+                listOf(rootProject)
+            } else {
+                rootProject.subprojects.filter { it.name !in excludedProjects }
+            }
 
         var hasKotlin = false
         var hasJava = false

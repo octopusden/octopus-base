@@ -24,7 +24,6 @@ import org.octopusden.octopus.quality.internal.TaskRegistrar
  * - `qualityCheck` — both of the above
  */
 class OctopusQualityPlugin : Plugin<Project> {
-
     override fun apply(project: Project) {
         val extension = project.extensions.create("octopusQuality", OctopusQualityExtension::class.java)
 
