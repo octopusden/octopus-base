@@ -20,6 +20,9 @@ dependencies {
     implementation("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
     implementation("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
     implementation("com.github.spotbugs.snom:spotbugs-gradle-plugin:$spotbugsGradleVersion")
+    // Detekt/KtLint need Kotlin Gradle plugin classes at runtime when applied to Kotlin subprojects.
+    // Detekt declares this as compileOnly, so we must bring it explicitly.
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinGradlePluginVersion")}")
 }
 
 kotlin {
