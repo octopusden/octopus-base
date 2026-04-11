@@ -94,5 +94,5 @@ signing {
     val signingPassword: String? by project
     useInMemoryPgpKeys(signingKey, signingPassword)
     sign(publishing.publications)
-    isRequired = gradle.taskGraph.hasTask("publishToSonatype")
+    isRequired = gradle.startParameter.taskNames.any { it == "publishToSonatype" || it.endsWith(":publishToSonatype") }
 }

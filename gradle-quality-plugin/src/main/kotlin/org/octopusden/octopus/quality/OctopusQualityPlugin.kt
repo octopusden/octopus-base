@@ -34,7 +34,7 @@ class OctopusQualityPlugin : Plugin<Project> {
                 SubprojectConfigurer.configure(project, project, extension)
             }
         } else {
-            project.subprojects.forEach { sub ->
+            project.allprojects.filter { it != project }.forEach { sub ->
                 sub.afterEvaluate {
                     SubprojectConfigurer.configure(sub, project, extension)
                 }

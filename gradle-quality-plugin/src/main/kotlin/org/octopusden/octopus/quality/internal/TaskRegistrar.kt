@@ -133,16 +133,22 @@ internal object TaskRegistrar {
         extension: OctopusQualityExtension,
     ) {
         rootProject.pluginManager.apply("jacoco")
+        val excludedTasks = extension.excludedTasks.get()
+        val filteredTargets =
+            targets.filter { project ->
+                val testPath = "${project.path}:test"
+                "test" !in excludedTasks && testPath !in excludedTasks
+            }
 
         rootProject.tasks.register("jacocoOverallCoverageReport", org.gradle.testing.jacoco.tasks.JacocoReport::class.java) { task ->
             task.group = "verification"
             task.description = "Generates an aggregated JaCoCo report across all coverage modules"
 
-            task.dependsOn(targets.map { "${it.path}:test" })
+            task.dependsOn(filteredTargets.map { "${it.path}:test" })
 
             task.executionData.from(
                 rootProject.files(
-                    targets.map { project ->
+                    filteredTargets.map { project ->
                         project.fileTree(project.layout.buildDirectory) { tree ->
                             tree.include("jacoco/test.exec")
                         }
@@ -151,7 +157,7 @@ internal object TaskRegistrar {
             )
             task.sourceDirectories.from(
                 rootProject.files(
-                    targets.mapNotNull { project ->
+                    filteredTargets.mapNotNull { project ->
                         project.extensions
                             .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
                             ?.sourceSets
@@ -163,7 +169,7 @@ internal object TaskRegistrar {
             )
             task.classDirectories.from(
                 rootProject.files(
-                    targets.mapNotNull { project ->
+                    filteredTargets.mapNotNull { project ->
                         project.extensions
                             .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
                             ?.sourceSets
@@ -190,11 +196,11 @@ internal object TaskRegistrar {
             task.group = "verification"
             task.description = "Verifies aggregated JaCoCo coverage across all coverage modules"
 
-            task.dependsOn(targets.map { "${it.path}:test" })
+            task.dependsOn(filteredTargets.map { "${it.path}:test" })
 
             task.executionData.from(
                 rootProject.files(
-                    targets.map { project ->
+                    filteredTargets.map { project ->
                         project.fileTree(project.layout.buildDirectory) { tree ->
                             tree.include("jacoco/test.exec")
                         }
@@ -203,7 +209,7 @@ internal object TaskRegistrar {
             )
             task.sourceDirectories.from(
                 rootProject.files(
-                    targets.mapNotNull { project ->
+                    filteredTargets.mapNotNull { project ->
                         project.extensions
                             .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
                             ?.sourceSets
@@ -215,7 +221,7 @@ internal object TaskRegistrar {
             )
             task.classDirectories.from(
                 rootProject.files(
-                    targets.mapNotNull { project ->
+                    filteredTargets.mapNotNull { project ->
                         project.extensions
                             .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
                             ?.sourceSets
@@ -249,10 +255,11 @@ internal object TaskRegistrar {
         extension: OctopusQualityExtension,
     ): List<Project> {
         val excluded = extension.coverageExcludedProjects.get()
-        return if (rootProject.subprojects.isEmpty()) {
+        val allSubs = rootProject.allprojects.filter { it != rootProject }
+        return if (allSubs.isEmpty()) {
             listOf(rootProject)
         } else {
-            rootProject.subprojects.filter { it.name !in excluded }
+            allSubs.filter { it.name !in excluded }
         }
     }
 

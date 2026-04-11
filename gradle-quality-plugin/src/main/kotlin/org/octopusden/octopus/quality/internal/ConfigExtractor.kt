@@ -33,13 +33,11 @@ internal object ConfigExtractor {
 
         for (fileName in CONFIG_FILES) {
             val target = File(configDir, fileName)
-            if (!target.exists()) {
-                val resource =
-                    javaClass.classLoader.getResourceAsStream("$RESOURCE_PREFIX/$fileName")
-                        ?: error("Missing bundled config: $RESOURCE_PREFIX/$fileName")
-                resource.use { input ->
-                    target.outputStream().use { output -> input.copyTo(output) }
-                }
+            val resource =
+                javaClass.classLoader.getResourceAsStream("$RESOURCE_PREFIX/$fileName")
+                    ?: error("Missing bundled config: $RESOURCE_PREFIX/$fileName")
+            resource.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
             }
         }
 

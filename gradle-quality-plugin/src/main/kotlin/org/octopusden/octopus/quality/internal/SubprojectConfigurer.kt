@@ -116,7 +116,10 @@ internal object SubprojectConfigurer {
             ext.buildUponDefaultConfig = true
             ext.allRules = false
             ext.config.setFrom(File(configDir, "detekt.yml"))
-            ext.baseline = File(project.projectDir, "detekt-baseline.xml")
+            val baselineFile = File(project.projectDir, "detekt-baseline.xml")
+            if (baselineFile.exists()) {
+                ext.baseline = baselineFile
+            }
             ext.ignoreFailures = !extension.kotlin.failOnViolation.get()
         }
         project.tasks.withType(io.gitlab.arturbosch.detekt.Detekt::class.java).configureEach { task ->
@@ -141,7 +144,10 @@ internal object SubprojectConfigurer {
                 it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.PLAIN)
                 it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.CHECKSTYLE)
             }
-            ext.baseline.set(File(project.projectDir, "ktlint-baseline.xml"))
+            val baselineFile = File(project.projectDir, "ktlint-baseline.xml")
+            if (baselineFile.exists()) {
+                ext.baseline.set(baselineFile)
+            }
             ext.filter {
                 it.exclude("**/generated/**")
                 it.exclude("**/build/**")
