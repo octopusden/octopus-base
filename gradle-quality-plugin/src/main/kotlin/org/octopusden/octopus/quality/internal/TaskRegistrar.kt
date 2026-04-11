@@ -29,7 +29,7 @@ internal object TaskRegistrar {
             for (project in targets) {
                 val languages = LanguageDetector.detect(project)
 
-                // Java tools: checkstyle, pmd
+                // Java tools: checkstyle, pmd, spotbugs
                 if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
                     dependOnIfExists(task, project, "checkstyleMain", excludedTasks)
                     dependOnIfExists(task, project, "checkstyleTest", excludedTasks)
@@ -37,6 +37,8 @@ internal object TaskRegistrar {
                     dependOnIfExists(task, project, "pmdMain", excludedTasks)
                     dependOnIfExists(task, project, "pmdTest", excludedTasks)
                     dependOnIfExists(task, project, "pmdIntegrationTest", excludedTasks)
+                    dependOnIfExists(task, project, "spotbugsMain", excludedTasks)
+                    dependOnIfExists(task, project, "spotbugsTest", excludedTasks)
                     dependOnIfExists(task, project, "classes", excludedTasks)
                     dependOnIfExists(task, project, "testClasses", excludedTasks)
                 }

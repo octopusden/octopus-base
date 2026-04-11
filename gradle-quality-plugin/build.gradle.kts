@@ -16,11 +16,10 @@ repositories {
 }
 
 dependencies {
-    compileOnly(gradleApi())
-    compileOnly("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
-    compileOnly("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
-    compileOnly("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
-    compileOnly("com.github.spotbugs.snom:spotbugs-gradle-plugin:$spotbugsGradleVersion")
+    implementation("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
+    implementation("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
+    implementation("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
+    implementation("com.github.spotbugs.snom:spotbugs-gradle-plugin:$spotbugsGradleVersion")
 }
 
 kotlin {

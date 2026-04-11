@@ -1,6 +1,7 @@
 package org.octopusden.octopus.quality.internal
 
 import org.gradle.api.Project
+import org.octopusden.octopus.quality.CoverageExtension
 import org.octopusden.octopus.quality.OctopusQualityExtension
 import java.io.File
 
@@ -15,34 +16,45 @@ internal object SubprojectConfigurer {
         val languages = LanguageDetector.detect(project)
 
         if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
-            configureJavaTools(project, configDir, extension)
+            configureCheckstyle(project, configDir, extension)
+            configurePmd(project, configDir, extension)
+            configureSpotBugs(project, extension)
         }
 
         if (languages.hasKotlin) {
-            configureKotlinTools(project, rootProject, configDir, extension)
+            configureDetekt(project, configDir, extension)
+            configureKtlint(project, extension)
         }
 
         if (languages.hasGroovy) {
-            configureGroovyTools(project, configDir, extension)
+            configureCodeNarc(project, configDir, extension)
+        }
+
+        // Coverage: JaCoCo for Java/mixed, Kover for Kotlin-only
+        val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
+        val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
+        when (coverageTool) {
+            CoverageExtension.Tool.JACOCO -> configureJaCoCo(project, extension)
+            CoverageExtension.Tool.KOVER -> configureKover(project, rootProject, extension)
+            else -> {}
         }
     }
 
-    private fun configureJavaTools(project: Project, configDir: File, extension: OctopusQualityExtension) {
-        // Checkstyle — built into Gradle
+    private fun configureCheckstyle(project: Project, configDir: File, extension: OctopusQualityExtension) {
         project.pluginManager.apply("checkstyle")
         project.extensions.configure(org.gradle.api.plugins.quality.CheckstyleExtension::class.java) { ext ->
             ext.toolVersion = "10.17.0"
             ext.configFile = File(configDir, "checkstyle.xml")
             ext.isShowViolations = true
-            // Default report-only; resolved lazily via convention
             ext.isIgnoreFailures = !extension.java.failOnViolation.get()
         }
         project.tasks.withType(org.gradle.api.plugins.quality.Checkstyle::class.java).configureEach { task ->
             task.reports.xml.required.set(true)
             task.reports.html.required.set(true)
         }
+    }
 
-        // PMD — built into Gradle
+    private fun configurePmd(project: Project, configDir: File, extension: OctopusQualityExtension) {
         project.pluginManager.apply("pmd")
         project.extensions.configure(org.gradle.api.plugins.quality.PmdExtension::class.java) { ext ->
             ext.toolVersion = "6.55.0"
@@ -56,78 +68,65 @@ internal object SubprojectConfigurer {
             task.reports.xml.required.set(true)
             task.reports.html.required.set(true)
         }
+    }
 
-        // JaCoCo — built into Gradle (coverage for Java/mixed projects)
-        project.pluginManager.apply("jacoco")
-        project.tasks.matching { it.name == "test" }.configureEach { testTask ->
-            testTask.finalizedBy(project.tasks.matching { it.name == "jacocoTestReport" })
+    private fun configureSpotBugs(project: Project, extension: OctopusQualityExtension) {
+        project.pluginManager.apply("com.github.spotbugs")
+        project.extensions.configure(com.github.spotbugs.snom.SpotBugsExtension::class.java) { ext ->
+            ext.ignoreFailures.set(!extension.java.failOnViolation.get())
+            ext.showProgress.set(false)
         }
-        project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoReport::class.java).matching { it.name == "jacocoTestReport" }.configureEach { task ->
-            task.dependsOn(project.tasks.matching { it.name == "test" })
-            task.reports.xml.required.set(true)
-            task.reports.html.required.set(true)
+        project.tasks.withType(com.github.spotbugs.snom.SpotBugsTask::class.java).configureEach { task ->
+            task.reports.register("xml") { it.required.set(true) }
+            task.reports.register("html") { it.required.set(true) }
         }
-        project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java).matching { it.name == "jacocoTestCoverageVerification" }.configureEach { task ->
-            task.dependsOn(project.tasks.matching { it.name == "test" })
-            task.violationRules.rule { rule ->
-                rule.element = "BUNDLE"
-                rule.limit { limit ->
-                    limit.counter = "LINE"
-                    limit.value = "COVEREDRATIO"
-                    limit.minimum = extension.coverage.minimumLineCoverage.get()
-                }
+    }
+
+    private fun configureDetekt(project: Project, configDir: File, extension: OctopusQualityExtension) {
+        project.pluginManager.apply("io.gitlab.arturbosch.detekt")
+        project.extensions.configure(io.gitlab.arturbosch.detekt.extensions.DetektExtension::class.java) { ext ->
+            ext.buildUponDefaultConfig = true
+            ext.allRules = false
+            ext.config.setFrom(File(configDir, "detekt.yml"))
+            ext.baseline = File(project.projectDir, "detekt-baseline.xml")
+            ext.ignoreFailures = !extension.kotlin.failOnViolation.get()
+        }
+        project.tasks.withType(io.gitlab.arturbosch.detekt.Detekt::class.java).configureEach { task ->
+            task.reports {
+                it.xml.required.set(true)
+                it.html.required.set(true)
+                it.sarif.required.set(true)
+                it.txt.required.set(false)
             }
         }
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun configureKotlinTools(project: Project, rootProject: Project, configDir: File, extension: OctopusQualityExtension) {
-        // Detekt
-        tryApplyPlugin(project, "io.gitlab.arturbosch.detekt") {
-            project.extensions.configure(io.gitlab.arturbosch.detekt.extensions.DetektExtension::class.java) { ext ->
-                ext.buildUponDefaultConfig = true
-                ext.allRules = false
-                ext.config.setFrom(File(configDir, "detekt.yml"))
-                ext.baseline = File(project.projectDir, "detekt-baseline.xml")
-                ext.ignoreFailures = !extension.kotlin.failOnViolation.get()
+    private fun configureKtlint(project: Project, extension: OctopusQualityExtension) {
+        project.pluginManager.apply("org.jlleitschuh.gradle.ktlint")
+        project.extensions.configure(org.jlleitschuh.gradle.ktlint.KtlintExtension::class.java) { ext ->
+            ext.ignoreFailures.set(!extension.kotlin.failOnViolation.get())
+            ext.outputToConsole.set(true)
+            ext.reporters {
+                it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.PLAIN)
+                it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.CHECKSTYLE)
             }
-            project.tasks.withType(io.gitlab.arturbosch.detekt.Detekt::class.java).configureEach { task ->
-                task.reports {
-                    it.xml.required.set(true)
-                    it.html.required.set(true)
-                    it.sarif.required.set(true)
-                    it.txt.required.set(false)
-                }
+            ext.baseline.set(File(project.projectDir, "ktlint-baseline.xml"))
+            ext.filter {
+                it.exclude("**/generated/**")
+                it.exclude("**/build/**")
+                it.include("**/src/**/*.kt")
             }
         }
-
-        // KtLint
-        tryApplyPlugin(project, "org.jlleitschuh.gradle.ktlint") {
-            project.extensions.configure(org.jlleitschuh.gradle.ktlint.KtlintExtension::class.java) { ext ->
-                ext.ignoreFailures.set(!extension.kotlin.failOnViolation.get())
-                ext.outputToConsole.set(true)
-                ext.reporters {
-                    it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.PLAIN)
-                    it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.CHECKSTYLE)
-                }
-                ext.baseline.set(File(project.projectDir, "ktlint-baseline.xml"))
-                ext.filter {
-                    it.exclude("**/generated/**")
-                    it.exclude("**/build/**")
-                    it.include("**/src/**/*.kt")
-                }
-            }
-            // Disable Kotlin script checks
-            project.tasks.matching { task ->
-                task.name == "runKtlintCheckOverKotlinScripts" ||
-                    task.name == "ktlintKotlinScriptCheck" ||
-                    task.name == "runKtlintFormatOverKotlinScripts" ||
-                    task.name == "ktlintKotlinScriptFormat"
-            }.configureEach { it.enabled = false }
-        }
+        // Disable Kotlin script checks
+        project.tasks.matching { task ->
+            task.name == "runKtlintCheckOverKotlinScripts" ||
+                task.name == "ktlintKotlinScriptCheck" ||
+                task.name == "runKtlintFormatOverKotlinScripts" ||
+                task.name == "ktlintKotlinScriptFormat"
+        }.configureEach { it.enabled = false }
     }
 
-    private fun configureGroovyTools(project: Project, configDir: File, extension: OctopusQualityExtension) {
+    private fun configureCodeNarc(project: Project, configDir: File, extension: OctopusQualityExtension) {
         project.pluginManager.apply("codenarc")
         project.extensions.configure(org.gradle.api.plugins.quality.CodeNarcExtension::class.java) { ext ->
             ext.configFile = File(configDir, "codenarc.groovy")
@@ -139,19 +138,43 @@ internal object SubprojectConfigurer {
         }
     }
 
-    /**
-     * Try to apply a plugin. If the plugin class is not on the classpath (consumer
-     * didn't add it to buildscript dependencies), log a warning and skip.
-     */
-    private fun tryApplyPlugin(project: Project, pluginId: String, configure: () -> Unit) {
-        try {
-            project.pluginManager.apply(pluginId)
-            configure()
-        } catch (e: Exception) {
-            project.logger.warn(
-                "octopus-quality: could not apply plugin '$pluginId' to '${project.path}'. " +
-                    "Add the plugin to your buildscript classpath. Error: ${e.message}"
-            )
+    private fun configureJaCoCo(project: Project, extension: OctopusQualityExtension) {
+        project.pluginManager.apply("jacoco")
+        project.tasks.matching { it.name == "test" }.configureEach { testTask ->
+            testTask.finalizedBy(project.tasks.matching { it.name == "jacocoTestReport" })
         }
+        project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoReport::class.java)
+            .matching { it.name == "jacocoTestReport" }.configureEach { task ->
+                task.dependsOn(project.tasks.matching { it.name == "test" })
+                task.reports.xml.required.set(true)
+                task.reports.html.required.set(true)
+            }
+        project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java)
+            .matching { it.name == "jacocoTestCoverageVerification" }.configureEach { task ->
+                task.dependsOn(project.tasks.matching { it.name == "test" })
+                task.violationRules.rule { rule ->
+                    rule.element = "BUNDLE"
+                    rule.limit { limit ->
+                        limit.counter = "LINE"
+                        limit.value = "COVEREDRATIO"
+                        limit.minimum = extension.coverage.minimumLineCoverage.get()
+                    }
+                }
+            }
+    }
+
+    private fun configureKover(project: Project, rootProject: Project, extension: OctopusQualityExtension) {
+        // Kover is applied at root level for aggregation; subprojects get it transitively
+        if (project == rootProject || project.parent == rootProject) {
+            project.pluginManager.apply("org.jetbrains.kotlinx.kover")
+        }
+    }
+
+    private fun resolveCoverageTool(
+        requested: CoverageExtension.Tool,
+        languages: DetectedLanguages,
+    ): CoverageExtension.Tool {
+        if (requested != CoverageExtension.Tool.AUTO) return requested
+        return if (languages.isKotlinOnly) CoverageExtension.Tool.KOVER else CoverageExtension.Tool.JACOCO
     }
 }
