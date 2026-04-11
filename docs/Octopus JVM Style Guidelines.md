@@ -78,10 +78,12 @@ The `org.octopusden.octopus-quality` convention plugin (in `gradle-quality-plugi
 ### Consumer wiring
 
 ```kotlin
-// settings.gradle.kts — declare plugin versions here:
+// settings.gradle.kts — declare ALL plugin versions here:
 pluginManagement {
     plugins {
         kotlin("jvm") version(extra["kotlin.version"] as String)
+        id("io.gitlab.arturbosch.detekt") version(extra["detekt.version"] as String)
+        id("org.jlleitschuh.gradle.ktlint") version(extra["ktlint-gradle.version"] as String)
         id("org.octopusden.octopus-quality") version "<octopus-base-version>"
     }
     repositories {
@@ -92,12 +94,16 @@ pluginManagement {
 
 // build.gradle.kts — apply at root:
 plugins {
-    kotlin("jvm") apply false   // version from pluginManagement, NOT here
+    kotlin("jvm") apply false
+    id("io.gitlab.arturbosch.detekt") apply false
+    id("org.jlleitschuh.gradle.ktlint") apply false
     id("org.octopusden.octopus-quality")
 }
 
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")
+    apply(plugin = "io.gitlab.arturbosch.detekt")
+    apply(plugin = "org.jlleitschuh.gradle.ktlint")
 }
 
 // Optional overrides:
@@ -115,7 +121,7 @@ octopusQuality {
 }
 ```
 
-> **Kotlin plugin constraint:** The convention plugin bundles `kotlin-gradle-plugin` as a transitive dependency (required by detekt classloader). Consumer subprojects must NOT declare `kotlin("jvm") version "..."` in their `plugins {}` blocks. Declare the version in `settings.gradle.kts` `pluginManagement` and use `apply(plugin = ...)` in the root `subprojects {}` block. This is the standard pattern in all octopusden Gradle repos.
+> **Version ownership:** Consumer repos own the versions of Kotlin, detekt, and ktlint — declared in `pluginManagement` and pinned in `gradle.properties`. The convention plugin configures these tools (shared rules, baselines, reports) but does NOT pin their versions. This decouples tool version upgrades from the convention plugin release cycle.
 
 ### What the plugin auto-configures
 

@@ -18,14 +18,16 @@ repositories {
 }
 
 dependencies {
-    implementation("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
-    implementation("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
-    implementation("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
+    // Consumer provides these plugins (with versions) via pluginManagement in settings.gradle.kts.
+    // compileOnly = compile-time type safety, runtime classes come from consumer's plugin classpath.
+    // This decouples tool versions from the convention plugin — consumers control Kotlin/detekt/ktlint
+    // version alignment independently.
+    compileOnly("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
+    compileOnly("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
+    compileOnly("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
+    compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinGradlePluginVersion")}")
+    // SpotBugs has no Kotlin version coupling — safe to bundle.
     implementation("com.github.spotbugs.snom:spotbugs-gradle-plugin:$spotbugsGradleVersion")
-    // Detekt/KtLint need Kotlin Gradle plugin classes at runtime when applied to Kotlin subprojects.
-    // Consumer must NOT declare kotlin("jvm") with a version in subproject plugins {} blocks —
-    // instead, declare it in settings.gradle.kts pluginManagement and use apply(plugin=...) in subprojects.
-    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinGradlePluginVersion")}")
 }
 
 kotlin {

@@ -29,12 +29,13 @@ internal object SubprojectConfigurer {
             configureCodeNarc(project, configDir, extension)
         }
 
-        // Kotlin tools (detekt, ktlint): require kotlin-gradle-plugin classes on classpath.
-        // Use plugins.withId to defer until the consumer has applied kotlin.jvm —
-        // this guarantees Kotlin plugin classes are loaded before detekt/ktlint try to use them.
+        // Kotlin tools (detekt, ktlint): compileOnly deps — consumer provides versions
+        // via pluginManagement. We only configure when the consumer has applied them.
         if (languages.hasKotlin) {
-            project.plugins.withId("org.jetbrains.kotlin.jvm") {
+            project.plugins.withId("io.gitlab.arturbosch.detekt") {
                 configureDetekt(project, configDir, extension)
+            }
+            project.plugins.withId("org.jlleitschuh.gradle.ktlint") {
                 configureKtlint(project, extension)
             }
         }
@@ -111,7 +112,7 @@ internal object SubprojectConfigurer {
         configDir: File,
         extension: OctopusQualityExtension,
     ) {
-        project.pluginManager.apply("io.gitlab.arturbosch.detekt")
+        // Plugin already applied by consumer — we only configure it
         project.extensions.configure(io.gitlab.arturbosch.detekt.extensions.DetektExtension::class.java) { ext ->
             ext.buildUponDefaultConfig = true
             ext.allRules = false
@@ -136,7 +137,7 @@ internal object SubprojectConfigurer {
         project: Project,
         extension: OctopusQualityExtension,
     ) {
-        project.pluginManager.apply("org.jlleitschuh.gradle.ktlint")
+        // Plugin already applied by consumer — we only configure it
         project.extensions.configure(org.jlleitschuh.gradle.ktlint.KtlintExtension::class.java) { ext ->
             ext.ignoreFailures.set(!extension.kotlin.failOnViolation.get())
             ext.outputToConsole.set(true)
@@ -222,10 +223,8 @@ internal object SubprojectConfigurer {
         rootProject: Project,
         extension: OctopusQualityExtension,
     ) {
-        // Kover is applied at root level for aggregation; subprojects get it transitively
-        if (project == rootProject || project.parent == rootProject) {
-            project.pluginManager.apply("org.jetbrains.kotlinx.kover")
-        }
+        // Kover is applied by consumer (with their version via pluginManagement).
+        // Convention plugin only wires qualityCoverage tasks to kover tasks if they exist.
     }
 
     private fun resolveCoverageTool(
