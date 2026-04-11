@@ -84,6 +84,7 @@ pluginManagement {
         kotlin("jvm") version(extra["kotlin.version"] as String)
         id("io.gitlab.arturbosch.detekt") version(extra["detekt.version"] as String)
         id("org.jlleitschuh.gradle.ktlint") version(extra["ktlint-gradle.version"] as String)
+        id("org.jetbrains.kotlinx.kover") version(extra["kover.version"] as String)  // Kotlin-only repos
         id("org.octopusden.octopus-quality") version "<octopus-base-version>"
     }
     repositories {
@@ -97,6 +98,7 @@ plugins {
     kotlin("jvm") apply false
     id("io.gitlab.arturbosch.detekt") apply false
     id("org.jlleitschuh.gradle.ktlint") apply false
+    id("org.jetbrains.kotlinx.kover") apply false     // Kotlin-only repos; omit for Java/mixed
     id("org.octopusden.octopus-quality")
 }
 
@@ -104,6 +106,7 @@ subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "io.gitlab.arturbosch.detekt")
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
+    apply(plugin = "org.jetbrains.kotlinx.kover")      // Kotlin-only repos; omit for Java/mixed
 }
 
 // Optional overrides:
@@ -121,15 +124,25 @@ octopusQuality {
 }
 ```
 
-> **Version ownership:** Consumer repos own the versions of Kotlin, detekt, and ktlint — declared in `pluginManagement` and pinned in `gradle.properties`. The convention plugin configures these tools (shared rules, baselines, reports) but does NOT pin their versions. This decouples tool version upgrades from the convention plugin release cycle.
+> **Version ownership:** Consumer repos own the versions of Kotlin, detekt, ktlint, and kover — declared in `pluginManagement` and pinned in `gradle.properties`. The convention plugin configures these tools (shared rules, baselines, reports, task wiring) but does NOT pin their versions. This decouples tool version upgrades from the convention plugin release cycle.
 
-### What the plugin auto-configures
+### What the plugin provides vs what the consumer provides
 
-| Language detected | Tools applied | Coverage |
-|-------------------|---------------|----------|
-| Kotlin | detekt + ktlint + checkstyle + pmd + spotbugs | Kover (if Kotlin-only) |
-| Java | checkstyle + pmd + spotbugs | JaCoCo |
-| Groovy | codenarc + checkstyle + pmd + spotbugs | JaCoCo |
+| Component | Provider | Why |
+|-----------|----------|-----|
+| Tool **configuration** (shared rules, baselines, reports, task wiring) | Convention plugin | Org-wide consistency |
+| Tool **versions** (detekt, ktlint, kover, kotlin) | Consumer repo (`gradle.properties`) | Coupled to Kotlin version |
+| Checkstyle, PMD, CodeNarc configs | Convention plugin (bundled) | Shared org-wide rules |
+| SpotBugs plugin | Convention plugin (`implementation`) | No Kotlin version coupling |
+| JaCoCo plugin | Convention plugin (Gradle built-in) | No version coupling |
+
+### What the plugin auto-configures (when consumer applies the tool)
+
+| Language detected | Tools configured | Coverage |
+|-------------------|-----------------|----------|
+| Kotlin | detekt + ktlint + checkstyle + pmd + spotbugs | Kover (consumer applies kover plugin) |
+| Java | checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
+| Groovy | codenarc + checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
 | Mixed | All applicable | JaCoCo |
 
 ### What stays local in each repo
