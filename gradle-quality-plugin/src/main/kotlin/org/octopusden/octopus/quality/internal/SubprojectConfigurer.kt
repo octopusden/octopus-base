@@ -18,19 +18,25 @@ internal object SubprojectConfigurer {
         val configDir = ConfigExtractor.extractTo(rootProject)
         val languages = LanguageDetector.detect(project)
 
+        // Java/Groovy built-in tools: always safe to apply (Gradle core, no external classloader)
         if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
             configureCheckstyle(project, configDir, extension)
             configurePmd(project, configDir, extension)
             configureSpotBugs(project, extension)
         }
 
-        if (languages.hasKotlin) {
-            configureDetekt(project, configDir, extension)
-            configureKtlint(project, extension)
-        }
-
         if (languages.hasGroovy) {
             configureCodeNarc(project, configDir, extension)
+        }
+
+        // Kotlin tools (detekt, ktlint): require kotlin-gradle-plugin classes on classpath.
+        // Use plugins.withId to defer until the consumer has applied kotlin.jvm —
+        // this guarantees Kotlin plugin classes are loaded before detekt/ktlint try to use them.
+        if (languages.hasKotlin) {
+            project.plugins.withId("org.jetbrains.kotlin.jvm") {
+                configureDetekt(project, configDir, extension)
+                configureKtlint(project, extension)
+            }
         }
 
         // Coverage: JaCoCo for Java/mixed, Kover for Kotlin-only
