@@ -28,13 +28,13 @@ class OctopusQualityPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create("octopusQuality", OctopusQualityExtension::class.java)
 
+        // Configure subprojects after they are evaluated (plugins and source sets resolved).
+        // Use subproject.afterEvaluate so that the consumer's build.gradle.kts has been processed.
         if (project.subprojects.isEmpty()) {
-            // Single-module project: configure the root project itself
             project.afterEvaluate {
                 SubprojectConfigurer.configure(project, project, extension)
             }
         } else {
-            // Multi-module project: configure each subproject
             project.subprojects.forEach { sub ->
                 sub.afterEvaluate {
                     SubprojectConfigurer.configure(sub, project, extension)
@@ -42,7 +42,10 @@ class OctopusQualityPlugin : Plugin<Project> {
             }
         }
 
-        // Register aggregate quality tasks at root level
-        TaskRegistrar.register(project, extension)
+        // Register aggregate quality tasks. Uses gradle.projectsEvaluated to ensure
+        // all subproject afterEvaluate blocks have completed before wiring task dependencies.
+        project.gradle.projectsEvaluated {
+            TaskRegistrar.register(project, extension)
+        }
     }
 }

@@ -36,6 +36,9 @@ open class CoverageExtension @Inject constructor(objects: ObjectFactory) {
 
     enum class Tool { AUTO, JACOCO, KOVER }
 
+    /** Enable coverage verification. Set to false for repos without tests. */
+    val enabled = objects.property(Boolean::class.java).convention(true)
+
     /** Coverage tool selection. AUTO detects based on project languages. */
     val tool = objects.property(Tool::class.java).convention(Tool.AUTO)
 

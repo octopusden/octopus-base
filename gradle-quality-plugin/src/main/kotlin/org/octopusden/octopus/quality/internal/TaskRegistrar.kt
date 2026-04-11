@@ -7,19 +7,18 @@ import org.octopusden.octopus.quality.OctopusQualityExtension
 
 /**
  * Registers root-level aggregate quality tasks: qualityStatic, qualityCoverage, qualityCheck.
+ *
+ * Called from `gradle.projectsEvaluated` so all subproject plugins and tasks are already resolved.
  */
 internal object TaskRegistrar {
 
     fun register(rootProject: Project, extension: OctopusQualityExtension) {
-        // Defer task wiring to afterEvaluate so that subproject plugins and source sets are resolved.
-        rootProject.afterEvaluate {
-            val targetProjects = targetProjects(rootProject, extension)
-            val excludedTasks = extension.excludedTasks.get()
+        val targetProjects = targetProjects(rootProject, extension)
+        val excludedTasks = extension.excludedTasks.get()
 
-            registerQualityStatic(rootProject, targetProjects, excludedTasks)
-            registerQualityCoverage(rootProject, targetProjects, extension, excludedTasks)
-            registerQualityCheck(rootProject)
-        }
+        registerQualityStatic(rootProject, targetProjects, excludedTasks)
+        registerQualityCoverage(rootProject, targetProjects, extension, excludedTasks)
+        registerQualityCheck(rootProject)
     }
 
     private fun registerQualityStatic(rootProject: Project, targets: List<Project>, excludedTasks: Set<String>) {
@@ -63,21 +62,26 @@ internal object TaskRegistrar {
         extension: OctopusQualityExtension,
         excludedTasks: Set<String>,
     ) {
-        val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
-        val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
-
-        // For JaCoCo: register overall aggregation tasks
-        if (coverageTool == CoverageExtension.Tool.JACOCO && targets.size > 1) {
-            registerJacocoOverallTasks(rootProject, targets, extension)
-        }
+        val coverageEnabled = extension.coverage.enabled.get()
 
         rootProject.tasks.register("qualityCoverage") { task ->
             task.group = "verification"
-            task.description = "Runs tests and coverage verification for all modules"
+            task.description = if (coverageEnabled) {
+                "Runs tests and coverage verification for all modules"
+            } else {
+                "Runs tests for all modules (coverage verification disabled)"
+            }
 
             for (project in targets) {
                 dependOnIfExists(task, project, "test", excludedTasks)
+            }
 
+            if (!coverageEnabled) return@register
+
+            val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
+            val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
+
+            for (project in targets) {
                 when (coverageTool) {
                     CoverageExtension.Tool.JACOCO -> {
                         dependOnIfExists(task, project, "jacocoTestReport", excludedTasks)
@@ -93,11 +97,11 @@ internal object TaskRegistrar {
 
             // Overall aggregation
             if (coverageTool == CoverageExtension.Tool.JACOCO && targets.size > 1) {
+                registerJacocoOverallTasks(rootProject, targets, extension)
                 task.dependsOn("jacocoOverallCoverageReport")
                 task.dependsOn("jacocoOverallCoverageVerification")
             }
             if (coverageTool == CoverageExtension.Tool.KOVER) {
-                // Kover root-level merged tasks
                 dependOnRootIfExists(task, rootProject, "koverMergedXmlReport")
                 dependOnRootIfExists(task, rootProject, "koverXmlReport")
                 dependOnRootIfExists(task, rootProject, "koverMergedVerify")
@@ -202,13 +206,13 @@ internal object TaskRegistrar {
     private fun dependOnIfExists(task: Task, project: Project, taskName: String, excludedTasks: Set<String>) {
         val fullPath = "${project.path}:$taskName"
         if (taskName in excludedTasks || fullPath in excludedTasks) return
-        if (project.tasks.findByName(taskName) != null) {
+        if (taskName in project.tasks.names) {
             task.dependsOn(fullPath)
         }
     }
 
     private fun dependOnRootIfExists(task: Task, rootProject: Project, taskName: String) {
-        if (rootProject.tasks.findByName(taskName) != null) {
+        if (taskName in rootProject.tasks.names) {
             task.dependsOn(taskName)
         }
     }
