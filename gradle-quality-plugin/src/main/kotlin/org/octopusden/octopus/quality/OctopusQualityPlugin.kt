@@ -6,22 +6,49 @@ import org.octopusden.octopus.quality.internal.SubprojectConfigurer
 import org.octopusden.octopus.quality.internal.TaskRegistrar
 
 /**
- * Convention plugin providing unified quality gates for octopusden JVM repositories.
+ * Convention plugin providing shared quality configuration for octopusden JVM repositories.
  *
- * Apply to the **root project**:
+ * **Consumer contract:** The consumer repo declares and applies quality tool plugins
+ * (detekt, ktlint, kover) with their own versions. This plugin configures them
+ * (shared rules, baselines, reports, task wiring) but does NOT pin tool versions.
+ *
  * ```kotlin
+ * // settings.gradle.kts — ALL versions here:
+ * pluginManagement {
+ *     plugins {
+ *         kotlin("jvm") version(extra["kotlin.version"] as String)
+ *         id("io.gitlab.arturbosch.detekt") version(extra["detekt.version"] as String)
+ *         id("org.jlleitschuh.gradle.ktlint") version(extra["ktlint-gradle.version"] as String)
+ *         id("org.octopusden.octopus-quality") version "<version>"
+ *     }
+ * }
+ *
+ * // build.gradle.kts — apply at root:
  * plugins {
- *     id("org.octopusden.octopus-quality") version "<version>"
+ *     kotlin("jvm") apply false
+ *     id("io.gitlab.arturbosch.detekt") apply false
+ *     id("org.jlleitschuh.gradle.ktlint") apply false
+ *     id("org.octopusden.octopus-quality")
+ * }
+ *
+ * subprojects {
+ *     apply(plugin = "org.jetbrains.kotlin.jvm")
+ *     apply(plugin = "io.gitlab.arturbosch.detekt")
+ *     apply(plugin = "org.jlleitschuh.gradle.ktlint")
  * }
  * ```
  *
- * The plugin auto-detects languages (Java, Kotlin, Groovy) in each subproject and
- * configures the appropriate static analysis, formatting, and coverage tools.
+ * The plugin auto-detects languages per subproject and configures:
+ * - **Kotlin** (when detekt/ktlint applied): shared detekt.yml, baseline support, report formats
+ * - **Java/Groovy** (always): checkstyle, pmd, spotbugs, codenarc — bundled by plugin
+ * - **Coverage**: JaCoCo (Java/mixed, applied by plugin) or Kover (Kotlin-only, applied by consumer)
  *
  * Aggregate tasks registered at root level:
  * - `qualityStatic` — static analysis + formatting checks
  * - `qualityCoverage` — tests + coverage verification
  * - `qualityCheck` — both of the above
+ *
+ * See `docs/Octopus JVM Style Guidelines.md` for full consumer wiring guide.
  */
 class OctopusQualityPlugin : Plugin<Project> {
     override fun apply(project: Project) {

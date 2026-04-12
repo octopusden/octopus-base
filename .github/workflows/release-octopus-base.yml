@@ -197,9 +197,51 @@ jobs:
           echo "- To tag: ${{ steps.version.outputs.next_tag }}"
           echo "- Target SHA: ${{ steps.version.outputs.target_sha }}"
 
+  publish-quality-plugin:
+    name: Publish quality convention plugin
+    needs: create-release
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    environment: Prod
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.next_tag }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v5
+        with:
+          min-wrapper-count: 0
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and publish plugin
+        working-directory: gradle-quality-plugin
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository \
+            -Pversion=${{ needs.create-release.outputs.release_version }} \
+            -Pnexus=true \
+            --no-daemon --info -s
+
   register-release-in-log:
     if: ${{ !inputs.dry-run }}
-    needs: create-release
+    needs:
+      - create-release
+      - publish-quality-plugin
     uses: ./.github/workflows/common-register-release.yml
     name: Register release
     with:

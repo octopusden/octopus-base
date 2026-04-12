@@ -95,18 +95,24 @@ pluginManagement {
 
 // build.gradle.kts — apply at root:
 plugins {
-    kotlin("jvm") apply false
-    id("io.gitlab.arturbosch.detekt") apply false
-    id("org.jlleitschuh.gradle.ktlint") apply false
-    id("org.jetbrains.kotlinx.kover") apply false     // Kotlin-only repos; omit for Java/mixed
+    kotlin("jvm") apply false                          // only if repo has Kotlin
+    id("io.gitlab.arturbosch.detekt") apply false      // only if repo has Kotlin
+    id("org.jlleitschuh.gradle.ktlint") apply false    // only if repo has Kotlin
+    id("org.jetbrains.kotlinx.kover") apply false      // only if Kotlin-only (no Java/Groovy)
     id("org.octopusden.octopus-quality")
 }
 
+// Apply per-module based on language:
 subprojects {
-    apply(plugin = "org.jetbrains.kotlin.jvm")
+    // Kotlin modules:
+    apply(plugin = "org.jetbrains.kotlin.jvm")         // triggers detekt/ktlint auto-config
     apply(plugin = "io.gitlab.arturbosch.detekt")
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
-    apply(plugin = "org.jetbrains.kotlinx.kover")      // Kotlin-only repos; omit for Java/mixed
+    // Kotlin-only repos add kover:
+    apply(plugin = "org.jetbrains.kotlinx.kover")
+    // For mixed repos: apply Kotlin tools only to Kotlin modules, not all subprojects.
+    // Java/Groovy modules get checkstyle + pmd + spotbugs + codenarc automatically
+    // from the convention plugin — no extra apply needed.
 }
 
 // Optional overrides:

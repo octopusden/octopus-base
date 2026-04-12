@@ -5,6 +5,7 @@ plugins {
     id("org.jetbrains.kotlin.jvm") version "2.2.0"
     id("io.gitlab.arturbosch.detekt") version "1.23.8"
     id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+    id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
 }
 
 val detektVersion: String by project
@@ -59,17 +60,20 @@ gradlePlugin {
     }
 }
 
-publishing {
-    repositories {
-        maven {
-            name = "sonatype"
-            url = uri("https://ossrh-staging-api.central.sonatype.com/service/local/")
-            credentials {
-                username = System.getenv("MAVEN_USERNAME")
-                password = System.getenv("MAVEN_PASSWORD")
+if (project.hasProperty("nexus")) {
+    nexusPublishing {
+        repositories {
+            sonatype {
+                nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
+                snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
+                username.set(System.getenv("MAVEN_USERNAME"))
+                password.set(System.getenv("MAVEN_PASSWORD"))
             }
         }
     }
+}
+
+publishing {
     publications.withType<MavenPublication> {
         pom {
             name.set("Octopus JVM Quality Gates Plugin")
