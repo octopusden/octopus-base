@@ -18,17 +18,38 @@ repositories {
     gradlePluginPortal()
 }
 
+// External quality plugins: compileOnly for production (consumer provides versions),
+// but TestKit needs them on the plugin classpath to load our classes that reference them.
+val externalPlugins by configurations.creating
+
 dependencies {
-    // Consumer provides these plugins (with versions) via pluginManagement in settings.gradle.kts.
-    // compileOnly = compile-time type safety, runtime classes come from consumer's plugin classpath.
-    // This decouples tool versions from the convention plugin — consumers control Kotlin/detekt/ktlint
-    // version alignment independently.
     compileOnly("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
     compileOnly("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
     compileOnly("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinGradlePluginVersion")}")
     // SpotBugs has no Kotlin version coupling — safe to bundle.
     implementation("com.github.spotbugs.snom:spotbugs-gradle-plugin:$spotbugsGradleVersion")
+
+    // Same deps for TestKit classpath (not published, only for tests)
+    externalPlugins("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
+    externalPlugins("org.jlleitschuh.gradle:ktlint-gradle:$ktlintGradleVersion")
+    externalPlugins("org.jetbrains.kotlinx:kover-gradle-plugin:$koverVersion")
+    externalPlugins("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinGradlePluginVersion")}")
+
+    testImplementation(gradleTestKit())
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// Inject external plugin JARs into TestKit's plugin classpath
+tasks.named("pluginUnderTestMetadata") {
+    (this as org.gradle.plugin.devel.tasks.PluginUnderTestMetadata)
+        .pluginClasspath
+        .from(externalPlugins)
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
 }
 
 kotlin {
