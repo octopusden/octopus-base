@@ -10,12 +10,23 @@ import java.io.File
  * based on detected languages.
  */
 internal object SubprojectConfigurer {
+    private const val CHECKSTYLE_VERSION = "10.17.0"
+    private const val PMD_VERSION = "6.55.0"
+
     fun configure(
         project: Project,
         rootProject: Project,
         extension: OctopusQualityExtension,
     ) {
-        val configDir = ConfigExtractor.extractTo(rootProject)
+        val configDir =
+            rootProject.extensions.extraProperties.let { extra ->
+                val key = "octopusQuality.configDir"
+                if (extra.has(key)) {
+                    extra.get(key) as File
+                } else {
+                    ConfigExtractor.extractTo(rootProject).also { extra.set(key, it) }
+                }
+            }
         val languages = LanguageDetector.detect(project)
 
         // Java/Groovy built-in tools: always safe to apply (Gradle core, no external classloader)
@@ -40,13 +51,16 @@ internal object SubprojectConfigurer {
             }
         }
 
-        // Coverage: JaCoCo for Java/mixed, Kover for Kotlin-only
-        val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
-        val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
-        when (coverageTool) {
-            CoverageExtension.Tool.JACOCO -> configureJaCoCo(project, extension)
-            CoverageExtension.Tool.KOVER -> configureKover(project, rootProject, extension)
-            else -> {}
+        // Coverage: skip for excluded projects
+        val excludedFromCoverage = extension.coverageExcludedProjects.get()
+        if (project.name !in excludedFromCoverage) {
+            val overallLanguages = LanguageDetector.detectAll(rootProject, excludedFromCoverage)
+            val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
+            when (coverageTool) {
+                CoverageExtension.Tool.JACOCO -> configureJaCoCo(project, extension)
+                CoverageExtension.Tool.KOVER -> configureKover(project, rootProject, extension)
+                else -> {}
+            }
         }
     }
 
@@ -57,7 +71,7 @@ internal object SubprojectConfigurer {
     ) {
         project.pluginManager.apply("checkstyle")
         project.extensions.configure(org.gradle.api.plugins.quality.CheckstyleExtension::class.java) { ext ->
-            ext.toolVersion = "10.17.0"
+            ext.toolVersion = CHECKSTYLE_VERSION
             ext.configFile = File(configDir, "checkstyle.xml")
             ext.isShowViolations = true
             ext.isIgnoreFailures = !extension.java.failOnViolation.get()
@@ -77,7 +91,7 @@ internal object SubprojectConfigurer {
     ) {
         project.pluginManager.apply("pmd")
         project.extensions.configure(org.gradle.api.plugins.quality.PmdExtension::class.java) { ext ->
-            ext.toolVersion = "6.55.0"
+            ext.toolVersion = PMD_VERSION
             ext.isConsoleOutput = true
             ext.incrementalAnalysis.set(true)
             ext.isIgnoreFailures = !extension.java.failOnViolation.get()
@@ -225,13 +239,5 @@ internal object SubprojectConfigurer {
     ) {
         // Kover is applied by consumer (with their version via pluginManagement).
         // Convention plugin only wires qualityCoverage tasks to kover tasks if they exist.
-    }
-
-    private fun resolveCoverageTool(
-        requested: CoverageExtension.Tool,
-        languages: DetectedLanguages,
-    ): CoverageExtension.Tool {
-        if (requested != CoverageExtension.Tool.AUTO) return requested
-        return if (languages.isKotlinOnly) CoverageExtension.Tool.KOVER else CoverageExtension.Tool.JACOCO
     }
 }

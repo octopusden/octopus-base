@@ -15,11 +15,12 @@ internal object TaskRegistrar {
         rootProject: Project,
         extension: OctopusQualityExtension,
     ) {
-        val targetProjects = targetProjects(rootProject, extension)
+        val allProjects = allTargetProjects(rootProject)
+        val coverageProjects = coverageTargetProjects(rootProject, extension)
         val excludedTasks = extension.excludedTasks.get()
 
-        registerQualityStatic(rootProject, targetProjects, excludedTasks)
-        registerQualityCoverage(rootProject, targetProjects, extension, excludedTasks)
+        registerQualityStatic(rootProject, allProjects, excludedTasks)
+        registerQualityCoverage(rootProject, coverageProjects, extension, excludedTasks)
         registerQualityCheck(rootProject)
     }
 
@@ -242,15 +243,16 @@ internal object TaskRegistrar {
         }
     }
 
-    private fun resolveCoverageTool(
-        requested: CoverageExtension.Tool,
-        languages: DetectedLanguages,
-    ): CoverageExtension.Tool {
-        if (requested != CoverageExtension.Tool.AUTO) return requested
-        return if (languages.isKotlinOnly) CoverageExtension.Tool.KOVER else CoverageExtension.Tool.JACOCO
+    private fun allTargetProjects(rootProject: Project): List<Project> {
+        val allSubs = rootProject.allprojects.filter { it != rootProject }
+        return if (allSubs.isEmpty()) {
+            listOf(rootProject)
+        } else {
+            allSubs
+        }
     }
 
-    private fun targetProjects(
+    private fun coverageTargetProjects(
         rootProject: Project,
         extension: OctopusQualityExtension,
     ): List<Project> {
@@ -269,7 +271,7 @@ internal object TaskRegistrar {
         taskName: String,
         excludedTasks: Set<String>,
     ) {
-        val fullPath = "${project.path}:$taskName"
+        val fullPath = if (project.path == ":") ":$taskName" else "${project.path}:$taskName"
         if (taskName in excludedTasks || fullPath in excludedTasks) return
         if (taskName in project.tasks.names) {
             task.dependsOn(fullPath)
@@ -282,7 +284,7 @@ internal object TaskRegistrar {
         taskName: String,
     ) {
         if (taskName in rootProject.tasks.names) {
-            task.dependsOn(taskName)
+            task.dependsOn(":$taskName")
         }
     }
 }

@@ -15,10 +15,10 @@ open class OctopusQualityExtension
         val java: JavaExtension = objects.newInstance(JavaExtension::class.java)
         val groovy: GroovyExtension = objects.newInstance(GroovyExtension::class.java)
 
-        /** Subproject names to exclude from coverage verification. */
+        /** Subproject names to exclude from coverage verification (qualityCoverage). */
         val coverageExcludedProjects: SetProperty<String> = objects.setProperty(String::class.java).convention(emptySet())
 
-        /** Task names to exclude from qualityCoverage (e.g. "integrationTest", ":ft:test"). */
+        /** Task names to exclude from quality gate dependencies. Applies to both qualityStatic and qualityCoverage. */
         val excludedTasks: SetProperty<String> = objects.setProperty(String::class.java).convention(emptySet())
 
         fun coverage(action: Action<CoverageExtension>) = action.execute(coverage)
