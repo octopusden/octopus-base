@@ -83,8 +83,8 @@ jobs:
     secrets:
       octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
-  create-release:
-    name: Create GitHub release
+  calculate-version:
+    name: Calculate release version
     needs:
       - resolve-target
       - verify-octopus-test
@@ -93,6 +93,7 @@ jobs:
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
       next_tag: ${{ steps.version.outputs.next_tag }}
+      latest_tag: ${{ steps.version.outputs.latest_tag }}
       target_sha: ${{ steps.version.outputs.target_sha }}
 
     steps:
@@ -166,49 +167,25 @@ jobs:
             exit 1
           fi
 
-      - name: Create release
-        if: ${{ !inputs.dry-run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gh release create \
-            "${{ steps.version.outputs.next_tag }}" \
-            --title "v${{ steps.version.outputs.release_version }}" \
-            --target "${{ steps.version.outputs.target_sha }}" \
-            --generate-notes \
-            --notes-start-tag "${{ steps.version.outputs.latest_tag }}"
-
       - name: Dry run summary
         if: ${{ inputs.dry-run }}
         shell: bash
         run: |
-          echo "Dry run enabled: no GitHub Release was created."
+          echo "Dry run enabled: no GitHub Release will be created."
           echo "Calculated tag: ${{ steps.version.outputs.next_tag }}"
-
-      - name: Print release details
-        if: ${{ !inputs.dry-run }}
-        shell: bash
-        run: |
-          echo "Release created:"
-          echo "- From tag: ${{ steps.version.outputs.latest_tag }}"
-          echo "- To tag: ${{ steps.version.outputs.next_tag }}"
-          echo "- Target SHA: ${{ steps.version.outputs.target_sha }}"
 
   publish-quality-plugin:
     name: Publish quality convention plugin
-    needs: create-release
+    needs: calculate-version
     if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
     environment: Prod
 
     steps:
-      - name: Checkout release tag
+      - name: Checkout target SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-release.outputs.next_tag }}
+          ref: ${{ needs.calculate-version.outputs.target_sha }}
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -233,18 +210,50 @@ jobs:
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository \
-            -Pversion=${{ needs.create-release.outputs.release_version }} \
+            -Pversion=${{ needs.calculate-version.outputs.release_version }} \
             -Pnexus=true \
             --no-daemon --info -s
+
+  create-release:
+    name: Create GitHub release
+    needs:
+      - calculate-version
+      - publish-quality-plugin
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create \
+            "${{ needs.calculate-version.outputs.next_tag }}" \
+            --repo "${{ github.repository }}" \
+            --title "v${{ needs.calculate-version.outputs.release_version }}" \
+            --target "${{ needs.calculate-version.outputs.target_sha }}" \
+            --generate-notes \
+            --notes-start-tag "${{ needs.calculate-version.outputs.latest_tag }}"
+
+      - name: Print release details
+        shell: bash
+        run: |
+          echo "Release created:"
+          echo "- From tag: ${{ needs.calculate-version.outputs.latest_tag }}"
+          echo "- To tag: ${{ needs.calculate-version.outputs.next_tag }}"
+          echo "- Target SHA: ${{ needs.calculate-version.outputs.target_sha }}"
 
   register-release-in-log:
     if: ${{ !inputs.dry-run }}
     needs:
+      - calculate-version
       - create-release
-      - publish-quality-plugin
     uses: ./.github/workflows/common-register-release.yml
     name: Register release
     with:
       octopus-repository: ${{ github.repository }}
-      release-version: ${{ needs.create-release.outputs.release_version }}
+      release-version: ${{ needs.calculate-version.outputs.release_version }}
     secrets: inherit
