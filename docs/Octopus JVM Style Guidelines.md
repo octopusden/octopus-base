@@ -102,23 +102,29 @@ plugins {
     id("org.octopusden.octopus-quality")
 }
 
-// Apply per-module based on language:
+// --- Kotlin-only repo (all subprojects are Kotlin): ---
 subprojects {
-    // Kotlin modules:
-    apply(plugin = "org.jetbrains.kotlin.jvm")         // triggers detekt/ktlint auto-config
+    apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "io.gitlab.arturbosch.detekt")
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
-    // Kotlin-only repos add kover:
     apply(plugin = "org.jetbrains.kotlinx.kover")
-    // For mixed repos: apply Kotlin tools only to Kotlin modules, not all subprojects.
-    // Java/Groovy modules get checkstyle + pmd + spotbugs + codenarc automatically
-    // from the convention plugin — no extra apply needed.
 }
+
+// --- Mixed repo (some Kotlin, some Java/Groovy): ---
+// Apply Kotlin tools selectively per module:
+//   project(":api") {
+//       apply(plugin = "org.jetbrains.kotlin.jvm")
+//       apply(plugin = "io.gitlab.arturbosch.detekt")
+//       apply(plugin = "org.jlleitschuh.gradle.ktlint")
+//   }
+// Java/Groovy modules need NO extra apply — the convention plugin
+// auto-applies checkstyle, pmd, spotbugs, codenarc based on source dirs.
 
 // Optional overrides:
 octopusQuality {
     coverage {
         enabled.set(false)                          // disable for repos without tests
+        tool.set(CoverageExtension.Tool.AUTO)       // AUTO (default), JACOCO, or KOVER
         minimumLineCoverage.set(BigDecimal("0.10"))  // per-module default
         overallMinimum.set(BigDecimal("0.70"))       // overall default
     }
