@@ -39,7 +39,8 @@ internal object LanguageDetector {
             if (rootProject.subprojects.isEmpty()) {
                 listOf(rootProject)
             } else {
-                rootProject.subprojects.filter { it.name !in excludedProjects }
+                // allprojects (minus root) supports nested multi-level builds (e.g. :platform:api)
+                rootProject.allprojects.filter { it != rootProject && it.name !in excludedProjects }
             }
 
         var hasKotlin = false

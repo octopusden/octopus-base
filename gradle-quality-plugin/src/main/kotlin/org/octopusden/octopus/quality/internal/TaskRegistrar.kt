@@ -138,7 +138,10 @@ internal object TaskRegistrar {
         val filteredTargets =
             targets.filter { project ->
                 val testPath = "${project.path}:test"
-                "test" !in excludedTasks && testPath !in excludedTasks
+                // Skip projects without a test task (non-Java modules) or where test is excluded
+                "test" in project.tasks.names &&
+                    "test" !in excludedTasks &&
+                    testPath !in excludedTasks
             }
 
         rootProject.tasks.register("jacocoOverallCoverageReport", org.gradle.testing.jacoco.tasks.JacocoReport::class.java) { task ->

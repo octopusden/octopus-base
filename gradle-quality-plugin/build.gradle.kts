@@ -3,8 +3,10 @@ plugins {
     `maven-publish`
     signing
     id("org.jetbrains.kotlin.jvm") version "2.2.0"
-    id("io.gitlab.arturbosch.detekt") version "1.23.8"
-    id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+    // detekt/ktlint versions come from settings.gradle.kts pluginManagement
+    // (single source of truth with the compileOnly dependency versions below)
+    id("io.gitlab.arturbosch.detekt")
+    id("org.jlleitschuh.gradle.ktlint")
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
 }
 

@@ -116,8 +116,15 @@ internal object SubprojectConfigurer {
             ext.showProgress.set(false)
         }
         project.tasks.withType(com.github.spotbugs.snom.SpotBugsTask::class.java).configureEach { task ->
-            task.reports.register("xml") { it.required.set(true) }
-            task.reports.register("html") { it.required.set(true) }
+            // maybeCreate: safe whether or not reports are pre-registered
+            task.reports
+                .maybeCreate("xml")
+                .required
+                .set(true)
+            task.reports
+                .maybeCreate("html")
+                .required
+                .set(true)
         }
     }
 
