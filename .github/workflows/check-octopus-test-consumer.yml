@@ -98,13 +98,34 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/validate-github-action-refs.sh "$GITHUB_WORKSPACE"
+      - name: Lint GitHub workflows (actionlint)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -lc '
+            set -euo pipefail
+            actionlint -color \
+              -ignore "the runner of \".+\" action is too old to run on GitHub Actions" \
+              -ignore "shellcheck reported issue in this script: SC2034:" \
+              -ignore "shellcheck reported issue in this script: SC2046:" \
+              -ignore "shellcheck reported issue in this script: SC2086:" \
+              $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
+          '
+      - name: Validate helper scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find .github/scripts -type f -name '*.sh' | sort)
       - name: Repository security scope
         shell: bash
         run: |
           {
             echo "### security"
             echo "- External \`uses@ref\` references are validated for resolvable refs."
-            echo "- Security gates are also validated in consumer repositories."
+            echo "- Workflow YAML validated with actionlint."
+            echo "- Helper scripts validated with bash -n."
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
