@@ -23,12 +23,14 @@ Use GitHub Actions workflow `Release octopus-base`.
 5. Run the workflow.
 
 The workflow:
-1. Finds the latest tag in format `vX.Y.Z`.
-2. Calculates the next version from the selected increment level (for example, `v2.1.10` + `patch` -> `v2.1.11`).
-3. Creates GitHub Release with generated release notes (based on `.github/release.yml`) unless `dry-run=true`.
-4. Registers the release in `octopus-release-log` using `common-register-release.yml` unless `dry-run=true`.
+1. **calculate-version** — finds latest `vX.Y.Z` tag, bumps by selected level (e.g. `v2.1.10` + `patch` → `v2.1.11`).
+2. **publish-quality-plugin** — builds and publishes `gradle-quality-plugin` to Sonatype Maven Central with the release version.
+3. **create-release** — creates GitHub Release + tag (only after publish succeeds, so no orphaned tags on publish failure).
+4. **register-release-in-log** — registers in `octopus-release-log`.
 
-To use release registration, the `Prod` environment must contain secret `OCTOPUS_GITHUB_TOKEN`.
+Steps 2–4 are skipped when `dry-run=true`.
+
+Required secrets (`Prod` environment): `OSSRH_USERNAME`, `OSSRH_TOKEN`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`, `OCTOPUS_GITHUB_TOKEN`.
 
 To use automated `octopus-test` consumer verification (`Merge Gate` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
