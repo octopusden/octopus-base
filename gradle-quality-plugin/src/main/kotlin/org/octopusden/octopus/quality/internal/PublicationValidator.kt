@@ -3,9 +3,12 @@ package org.octopusden.octopus.quality.internal
 import org.gradle.api.Project
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
+import org.gradle.api.publish.maven.tasks.GenerateMavenPom
+import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * Registers a `validatePublications` task that checks Maven Central readiness.
+ * Registers a `validatePublications` task that checks Maven Central readiness
+ * by parsing the generated POM XML files.
  *
  * For non-pom publications (jar, etc.):
  * - POM has required fields: name, description, url, licenses, scm, developers
@@ -14,95 +17,137 @@ import org.gradle.api.publish.maven.MavenPublication
  * For pom-only publications (java-platform, BOM, version-catalog):
  * - Only POM metadata is validated (no sources/javadoc required)
  *
- * Runs as part of `check` so issues are caught on PR, not at publish time.
+ * Wired into `check` (when available) so issues are caught on PR, not at publish time.
  */
 internal object PublicationValidator {
     fun register(project: Project) {
         project.plugins.withId("maven-publish") {
-            project.tasks.register("validatePublications") { task ->
-                task.group = "verification"
-                task.description =
-                    "Validates that Maven publications meet Central Portal requirements"
-                task.doLast {
-                    val publishing =
-                        project.extensions.getByType(PublishingExtension::class.java)
-                    val publications =
-                        publishing.publications.withType(MavenPublication::class.java)
+            val validateTask =
+                project.tasks.register("validatePublications") { task ->
+                    task.group = "verification"
+                    task.description =
+                        "Validates that Maven publications meet Central Portal requirements"
 
-                    if (publications.isEmpty()) {
-                        project.logger.warn(
-                            "validatePublications: no MavenPublication found in ${project.path}",
-                        )
-                        return@doLast
-                    }
-
-                    val errors = mutableListOf<String>()
-
-                    for (pub in publications) {
-                        val prefix = "${project.path}:${pub.name}"
-
-                        validatePomMetadata(pub, prefix, errors)
-
-                        if (!isPomOnly(pub)) {
-                            validateArtifacts(pub, prefix, errors)
-                        }
-                    }
-
-                    if (errors.isNotEmpty()) {
-                        val message =
-                            buildString {
-                                appendLine("Maven Central publication validation failed:")
-                                errors.forEach { appendLine("  - $it") }
-                                appendLine()
-                                appendLine(
-                                    "Fix these before publishing. " +
-                                        "See https://central.sonatype.org/publish/requirements/",
-                                )
-                            }
-                        throw org.gradle.api.GradleException(message)
-                    }
-
-                    project.logger.lifecycle(
-                        "validatePublications: ${publications.size} publication(s) " +
-                            "in ${project.path} passed Maven Central checks",
+                    // Depend on POM generation so we can parse the XML
+                    task.dependsOn(
+                        project.tasks.withType(GenerateMavenPom::class.java),
                     )
-                }
-            }
 
-            project.tasks.named("check") { it.dependsOn("validatePublications") }
+                    task.doLast {
+                        val publishing =
+                            project.extensions.getByType(PublishingExtension::class.java)
+                        val publications =
+                            publishing.publications.withType(MavenPublication::class.java)
+
+                        if (publications.isEmpty()) {
+                            project.logger.warn(
+                                "validatePublications: no MavenPublication found in ${project.path}",
+                            )
+                            return@doLast
+                        }
+
+                        val errors = mutableListOf<String>()
+
+                        for (pub in publications) {
+                            val prefix = "${project.path}:${pub.name}"
+                            val pomOnly = isPomOnly(pub)
+
+                            validatePomFromXml(project, pub, prefix, errors)
+
+                            if (!pomOnly) {
+                                validateArtifacts(pub, prefix, errors)
+                            }
+                        }
+
+                        if (errors.isNotEmpty()) {
+                            val message =
+                                buildString {
+                                    appendLine("Maven Central publication validation failed:")
+                                    errors.forEach { appendLine("  - $it") }
+                                    appendLine()
+                                    appendLine(
+                                        "Fix these before publishing. " +
+                                            "See https://central.sonatype.org/publish/requirements/",
+                                    )
+                                }
+                            throw org.gradle.api.GradleException(message)
+                        }
+
+                        project.logger.lifecycle(
+                            "validatePublications: ${publications.size} publication(s) " +
+                                "in ${project.path} passed Maven Central checks",
+                        )
+                    }
+                }
+
+            // Wire into check lazily — safe regardless of plugin application order
+            project.tasks.matching { it.name == "check" }.configureEach {
+                it.dependsOn(validateTask)
+            }
         }
     }
 
-    private fun validatePomMetadata(
+    /**
+     * Parse the generated POM XML and validate required Maven Central fields.
+     */
+    private fun validatePomFromXml(
+        project: Project,
         pub: MavenPublication,
         prefix: String,
         errors: MutableList<String>,
     ) {
-        if (pub.pom.name.orNull
-                .isNullOrBlank()
-        ) {
-            errors.add("$prefix: POM <name> is missing or blank")
-        }
-        if (pub.pom.description.orNull
-                .isNullOrBlank()
-        ) {
-            errors.add("$prefix: POM <description> is missing or blank")
-        }
-        if (pub.pom.url.orNull
-                .isNullOrBlank()
-        ) {
-            errors.add("$prefix: POM <url> is missing or blank")
+        val pomFile =
+            project.layout.buildDirectory
+                .file("publications/${pub.name}/pom-default.xml")
+                .get()
+                .asFile
+
+        if (!pomFile.exists()) {
+            errors.add("$prefix: generated POM not found at ${pomFile.path}")
+            return
         }
 
-        // licenses, scm, developers are configured via closures — check via the
-        // generated POM XML would require task ordering. Instead we check the
-        // action lists are non-empty (they're populated when the DSL closure runs).
-        // A pragmatic compromise: if pom.licenses {} was never called, the internal
-        // action list is empty. We access this via the public API nodes.
-        // Note: Gradle MavenPomLicenseSpec doesn't expose a count, so we validate
-        // by checking if the standard POM sections were configured at all.
-        // The pom.licenses/scm/developers blocks only have closure-based API,
-        // not queryable state. We validate what we can via Provider API.
+        val doc =
+            DocumentBuilderFactory
+                .newInstance()
+                .newDocumentBuilder()
+                .parse(pomFile)
+        val root = doc.documentElement
+
+        fun textOf(tag: String): String? {
+            val nodes = root.getElementsByTagName(tag)
+            if (nodes.length == 0) return null
+            return nodes
+                .item(0)
+                .textContent
+                ?.trim()
+                ?.ifBlank { null }
+        }
+
+        fun hasChildElements(tag: String): Boolean {
+            val nodes = root.getElementsByTagName(tag)
+            if (nodes.length == 0) return false
+            return nodes.item(0).childNodes.length > 1
+        }
+
+        if (textOf("name").isNullOrBlank()) {
+            errors.add("$prefix: POM <name> is missing or blank")
+        }
+        if (textOf("description").isNullOrBlank()) {
+            errors.add("$prefix: POM <description> is missing or blank")
+        }
+        if (textOf("url").isNullOrBlank()) {
+            errors.add("$prefix: POM <url> is missing or blank")
+        }
+        if (!hasChildElements("licenses")) {
+            errors.add("$prefix: POM <licenses> section is missing or empty")
+        }
+        if (!hasChildElements("developers")) {
+            errors.add("$prefix: POM <developers> section is missing or empty")
+        }
+        if (!hasChildElements("scm")) {
+            errors.add("$prefix: POM <scm> section is missing or empty")
+        }
     }
 
     private fun validateArtifacts(
@@ -119,15 +164,8 @@ internal object PublicationValidator {
         }
     }
 
-    /**
-     * Detect pom-only publications: java-platform, BOM, version-catalog.
-     * These don't produce a JAR and don't need sources/javadoc.
-     */
     private fun isPomOnly(pub: MavenPublication): Boolean {
-        // If packaging is explicitly "pom", it's pom-only
         if (pub.pom.packaging == "pom") return true
-
-        // If there are no artifacts at all (no main JAR), treat as pom-only
         val hasJar =
             pub.artifacts.any {
                 it.classifier == null && it.extension == "jar"

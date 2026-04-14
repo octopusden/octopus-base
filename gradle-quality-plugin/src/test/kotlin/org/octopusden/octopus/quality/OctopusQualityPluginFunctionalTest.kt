@@ -235,6 +235,34 @@ class OctopusQualityPluginFunctionalTest {
     }
 
     // ---------------------------------------------------------------
+    // Helper: full POM that passes Central requirements
+    // ---------------------------------------------------------------
+    private val fullPom =
+        """
+        pom {
+            name.set("test")
+            description.set("test library")
+            url.set("https://example.com")
+            licenses {
+                license {
+                    name.set("The Apache License, Version 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                }
+            }
+            scm {
+                url.set("https://github.com/octopusden/test")
+                connection.set("scm:git://github.com/octopusden/test.git")
+            }
+            developers {
+                developer {
+                    id.set("test")
+                    name.set("test")
+                }
+            }
+        }
+        """.trimIndent()
+
+    // ---------------------------------------------------------------
     // 6. Publication validator: valid jar publication passes
     // ---------------------------------------------------------------
     @Test
@@ -255,11 +283,7 @@ class OctopusQualityPluginFunctionalTest {
                 publications {
                     create<MavenPublication>("mavenJava") {
                         from(components["java"])
-                        pom {
-                            name.set("test")
-                            description.set("test library")
-                            url.set("https://example.com")
-                        }
+                        $fullPom
                     }
                 }
             }
@@ -294,11 +318,7 @@ class OctopusQualityPluginFunctionalTest {
                 publications {
                     create<MavenPublication>("mavenJava") {
                         from(components["java"])
-                        pom {
-                            name.set("test")
-                            description.set("test")
-                            url.set("https://example.com")
-                        }
+                        $fullPom
                     }
                 }
             }
@@ -332,11 +352,7 @@ class OctopusQualityPluginFunctionalTest {
                 publications {
                     create<MavenPublication>("mavenJava") {
                         from(components["java"])
-                        pom {
-                            name.set("test")
-                            description.set("test")
-                            url.set("https://example.com")
-                        }
+                        $fullPom
                     }
                 }
             }
@@ -370,7 +386,7 @@ class OctopusQualityPluginFunctionalTest {
                 publications {
                     create<MavenPublication>("mavenJava") {
                         from(components["java"])
-                        // no pom name/description/url
+                        // no pom metadata at all
                     }
                 }
             }
@@ -383,6 +399,9 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(result.output.contains("POM <name> is missing"))
         assertTrue(result.output.contains("POM <description> is missing"))
         assertTrue(result.output.contains("POM <url> is missing"))
+        assertTrue(result.output.contains("POM <licenses> section is missing"))
+        assertTrue(result.output.contains("POM <developers> section is missing"))
+        assertTrue(result.output.contains("POM <scm> section is missing"))
     }
 
     // ---------------------------------------------------------------
@@ -406,6 +425,14 @@ class OctopusQualityPluginFunctionalTest {
                             name.set("test-bom")
                             description.set("test BOM")
                             url.set("https://example.com")
+                            licenses {
+                                license {
+                                    name.set("Apache-2.0")
+                                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                                }
+                            }
+                            scm { url.set("https://github.com/octopusden/test") }
+                            developers { developer { id.set("test"); name.set("test") } }
                         }
                     }
                 }
