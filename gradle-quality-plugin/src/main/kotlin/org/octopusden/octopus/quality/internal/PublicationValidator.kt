@@ -96,22 +96,27 @@ internal object PublicationValidator {
         prefix: String,
         errors: MutableList<String>,
     ) {
+        // Resolve POM file from the actual GenerateMavenPom task output (not hardcoded path)
+        val pubNameCap = pub.name.replaceFirstChar { it.uppercase() }
+        val pomTaskName = "generatePomFileFor${pubNameCap}Publication"
+        val pomTask = project.tasks.findByName(pomTaskName) as? GenerateMavenPom
         val pomFile =
-            project.layout.buildDirectory
-                .file("publications/${pub.name}/pom-default.xml")
-                .get()
-                .asFile
+            pomTask?.destination ?: run {
+                errors.add("$prefix: GenerateMavenPom task '$pomTaskName' not found")
+                return
+            }
 
         if (!pomFile.exists()) {
             errors.add("$prefix: generated POM not found at ${pomFile.path}")
             return
         }
 
-        val doc =
-            DocumentBuilderFactory
-                .newInstance()
-                .newDocumentBuilder()
-                .parse(pomFile)
+        val dbf = DocumentBuilderFactory.newInstance()
+        // Harden against XXE / entity expansion
+        dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        dbf.setFeature("http://xml.org/sax/features/external-general-entities", false)
+        dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        val doc = dbf.newDocumentBuilder().parse(pomFile)
         val root = doc.documentElement
 
         // Only look at direct children of <project>, not nested descendants.

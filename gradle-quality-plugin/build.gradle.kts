@@ -140,25 +140,63 @@ signing {
 // but applied to the plugin build itself (which doesn't use the convention plugin).
 tasks.register("validatePublications") {
     group = "verification"
-    description = "Validates plugin publications meet Maven Central requirements"
+    description = "Validates plugin publications meet Maven Central requirements (artifacts + POM)"
     dependsOn(tasks.withType<org.gradle.api.publish.maven.tasks.GenerateMavenPom>())
     doLast {
+        val metadataClassifiers = setOf("sources", "javadoc")
         publishing.publications.withType<MavenPublication>().forEach { pub ->
-            // Skip Gradle plugin marker publications (pom-only, no artifacts expected)
-            val hasRealArtifact =
-                pub.artifacts.any {
-                    it.classifier !in setOf("sources", "javadoc")
-                }
-            if (!hasRealArtifact) return@forEach
+            val hasRealArtifact = pub.artifacts.any { it.classifier !in metadataClassifiers }
+            if (!hasRealArtifact) return@forEach // skip pom-only marker publications
 
             val errors = mutableListOf<String>()
-            val hasSourcesJar = pub.artifacts.any { it.classifier == "sources" && it.extension == "jar" }
-            val hasJavadocJar = pub.artifacts.any { it.classifier == "javadoc" && it.extension == "jar" }
-            if (!hasSourcesJar) errors.add("${pub.name}: -sources.jar missing")
-            if (!hasJavadocJar) errors.add("${pub.name}: -javadoc.jar missing")
+
+            // Artifact checks
+            if (!pub.artifacts.any { it.classifier == "sources" && it.extension == "jar" }) {
+                errors.add("${pub.name}: -sources.jar missing")
+            }
+            if (!pub.artifacts.any { it.classifier == "javadoc" && it.extension == "jar" }) {
+                errors.add("${pub.name}: -javadoc.jar missing")
+            }
+
+            // POM metadata checks (parse generated POM XML)
+            val pubNameCap = pub.name.replaceFirstChar { it.uppercase() }
+            val pomTask =
+                tasks.findByName("generatePomFileFor${pubNameCap}Publication")
+                    as? org.gradle.api.publish.maven.tasks.GenerateMavenPom
+            val pomFile = pomTask?.destination
+            if (pomFile != null && pomFile.exists()) {
+                val dbf =
+                    javax.xml.parsers.DocumentBuilderFactory
+                        .newInstance()
+                dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                val root = dbf.newDocumentBuilder().parse(pomFile).documentElement
+                val direct =
+                    (0 until root.childNodes.length)
+                        .map { root.childNodes.item(it) }
+                        .filter { it.nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+
+                fun text(tag: String) =
+                    direct
+                        .firstOrNull { it.nodeName == tag }
+                        ?.textContent
+                        ?.trim()
+                        ?.ifBlank { null }
+
+                fun hasKids(tag: String) =
+                    direct.firstOrNull { it.nodeName == tag }?.let { node ->
+                        (0 until node.childNodes.length).any { node.childNodes.item(it).nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+                    } ?: false
+                if (text("name").isNullOrBlank()) errors.add("${pub.name}: POM <name> missing")
+                if (text("description").isNullOrBlank()) errors.add("${pub.name}: POM <description> missing")
+                if (text("url").isNullOrBlank()) errors.add("${pub.name}: POM <url> missing")
+                if (!hasKids("licenses")) errors.add("${pub.name}: POM <licenses> missing")
+                if (!hasKids("developers")) errors.add("${pub.name}: POM <developers> missing")
+                if (!hasKids("scm")) errors.add("${pub.name}: POM <scm> missing")
+            }
+
             if (errors.isNotEmpty()) throw GradleException("Publication validation failed:\n${errors.joinToString("\n")}")
         }
-        logger.lifecycle("validatePublications: plugin publications passed Maven Central artifact checks")
+        logger.lifecycle("validatePublications: plugin publications passed Maven Central checks")
     }
 }
 tasks.named("check") { dependsOn("validatePublications") }
