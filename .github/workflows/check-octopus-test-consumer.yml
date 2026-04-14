@@ -34,18 +34,20 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_verify: ${{ steps.scope.outputs.run_verify }}
+      plugin_changed: ${{ steps.scope.outputs.plugin_changed }}
       scope_reason: ${{ steps.scope.outputs.scope_reason }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Resolve canary scope
+      - name: Resolve scope
         id: scope
         shell: bash
         run: |
           set -euo pipefail
 
           run_verify=true
+          plugin_changed=true
           scope_reason="manual run or non-PR event"
 
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
@@ -55,76 +57,75 @@ jobs:
 
             if grep -Eq '^(\.github/actions/|\.github/workflows/|\.github/scripts/update-octopus-test-refs\.sh$)' <<<"${changed_files}"; then
               run_verify=true
-              scope_reason="PR changes include workflows/actions/update-octopus-test-refs.sh"
             else
               run_verify=false
-              scope_reason="PR changes are outside canary-related paths"
             fi
+
+            if grep -q '^gradle-quality-plugin/' <<<"${changed_files}"; then
+              plugin_changed=true
+            else
+              plugin_changed=false
+            fi
+
+            scope_reason="PR: verify=$run_verify, plugin=$plugin_changed"
           fi
 
           {
             echo "run_verify=${run_verify}"
+            echo "plugin_changed=${plugin_changed}"
             echo "scope_reason=${scope_reason}"
           } >> "$GITHUB_OUTPUT"
 
           {
             echo "### Merge gate scope"
-            echo "- run canary verify: \`${run_verify}\`"
+            echo "- consumer-verify: \`${run_verify}\`"
+            echo "- plugin build/quality: \`${plugin_changed}\`"
             echo "- reason: ${scope_reason}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # ---------- Required on every PR ----------
+  # ---------- Required on every PR (standard taxonomy) ----------
 
-  plugin-quality:
-    name: plugin-quality
+  build:
+    name: build
+    needs: resolve-gate-scope
+    if: ${{ needs.resolve-gate-scope.outputs.plugin_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect plugin changes
-        id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
-          plugin_changed=false
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            head_sha="${{ github.event.pull_request.head.sha }}"
-            if git diff --name-only "$base_sha" "$head_sha" | grep -q '^gradle-quality-plugin/'; then
-              plugin_changed=true
-            fi
-          fi
-          echo "plugin_changed=$plugin_changed" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java
-        if: steps.detect.outputs.plugin_changed == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: temurin
 
       - name: Setup Gradle
-        if: steps.detect.outputs.plugin_changed == 'true'
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build and test plugin
-        if: steps.detect.outputs.plugin_changed == 'true'
         working-directory: gradle-quality-plugin
-        run: ./gradlew build test detekt ktlintCheck --no-daemon --stacktrace
+        run: ./gradlew build test --no-daemon --stacktrace
 
-      - name: Summary
-        shell: bash
-        run: |
-          {
-            echo "### plugin-quality"
-            if [[ "${{ steps.detect.outputs.plugin_changed }}" == "true" ]]; then
-              echo "- gradle-quality-plugin: build + test + detekt + ktlint passed"
-            else
-              echo "- No plugin changes detected; build skipped"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+  quality:
+    name: quality
+    needs: resolve-gate-scope
+    if: ${{ needs.resolve-gate-scope.outputs.plugin_changed == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Static analysis
+        working-directory: gradle-quality-plugin
+        run: ./gradlew detekt ktlintCheck --no-daemon --stacktrace
 
   workflow-lint:
     name: workflow-lint
@@ -165,7 +166,7 @@ jobs:
           set -euo pipefail
           bash .github/scripts/validate-github-action-refs.sh "$GITHUB_WORKSPACE"
 
-  # ---------- Scope-driven (workflow changes only) ----------
+  # ---------- Producer-specific: octopus-test consumer canary ----------
 
   consumer-verify:
     name: consumer-verify
@@ -186,7 +187,8 @@ jobs:
     name: gate/merge
     if: ${{ always() }}
     needs:
-      - plugin-quality
+      - build
+      - quality
       - workflow-lint
       - security
       - consumer-verify
@@ -198,7 +200,8 @@ jobs:
           set -euo pipefail
 
           results='${{ toJson(needs) }}'
-          failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"${results}")"
+          # Skipped jobs (scope-driven) are acceptable — only failures block merge.
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<<"${results}")"
 
           {
             echo "### Merge gate results"

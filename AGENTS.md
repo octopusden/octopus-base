@@ -5,24 +5,33 @@
 
 ## PR Pipeline (Merge Gate)
 
+Uses the same base taxonomy as consumer repos (`build`, `quality`, `security`)
+plus producer-specific `consumer-verify` for octopus-base.
+
 ```
 PR opened / pushed
   │
-  ├─ plugin-quality    (required, on gradle-quality-plugin/ changes)
-  │    └─ ./gradlew build test detekt ktlintCheck
+  ├─ build              (on gradle-quality-plugin/ changes)
+  │    └─ ./gradlew build test
   │
-  ├─ workflow-lint      (required, always)
+  ├─ quality            (on gradle-quality-plugin/ changes)
+  │    └─ ./gradlew detekt ktlintCheck
+  │
+  ├─ workflow-lint      (always)
   │    ├─ actionlint on all .github/workflows/*.yml
   │    └─ bash -n on all .github/scripts/*.sh
   │
-  ├─ security           (required, always)
-  │    └─ validate-github-action-refs.sh (resolvable external refs)
+  ├─ security           (always)
+  │    └─ validate-github-action-refs.sh
   │
-  ├─ consumer-verify    (scope-driven: only on workflow/action changes)
+  ├─ consumer-verify    (producer-specific, on workflow/action changes)
   │    └─ octopus-test canary: rewrite refs → push → wait for Merge Gate
   │
-  └─ gate/merge         (aggregates all above — must be green to merge)
+  └─ gate/merge         (aggregates all above — skipped jobs OK, failures block)
 ```
+
+**Consumer repo target taxonomy:** `build` → `quality` → `security` → `workflow-lint` → `gate/merge`
+**octopus-base adds:** `consumer-verify` (producer layer)
 
 ## Release Pipeline
 
