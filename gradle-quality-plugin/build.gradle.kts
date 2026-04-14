@@ -134,3 +134,31 @@ signing {
     sign(publishing.publications)
     isRequired = gradle.startParameter.taskNames.any { it == "publishToSonatype" || it.endsWith(":publishToSonatype") }
 }
+
+// Self-validate: ensure plugin's own publications meet Maven Central requirements.
+// This is the same check that PublicationValidator provides to consumer repos,
+// but applied to the plugin build itself (which doesn't use the convention plugin).
+tasks.register("validatePublications") {
+    group = "verification"
+    description = "Validates plugin publications meet Maven Central requirements"
+    dependsOn(tasks.withType<org.gradle.api.publish.maven.tasks.GenerateMavenPom>())
+    doLast {
+        publishing.publications.withType<MavenPublication>().forEach { pub ->
+            // Skip Gradle plugin marker publications (pom-only, no artifacts expected)
+            val hasRealArtifact =
+                pub.artifacts.any {
+                    it.classifier !in setOf("sources", "javadoc")
+                }
+            if (!hasRealArtifact) return@forEach
+
+            val errors = mutableListOf<String>()
+            val hasSourcesJar = pub.artifacts.any { it.classifier == "sources" && it.extension == "jar" }
+            val hasJavadocJar = pub.artifacts.any { it.classifier == "javadoc" && it.extension == "jar" }
+            if (!hasSourcesJar) errors.add("${pub.name}: -sources.jar missing")
+            if (!hasJavadocJar) errors.add("${pub.name}: -javadoc.jar missing")
+            if (errors.isNotEmpty()) throw GradleException("Publication validation failed:\n${errors.joinToString("\n")}")
+        }
+        logger.lifecycle("validatePublications: plugin publications passed Maven Central artifact checks")
+    }
+}
+tasks.named("check") { dependsOn("validatePublications") }
