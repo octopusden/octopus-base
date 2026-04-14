@@ -2,6 +2,7 @@ package org.octopusden.octopus.quality
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.octopusden.octopus.quality.internal.PublicationValidator
 import org.octopusden.octopus.quality.internal.SubprojectConfigurer
 import org.octopusden.octopus.quality.internal.TaskRegistrar
 
@@ -72,6 +73,14 @@ class OctopusQualityPlugin : Plugin<Project> {
         // all subproject afterEvaluate blocks have completed before wiring task dependencies.
         project.gradle.projectsEvaluated {
             TaskRegistrar.register(project, extension)
+        }
+
+        // Validate Maven Central publication readiness (sources, javadoc, POM fields)
+        // for every project that applies maven-publish. Wired into `check`.
+        if (project.subprojects.isEmpty()) {
+            PublicationValidator.register(project)
+        } else {
+            project.allprojects.forEach { PublicationValidator.register(it) }
         }
     }
 }

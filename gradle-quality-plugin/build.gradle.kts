@@ -54,6 +54,11 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
 kotlin {
     // JDK 11 = minimum CI runtime across all target repos.
     // Gradle 8.x requires JDK 11+, quality tools (Checkstyle 10.x) require JDK 11+.
