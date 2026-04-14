@@ -66,6 +66,115 @@ If enabled for a repository, start with defaults and tune only when there is a c
 - `detekt:style:MagicNumber`
 - `detekt:style:ReturnCount`
 
+## Convention Plugin Setup
+
+The `org.octopusden.octopus-quality` convention plugin (in `gradle-quality-plugin/`) provides shared configuration (rules, baselines, reports, task wiring) for quality tools. Consumer repos declare and apply the quality tool plugins themselves (with their own versions), and the convention plugin configures them. This gives repos `qualityStatic`, `qualityCoverage`, and `qualityCheck` aggregate tasks.
+
+### Prerequisites
+
+- **CI runtime JDK >= 11** (plugin bytecode target is JDK 11; Checkstyle 10.x also requires 11+)
+- **Gradle 8.x+**
+
+### Consumer wiring
+
+```kotlin
+// settings.gradle.kts — declare ALL plugin versions here:
+pluginManagement {
+    plugins {
+        kotlin("jvm") version(extra["kotlin.version"] as String)
+        id("io.gitlab.arturbosch.detekt") version(extra["detekt.version"] as String)
+        id("org.jlleitschuh.gradle.ktlint") version(extra["ktlint-gradle.version"] as String)
+        id("org.jetbrains.kotlinx.kover") version(extra["kover.version"] as String)  // Kotlin-only repos
+        id("org.octopusden.octopus-quality") version "<octopus-base-version>"
+    }
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+// build.gradle.kts — apply at root:
+plugins {
+    kotlin("jvm") apply false                          // only if repo has Kotlin
+    id("io.gitlab.arturbosch.detekt") apply false      // only if repo has Kotlin
+    id("org.jlleitschuh.gradle.ktlint") apply false    // only if repo has Kotlin
+    id("org.jetbrains.kotlinx.kover") apply false      // only if Kotlin-only (no Java/Groovy)
+    id("org.octopusden.octopus-quality")
+}
+
+// --- Kotlin-only repo (all subprojects are Kotlin): ---
+subprojects {
+    apply(plugin = "org.jetbrains.kotlin.jvm")
+    apply(plugin = "io.gitlab.arturbosch.detekt")
+    apply(plugin = "org.jlleitschuh.gradle.ktlint")
+    apply(plugin = "org.jetbrains.kotlinx.kover")
+}
+
+// --- Mixed repo (some Kotlin, some Java/Groovy): ---
+// Apply Kotlin tools selectively per module:
+//   project(":api") {
+//       apply(plugin = "org.jetbrains.kotlin.jvm")
+//       apply(plugin = "io.gitlab.arturbosch.detekt")
+//       apply(plugin = "org.jlleitschuh.gradle.ktlint")
+//   }
+// Java/Groovy modules need NO extra apply — the convention plugin
+// auto-applies checkstyle, pmd, spotbugs, codenarc based on source dirs.
+
+// Optional overrides:
+octopusQuality {
+    coverage {
+        enabled.set(false)                          // disable for repos without tests
+        tool.set(CoverageExtension.Tool.AUTO)       // AUTO (default), JACOCO, or KOVER
+        minimumLineCoverage.set(BigDecimal("0.10"))  // per-module default
+        overallMinimum.set(BigDecimal("0.70"))       // overall default
+    }
+    kotlin { failOnViolation.set(false) }            // report-only (rollout default)
+    java   { failOnViolation.set(false) }
+    groovy { failOnViolation.set(false) }
+    excludeTasks("integrationTest", ":ft:test")      // exclude env-dependent tests
+    excludeProjects("test-common")                   // exclude from coverage
+}
+```
+
+> **Version ownership:** Consumer repos own the versions of Kotlin, detekt, ktlint, and kover — declared in `pluginManagement` and pinned in `gradle.properties`. The convention plugin configures these tools (shared rules, baselines, reports, task wiring) but does NOT pin their versions. This decouples tool version upgrades from the convention plugin release cycle.
+
+### What the plugin provides vs what the consumer provides
+
+| Component | Provider | Why |
+|-----------|----------|-----|
+| Tool **configuration** (shared rules, baselines, reports, task wiring) | Convention plugin | Org-wide consistency |
+| Tool **versions** (detekt, ktlint, kover, kotlin) | Consumer repo (`gradle.properties`) | Coupled to Kotlin version |
+| Checkstyle, PMD, CodeNarc configs | Convention plugin (bundled) | Shared org-wide rules |
+| SpotBugs plugin | Convention plugin (`implementation`) | No Kotlin version coupling |
+| JaCoCo plugin | Convention plugin (Gradle built-in) | No version coupling |
+
+### What the plugin auto-configures (when consumer applies the tool)
+
+| Language detected | Tools configured | Coverage |
+|-------------------|-----------------|----------|
+| Kotlin | detekt + ktlint + checkstyle + pmd + spotbugs | Kover (consumer applies kover plugin) |
+| Java | checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
+| Groovy | codenarc + checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
+| Mixed | All applicable | JaCoCo |
+
+### What stays local in each repo
+
+| File | Purpose |
+|------|---------|
+| `detekt-baseline.xml` | Legacy detekt violations (per module) |
+| `ktlint-baseline.xml` | Legacy ktlint violations (per module) |
+| `.editorconfig` | Editor / ktlint config |
+| Coverage threshold overrides | Per-repo maturity |
+
+### GitHub Actions workflows
+
+Each repo adds two workflow files that call reusable workflows from octopus-base:
+
+- `.github/workflows/quality.yml` → `common-java-gradle-quality-gates.yml`
+- `.github/workflows/security.yml` → `common-java-gradle-security-reports.yml`
+
+See `docs/Octopus GitHub Actions Guide.md` for workflow details and inputs.
+
 ## Baseline Strategy
 
 - Baseline/suppressions are allowed only for existing violations.
