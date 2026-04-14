@@ -233,4 +233,189 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(result.output.contains(":test-utils:detekt"))
         assertTrue(result.output.contains(":app:detekt"))
     }
+
+    // ---------------------------------------------------------------
+    // 6. Publication validator: valid jar publication passes
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications passes for complete jar publication`() {
+        settingsFile(kotlinSettings("test-pub-valid"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar(); withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        pom {
+                            name.set("test")
+                            description.set("test library")
+                            url.set("https://example.com")
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":validatePublications")?.outcome)
+        assertTrue(result.output.contains("passed Maven Central checks"))
+    }
+
+    // ---------------------------------------------------------------
+    // 7. Publication validator: missing sources JAR fails
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications fails when sources JAR is missing`() {
+        settingsFile(kotlinSettings("test-pub-no-sources"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        pom {
+                            name.set("test")
+                            description.set("test")
+                            url.set("https://example.com")
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        assertTrue(result.output.contains("sources JAR missing"))
+    }
+
+    // ---------------------------------------------------------------
+    // 8. Publication validator: missing javadoc JAR fails
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications fails when javadoc JAR is missing`() {
+        settingsFile(kotlinSettings("test-pub-no-javadoc"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        pom {
+                            name.set("test")
+                            description.set("test")
+                            url.set("https://example.com")
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        assertTrue(result.output.contains("javadoc JAR missing"))
+    }
+
+    // ---------------------------------------------------------------
+    // 9. Publication validator: missing POM fields fail
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications fails when POM fields are missing`() {
+        settingsFile(kotlinSettings("test-pub-no-pom"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar(); withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        // no pom name/description/url
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        assertTrue(result.output.contains("POM <name> is missing"))
+        assertTrue(result.output.contains("POM <description> is missing"))
+        assertTrue(result.output.contains("POM <url> is missing"))
+    }
+
+    // ---------------------------------------------------------------
+    // 10. Publication validator: pom-only publication passes without sources/javadoc
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications passes for pom-only publication`() {
+        settingsFile(kotlinSettings("test-pub-pom-only"))
+        buildFile(
+            """
+            plugins {
+                `java-platform`
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            publishing {
+                publications {
+                    create<MavenPublication>("bom") {
+                        from(components["javaPlatform"])
+                        pom {
+                            name.set("test-bom")
+                            description.set("test BOM")
+                            url.set("https://example.com")
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+
+        val result = runner("validatePublications").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":validatePublications")?.outcome)
+        assertTrue(result.output.contains("passed Maven Central checks"))
+    }
 }
