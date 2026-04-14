@@ -114,20 +114,22 @@ internal object PublicationValidator {
                 .parse(pomFile)
         val root = doc.documentElement
 
-        fun textOf(tag: String): String? {
-            val nodes = root.getElementsByTagName(tag)
-            if (nodes.length == 0) return null
-            return nodes
-                .item(0)
-                .textContent
-                ?.trim()
-                ?.ifBlank { null }
-        }
+        // Only look at direct children of <project>, not nested descendants.
+        // This prevents <license><name> from satisfying the top-level <name> check.
+        val directChildren =
+            (0 until root.childNodes.length)
+                .map { root.childNodes.item(it) }
+                .filter { it.nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+
+        fun directChild(tag: String): org.w3c.dom.Node? = directChildren.firstOrNull { it.nodeName == tag }
+
+        fun textOf(tag: String): String? = directChild(tag)?.textContent?.trim()?.ifBlank { null }
 
         fun hasChildElements(tag: String): Boolean {
-            val nodes = root.getElementsByTagName(tag)
-            if (nodes.length == 0) return false
-            return nodes.item(0).childNodes.length > 1
+            val node = directChild(tag) ?: return false
+            return (0 until node.childNodes.length).any {
+                node.childNodes.item(it).nodeType == org.w3c.dom.Node.ELEMENT_NODE
+            }
         }
 
         if (textOf("name").isNullOrBlank()) {
@@ -164,12 +166,21 @@ internal object PublicationValidator {
         }
     }
 
+    /**
+     * Detect pom-only publications: java-platform, BOM, version-catalog.
+     * A publication is pom-only if:
+     * - packaging is explicitly "pom", OR
+     * - it has no non-metadata artifacts (no jar, war, ear, etc.)
+     *
+     * Metadata-only classifiers (sources, javadoc) don't count as "real" artifacts.
+     */
     private fun isPomOnly(pub: MavenPublication): Boolean {
         if (pub.pom.packaging == "pom") return true
-        val hasJar =
-            pub.artifacts.any {
-                it.classifier == null && it.extension == "jar"
+        val metadataClassifiers = setOf("sources", "javadoc")
+        val hasRealArtifact =
+            pub.artifacts.any { artifact ->
+                artifact.classifier !in metadataClassifiers
             }
-        return !hasJar
+        return !hasRealArtifact
     }
 }

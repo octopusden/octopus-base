@@ -12,6 +12,32 @@ class OctopusQualityPluginFunctionalTest {
     @TempDir
     lateinit var projectDir: File
 
+    /** Full POM that passes Maven Central requirements — used by validator tests. */
+    private val fullPom =
+        """
+        pom {
+            name.set("test")
+            description.set("test library")
+            url.set("https://example.com")
+            licenses {
+                license {
+                    name.set("The Apache License, Version 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                }
+            }
+            scm {
+                url.set("https://github.com/octopusden/test")
+                connection.set("scm:git://github.com/octopusden/test.git")
+            }
+            developers {
+                developer {
+                    id.set("test")
+                    name.set("test")
+                }
+            }
+        }
+        """.trimIndent()
+
     private fun settingsFile(content: String) {
         File(projectDir, "settings.gradle.kts").writeText(content)
     }
@@ -235,34 +261,6 @@ class OctopusQualityPluginFunctionalTest {
     }
 
     // ---------------------------------------------------------------
-    // Helper: full POM that passes Central requirements
-    // ---------------------------------------------------------------
-    private val fullPom =
-        """
-        pom {
-            name.set("test")
-            description.set("test library")
-            url.set("https://example.com")
-            licenses {
-                license {
-                    name.set("The Apache License, Version 2.0")
-                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
-                }
-            }
-            scm {
-                url.set("https://github.com/octopusden/test")
-                connection.set("scm:git://github.com/octopusden/test.git")
-            }
-            developers {
-                developer {
-                    id.set("test")
-                    name.set("test")
-                }
-            }
-        }
-        """.trimIndent()
-
-    // ---------------------------------------------------------------
     // 6. Publication validator: valid jar publication passes
     // ---------------------------------------------------------------
     @Test
@@ -444,5 +442,55 @@ class OctopusQualityPluginFunctionalTest {
         val result = runner("validatePublications").build()
         assertEquals(TaskOutcome.SUCCESS, result.task(":validatePublications")?.outcome)
         assertTrue(result.output.contains("passed Maven Central checks"))
+    }
+
+    // ---------------------------------------------------------------
+    // 11. Nested <name> in licenses does not satisfy top-level <name>
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications rejects POM with nested name but no top-level name`() {
+        settingsFile(kotlinSettings("test-pub-nested-name"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar(); withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        pom {
+                            // NO top-level name/description set
+                            url.set("https://example.com")
+                            licenses {
+                                license {
+                                    // This <name> is nested inside <license>, not top-level
+                                    name.set("Apache-2.0")
+                                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                                }
+                            }
+                            scm { url.set("https://github.com/octopusden/test") }
+                            developers { developer { id.set("test"); name.set("test") } }
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        // Must fail on BOTH top-level name and description
+        assertTrue(result.output.contains("POM <name> is missing"))
+        assertTrue(result.output.contains("POM <description> is missing"))
+        // url is set, so should NOT be in errors
+        assertTrue(!result.output.contains("POM <url> is missing"))
     }
 }
