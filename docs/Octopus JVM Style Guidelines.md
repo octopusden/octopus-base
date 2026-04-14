@@ -175,6 +175,78 @@ Each repo adds two workflow files that call reusable workflows from octopus-base
 
 See `docs/Octopus GitHub Actions Guide.md` for workflow details and inputs.
 
+## Maven Central Publication Validation
+
+For repos that publish to Maven Central via `maven-publish`, the convention plugin automatically registers a `validatePublications` task when both `maven-publish` and `org.octopusden.octopus-quality` are applied. The task is wired into `check` — so it runs on every PR build and catches Central-incompatible publications before publish time.
+
+### What is validated
+
+**POM metadata** (parsed from generated POM XML, direct `<project>` children only):
+
+| Field | Required |
+|-------|:--------:|
+| `<name>` | yes |
+| `<description>` | yes |
+| `<url>` | yes |
+| `<licenses>` | yes (at least one `<license>`) |
+| `<developers>` | yes (at least one `<developer>`) |
+| `<scm>` | yes |
+
+**Artifacts** (for non-pom publications):
+
+| Artifact | Required |
+|----------|:--------:|
+| `-sources.jar` | yes |
+| `-javadoc.jar` | yes |
+
+**pom-only publications** (java-platform, BOM, version-catalog) are exempt from artifact checks — only POM metadata is validated.
+
+### Consumer example
+
+```kotlin
+plugins {
+    kotlin("jvm")
+    `maven-publish`
+    id("org.octopusden.octopus-quality")
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("mavenJava") {
+            from(components["java"])
+            pom {
+                name.set(project.name)
+                description.set("Octopus module: ${project.name}")
+                url.set("https://github.com/octopusden/${rootProject.name}")
+                licenses {
+                    license {
+                        name.set("The Apache License, Version 2.0")
+                        url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                    }
+                }
+                scm {
+                    url.set("https://github.com/octopusden/${rootProject.name}")
+                    connection.set("scm:git://github.com/octopusden/${rootProject.name}.git")
+                }
+                developers {
+                    developer {
+                        id.set("octopus")
+                        name.set("octopus")
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+With this setup, `./gradlew check` includes `validatePublications` automatically. If any required field is missing or sources/javadoc JARs are absent, the build fails with a clear error message listing exactly what is wrong.
+
 ## Baseline Strategy
 
 - Baseline/suppressions are allowed only for existing violations.
