@@ -73,8 +73,10 @@ jobs:
             echo "- reason: ${scope_reason}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  quality:
-    name: quality
+  # ---------- Required on every PR ----------
+
+  plugin-quality:
+    name: plugin-quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,20 +114,20 @@ jobs:
         working-directory: gradle-quality-plugin
         run: ./gradlew build test detekt ktlintCheck --no-daemon --stacktrace
 
-      - name: Quality summary
+      - name: Summary
         shell: bash
         run: |
           {
-            echo "### quality"
+            echo "### plugin-quality"
             if [[ "${{ steps.detect.outputs.plugin_changed }}" == "true" ]]; then
-              echo "- gradle-quality-plugin: build + test + detekt + ktlint ✅"
+              echo "- gradle-quality-plugin: build + test + detekt + ktlint passed"
             else
               echo "- No plugin changes detected; build skipped"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  lint:
-    name: lint
+  workflow-lint:
+    name: workflow-lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -163,8 +165,10 @@ jobs:
           set -euo pipefail
           bash .github/scripts/validate-github-action-refs.sh "$GITHUB_WORKSPACE"
 
-  build:
-    name: build
+  # ---------- Scope-driven (workflow changes only) ----------
+
+  consumer-verify:
+    name: consumer-verify
     needs: resolve-gate-scope
     uses: ./.github/workflows/verify-octopus-test-consumer.yml
     with:
@@ -176,14 +180,16 @@ jobs:
     secrets:
       octopus_test_push_token: ${{ secrets.OCTOPUS_TEST_PUSH_TOKEN }}
 
+  # ---------- Aggregate ----------
+
   gate-merge:
     name: gate/merge
     if: ${{ always() }}
     needs:
-      - quality
-      - lint
+      - plugin-quality
+      - workflow-lint
       - security
-      - build
+      - consumer-verify
     runs-on: ubuntu-latest
     steps:
       - name: Validate gate results
@@ -192,8 +198,6 @@ jobs:
           set -euo pipefail
 
           results='${{ toJson(needs) }}'
-          # Merge contract is strict by design: every upstream gate must report success.
-          # If a gate is not applicable, keep it as an explicit noop-success job instead of skipping it.
           failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"${results}")"
 
           {
