@@ -157,12 +157,20 @@ internal object PublicationValidator {
         prefix: String,
         errors: MutableList<String>,
     ) {
-        val classifiers = pub.artifacts.map { it.classifier }.toSet()
-        if ("sources" !in classifiers) {
-            errors.add("$prefix: sources JAR missing (Maven Central requires it)")
+        // Maven Central requires -sources.jar and -javadoc.jar specifically (not .zip etc.)
+        val hasSourcesJar =
+            pub.artifacts.any {
+                it.classifier == "sources" && it.extension == "jar"
+            }
+        val hasJavadocJar =
+            pub.artifacts.any {
+                it.classifier == "javadoc" && it.extension == "jar"
+            }
+        if (!hasSourcesJar) {
+            errors.add("$prefix: sources JAR missing (Maven Central requires -sources.jar)")
         }
-        if ("javadoc" !in classifiers) {
-            errors.add("$prefix: javadoc JAR missing (Maven Central requires it)")
+        if (!hasJavadocJar) {
+            errors.add("$prefix: javadoc JAR missing (Maven Central requires -javadoc.jar)")
         }
     }
 
