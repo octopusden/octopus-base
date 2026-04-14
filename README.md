@@ -33,29 +33,28 @@ To use release registration, the `Prod` environment must contain secret `OCTOPUS
 To use automated `octopus-test` consumer verification (`Merge Gate` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
 
-Workflow lint for this release action only:
-- `Lint Release octopus-base workflow` validates `.github/workflows/check-octopus-test-consumer.yml`, `.github/workflows/release-octopus-base.yml`, `.github/workflows/verify-octopus-test-consumer.yml`, and runs `bash -n` for related helper scripts.
+## PR Merge Gate
 
-## Automated consumer verification in octopus-test
+Every PR runs the `Merge Gate` workflow with the following jobs:
 
-What this is:
-- A CI gate that validates changes in `octopus-base` workflows/actions against a real consumer repository (`octopus-test`) before merge/release.
-- The gate creates/updates verification branch `verify/octopus-base-pr-<PR_NUMBER>` in `octopus-test`, rewrites `octopus-base` workflow refs to the tested SHA, and waits for required consumer build workflows.
-- If any required consumer workflow fails (or does not complete in time), the check fails.
+| Job | Always runs | What it checks |
+|-----|:-----------:|----------------|
+| `build` | yes | `gradle-quality-plugin`: `./gradlew build test` |
+| `quality` | yes | `gradle-quality-plugin`: `./gradlew detekt ktlintCheck` |
+| `workflow-lint` | yes | `actionlint` on all workflow YAML + `bash -n` on helper scripts |
+| `security` | yes | External `uses@ref` validation for resolvable refs |
+| `consumer-verify` | scope-driven | `octopus-test` canary (only when workflow/action files change) |
+| `gate/merge` | yes | Aggregates all above — must be green to merge |
 
-How a developer uses it:
-1. Open/update a PR and wait for `Merge Gate`.
-2. If you need to run the same check manually, start `Actions` -> `Merge Gate` and provide optional inputs (`octopus_base_ref`, `verify_branch`, `timeout_minutes`).
-3. Before cutting a release, you can run the same gate from `Release octopus-base` by setting `verify_octopus_test=true`.
+## Consumer verification in octopus-test
 
-Where to look for results:
-- PR checks show pass/fail summary for `gate/merge`.
-- Detailed links to required `octopus-test` workflow runs are written into the workflow job summary.
+`consumer-verify` validates reusable workflow changes against `octopus-test` (real consumer repo):
+- Creates branch `verify/octopus-base-pr-<N>` in `octopus-test`, rewrites workflow refs to PR SHA
+- Waits for `octopus-test` Merge Gate to pass
+- Runs only when PR changes touch `.github/workflows/**`, `.github/actions/**`, or `update-octopus-test-refs.sh`
 
-Default path:
-- Every PR triggers `Merge Gate`.
-- Canary verification in `build` runs when PR changes touch `.github/workflows/**`, `.github/actions/**`, or `.github/scripts/update-octopus-test-refs.sh`.
-- Release flow can run the same gate when `verify_octopus_test=true`.
+Manual trigger: `Actions` → `Merge Gate` → provide `octopus_base_ref`, `verify_branch`.
+Release trigger: `Release octopus-base` with `verify_octopus_test=true`.
 
 Required secret:
 - repository secret `OCTOPUS_TEST_PUSH_TOKEN`

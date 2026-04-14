@@ -29,69 +29,18 @@ permissions:
   contents: read
 
 jobs:
-  resolve-gate-scope:
-    name: gate/scope
-    runs-on: ubuntu-latest
-    outputs:
-      run_verify: ${{ steps.scope.outputs.run_verify }}
-      plugin_changed: ${{ steps.scope.outputs.plugin_changed }}
-      scope_reason: ${{ steps.scope.outputs.scope_reason }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Resolve scope
-        id: scope
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          run_verify=true
-          plugin_changed=true
-          scope_reason="manual run or non-PR event"
-
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            head_sha="${{ github.event.pull_request.head.sha }}"
-            changed_files="$(git diff --name-only "$base_sha" "$head_sha")"
-
-            if grep -Eq '^(\.github/actions/|\.github/workflows/|\.github/scripts/update-octopus-test-refs\.sh$)' <<<"${changed_files}"; then
-              run_verify=true
-            else
-              run_verify=false
-            fi
-
-            if grep -q '^gradle-quality-plugin/' <<<"${changed_files}"; then
-              plugin_changed=true
-            else
-              plugin_changed=false
-            fi
-
-            scope_reason="PR: verify=$run_verify, plugin=$plugin_changed"
-          fi
-
-          {
-            echo "run_verify=${run_verify}"
-            echo "plugin_changed=${plugin_changed}"
-            echo "scope_reason=${scope_reason}"
-          } >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### Merge gate scope"
-            echo "- consumer-verify: \`${run_verify}\`"
-            echo "- plugin build/quality: \`${plugin_changed}\`"
-            echo "- reason: ${scope_reason}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
   # ---------- Required on every PR (standard taxonomy) ----------
 
   build:
     name: build
-    needs: resolve-gate-scope
-    if: ${{ needs.resolve-gate-scope.outputs.plugin_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v5
+        with:
+          min-wrapper-count: 0
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -108,8 +57,6 @@ jobs:
 
   quality:
     name: quality
-    needs: resolve-gate-scope
-    if: ${{ needs.resolve-gate-scope.outputs.plugin_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -168,12 +115,48 @@ jobs:
 
   # ---------- Producer-specific: octopus-test consumer canary ----------
 
+  consumer-verify-scope:
+    name: consumer-verify-scope
+    runs-on: ubuntu-latest
+    outputs:
+      run_verify: ${{ steps.scope.outputs.run_verify }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve consumer canary scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_verify=true
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            changed_files="$(git diff --name-only "$base_sha" "$head_sha")"
+
+            if grep -Eq '^(\.github/actions/|\.github/workflows/|\.github/scripts/update-octopus-test-refs\.sh$)' <<<"${changed_files}"; then
+              run_verify=true
+            else
+              run_verify=false
+            fi
+          fi
+
+          echo "run_verify=${run_verify}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### consumer-verify scope"
+            echo "- run: \`${run_verify}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   consumer-verify:
     name: consumer-verify
-    needs: resolve-gate-scope
+    needs: consumer-verify-scope
     uses: ./.github/workflows/verify-octopus-test-consumer.yml
     with:
-      enabled: ${{ needs.resolve-gate-scope.outputs.run_verify == 'true' }}
+      enabled: ${{ needs.consumer-verify-scope.outputs.run_verify == 'true' }}
       octopus_base_ref: ${{ inputs.octopus_base_ref || (github.event_name == 'pull_request' && github.event.pull_request.head.sha || '') }}
       octopus_test_base_ref: ${{ inputs.octopus_test_base_ref || 'main' }}
       verify_branch: ${{ inputs.verify_branch || (github.event_name == 'pull_request' && format('verify/octopus-base-pr-{0}', github.event.pull_request.number) || '') }}
@@ -200,8 +183,7 @@ jobs:
           set -euo pipefail
 
           results='${{ toJson(needs) }}'
-          # Skipped jobs (scope-driven) are acceptable — only failures block merge.
-          failed="$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key): \(.value.result)"' <<<"${results}")"
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"${results}")"
 
           {
             echo "### Merge gate results"
