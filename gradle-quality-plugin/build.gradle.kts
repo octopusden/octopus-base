@@ -174,6 +174,8 @@ tasks.register("validatePublications") {
                     javax.xml.parsers.DocumentBuilderFactory
                         .newInstance()
                 dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                dbf.setFeature("http://xml.org/sax/features/external-general-entities", false)
+                dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
                 val root = dbf.newDocumentBuilder().parse(pomFile).documentElement
                 val direct =
                     (0 until root.childNodes.length)
