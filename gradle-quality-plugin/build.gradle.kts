@@ -54,6 +54,11 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+java {
+    withJavadocJar()
+    withSourcesJar()
+}
+
 kotlin {
     // JDK 11 = minimum CI runtime across all target repos.
     // Gradle 8.x requires JDK 11+, quality tools (Checkstyle 10.x) require JDK 11+.
@@ -129,3 +134,76 @@ signing {
     sign(publishing.publications)
     isRequired = gradle.startParameter.taskNames.any { it == "publishToSonatype" || it.endsWith(":publishToSonatype") }
 }
+
+// Self-validate: ensure plugin's own publications meet Maven Central requirements.
+// This is the same check that PublicationValidator provides to consumer repos,
+// but applied to the plugin build itself (which doesn't use the convention plugin).
+tasks.register("validatePublications") {
+    group = "verification"
+    description = "Validates plugin publications meet Maven Central requirements (artifacts + POM)"
+    dependsOn(tasks.withType<org.gradle.api.publish.maven.tasks.GenerateMavenPom>())
+    doLast {
+        val metadataClassifiers = setOf("sources", "javadoc")
+        publishing.publications.withType<MavenPublication>().forEach { pub ->
+            val hasRealArtifact = pub.artifacts.any { it.classifier !in metadataClassifiers }
+            if (!hasRealArtifact) return@forEach // skip pom-only marker publications
+
+            val errors = mutableListOf<String>()
+
+            // Artifact checks
+            if (!pub.artifacts.any { it.classifier == "sources" && it.extension == "jar" }) {
+                errors.add("${pub.name}: -sources.jar missing")
+            }
+            if (!pub.artifacts.any { it.classifier == "javadoc" && it.extension == "jar" }) {
+                errors.add("${pub.name}: -javadoc.jar missing")
+            }
+
+            // POM metadata checks (parse generated POM XML)
+            val pubNameCap = pub.name.replaceFirstChar { it.uppercase() }
+            val pomTaskName = "generatePomFileFor${pubNameCap}Publication"
+            val pomTask =
+                tasks.findByName(pomTaskName)
+                    as? org.gradle.api.publish.maven.tasks.GenerateMavenPom
+            if (pomTask == null) {
+                errors.add("${pub.name}: GenerateMavenPom task '$pomTaskName' not found")
+            } else if (!pomTask.destination.exists()) {
+                errors.add("${pub.name}: generated POM not found at ${pomTask.destination.path}")
+            } else {
+                val pomFile = pomTask.destination
+                val dbf =
+                    javax.xml.parsers.DocumentBuilderFactory
+                        .newInstance()
+                dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                dbf.setFeature("http://xml.org/sax/features/external-general-entities", false)
+                dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                val root = dbf.newDocumentBuilder().parse(pomFile).documentElement
+                val direct =
+                    (0 until root.childNodes.length)
+                        .map { root.childNodes.item(it) }
+                        .filter { it.nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+
+                fun text(tag: String) =
+                    direct
+                        .firstOrNull { it.nodeName == tag }
+                        ?.textContent
+                        ?.trim()
+                        ?.ifBlank { null }
+
+                fun hasKids(tag: String) =
+                    direct.firstOrNull { it.nodeName == tag }?.let { node ->
+                        (0 until node.childNodes.length).any { node.childNodes.item(it).nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+                    } ?: false
+                if (text("name").isNullOrBlank()) errors.add("${pub.name}: POM <name> missing")
+                if (text("description").isNullOrBlank()) errors.add("${pub.name}: POM <description> missing")
+                if (text("url").isNullOrBlank()) errors.add("${pub.name}: POM <url> missing")
+                if (!hasKids("licenses")) errors.add("${pub.name}: POM <licenses> missing")
+                if (!hasKids("developers")) errors.add("${pub.name}: POM <developers> missing")
+                if (!hasKids("scm")) errors.add("${pub.name}: POM <scm> missing")
+            }
+
+            if (errors.isNotEmpty()) throw GradleException("Publication validation failed:\n${errors.joinToString("\n")}")
+        }
+        logger.lifecycle("validatePublications: plugin publications passed Maven Central checks")
+    }
+}
+tasks.named("check") { dependsOn("validatePublications") }

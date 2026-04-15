@@ -12,6 +12,32 @@ class OctopusQualityPluginFunctionalTest {
     @TempDir
     lateinit var projectDir: File
 
+    /** Full POM that passes Maven Central requirements — used by validator tests. */
+    private val fullPom =
+        """
+        pom {
+            name.set("test")
+            description.set("test library")
+            url.set("https://example.com")
+            licenses {
+                license {
+                    name.set("The Apache License, Version 2.0")
+                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                }
+            }
+            scm {
+                url.set("https://github.com/octopusden/test")
+                connection.set("scm:git://github.com/octopusden/test.git")
+            }
+            developers {
+                developer {
+                    id.set("test")
+                    name.set("test")
+                }
+            }
+        }
+        """.trimIndent()
+
     private fun settingsFile(content: String) {
         File(projectDir, "settings.gradle.kts").writeText(content)
     }
@@ -232,5 +258,239 @@ class OctopusQualityPluginFunctionalTest {
         // test-utils must still be in qualityStatic (not excluded)
         assertTrue(result.output.contains(":test-utils:detekt"))
         assertTrue(result.output.contains(":app:detekt"))
+    }
+
+    // ---------------------------------------------------------------
+    // 6. Publication validator: valid jar publication passes
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications passes for complete jar publication`() {
+        settingsFile(kotlinSettings("test-pub-valid"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar(); withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        $fullPom
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":validatePublications")?.outcome)
+        assertTrue(result.output.contains("passed Maven Central checks"))
+    }
+
+    // ---------------------------------------------------------------
+    // 7. Publication validator: missing sources JAR fails
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications fails when sources JAR is missing`() {
+        settingsFile(kotlinSettings("test-pub-no-sources"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        $fullPom
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        assertTrue(result.output.contains("sources JAR missing"))
+    }
+
+    // ---------------------------------------------------------------
+    // 8. Publication validator: missing javadoc JAR fails
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications fails when javadoc JAR is missing`() {
+        settingsFile(kotlinSettings("test-pub-no-javadoc"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        $fullPom
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        assertTrue(result.output.contains("javadoc JAR missing"))
+    }
+
+    // ---------------------------------------------------------------
+    // 9. Publication validator: missing POM fields fail
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications fails when POM fields are missing`() {
+        settingsFile(kotlinSettings("test-pub-no-pom"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar(); withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        // no pom metadata at all
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        assertTrue(result.output.contains("POM <name> is missing"))
+        assertTrue(result.output.contains("POM <description> is missing"))
+        assertTrue(result.output.contains("POM <url> is missing"))
+        assertTrue(result.output.contains("POM <licenses> section is missing"))
+        assertTrue(result.output.contains("POM <developers> section is missing"))
+        assertTrue(result.output.contains("POM <scm> section is missing"))
+    }
+
+    // ---------------------------------------------------------------
+    // 10. Publication validator: pom-only publication passes without sources/javadoc
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications passes for pom-only publication`() {
+        settingsFile(kotlinSettings("test-pub-pom-only"))
+        buildFile(
+            """
+            plugins {
+                `java-platform`
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            publishing {
+                publications {
+                    create<MavenPublication>("bom") {
+                        from(components["javaPlatform"])
+                        pom {
+                            name.set("test-bom")
+                            description.set("test BOM")
+                            url.set("https://example.com")
+                            licenses {
+                                license {
+                                    name.set("Apache-2.0")
+                                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                                }
+                            }
+                            scm { url.set("https://github.com/octopusden/test") }
+                            developers { developer { id.set("test"); name.set("test") } }
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+
+        val result = runner("validatePublications").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":validatePublications")?.outcome)
+        assertTrue(result.output.contains("passed Maven Central checks"))
+    }
+
+    // ---------------------------------------------------------------
+    // 11. Nested <name> in licenses does not satisfy top-level <name>
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications rejects POM with nested name but no top-level name`() {
+        settingsFile(kotlinSettings("test-pub-nested-name"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            java { withSourcesJar(); withJavadocJar() }
+            publishing {
+                publications {
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                        pom {
+                            // NO top-level name/description set
+                            url.set("https://example.com")
+                            licenses {
+                                license {
+                                    // This <name> is nested inside <license>, not top-level
+                                    name.set("Apache-2.0")
+                                    url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                                }
+                            }
+                            scm { url.set("https://github.com/octopusden/test") }
+                            developers { developer { id.set("test"); name.set("test") } }
+                        }
+                    }
+                }
+            }
+            octopusQuality { coverage { enabled.set(false) } }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("validatePublications").buildAndFail()
+        // Must fail on BOTH top-level name and description
+        assertTrue(result.output.contains("POM <name> is missing"))
+        assertTrue(result.output.contains("POM <description> is missing"))
+        // url is set, so should NOT be in errors
+        assertTrue(!result.output.contains("POM <url> is missing"))
     }
 }
