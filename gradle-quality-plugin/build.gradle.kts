@@ -160,11 +160,16 @@ tasks.register("validatePublications") {
 
             // POM metadata checks (parse generated POM XML)
             val pubNameCap = pub.name.replaceFirstChar { it.uppercase() }
+            val pomTaskName = "generatePomFileFor${pubNameCap}Publication"
             val pomTask =
-                tasks.findByName("generatePomFileFor${pubNameCap}Publication")
+                tasks.findByName(pomTaskName)
                     as? org.gradle.api.publish.maven.tasks.GenerateMavenPom
-            val pomFile = pomTask?.destination
-            if (pomFile != null && pomFile.exists()) {
+            if (pomTask == null) {
+                errors.add("${pub.name}: GenerateMavenPom task '$pomTaskName' not found")
+            } else if (!pomTask.destination.exists()) {
+                errors.add("${pub.name}: generated POM not found at ${pomTask.destination.path}")
+            } else {
+                val pomFile = pomTask.destination
                 val dbf =
                     javax.xml.parsers.DocumentBuilderFactory
                         .newInstance()
