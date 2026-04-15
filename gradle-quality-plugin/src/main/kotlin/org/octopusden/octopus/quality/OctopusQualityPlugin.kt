@@ -77,10 +77,6 @@ class OctopusQualityPlugin : Plugin<Project> {
 
         // Validate Maven Central publication readiness (sources, javadoc, POM fields)
         // for every project that applies maven-publish. Wired into `check`.
-        if (project.subprojects.isEmpty()) {
-            PublicationValidator.register(project)
-        } else {
-            project.allprojects.forEach { PublicationValidator.register(it) }
-        }
+        project.allprojects.forEach { PublicationValidator.register(it) }
     }
 }
