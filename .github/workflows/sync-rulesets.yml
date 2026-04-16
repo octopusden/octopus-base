@@ -1,0 +1,96 @@
+name: Sync Repository Rulesets
+
+on:
+  # NOTE: push trigger is deliberately disabled for initial rollout.
+  # The first sync must be operator-triggered via workflow_dispatch to control timing.
+  # After validating evaluate-mode behavior, uncomment the push trigger:
+  #
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - '.github/rulesets/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: sync-rulesets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync rulesets to targets
+        env:
+          GH_TOKEN: ${{ secrets.RULESETS_ADMIN_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          # Pre-flight: verify token
+          if ! gh api user --jq '.login' >/dev/null 2>&1; then
+            echo "::error::RULESETS_ADMIN_TOKEN is invalid or expired"
+            exit 1
+          fi
+          echo "Authenticated as: $(gh api user --jq '.login')"
+
+          ruleset_file=".github/rulesets/jvm-strict.json"
+          targets_file=".github/rulesets/jvm-strict.targets.txt"
+          ruleset_name="jvm-strict"
+          failed=0
+          total=0
+          skipped=0
+
+          while IFS= read -r repo; do
+            # Skip empty lines and comments
+            [[ -z "${repo}" || "${repo}" == \#* ]] && continue
+            total=$((total + 1))
+
+            echo "--- Processing: ${repo}"
+
+            # Check if archived
+            archived="$(gh api "repos/${repo}" --jq '.archived' 2>/dev/null)" || true
+            if [[ "${archived}" == "true" ]]; then
+              echo "  SKIP: ${repo} is archived"
+              skipped=$((skipped + 1))
+              sleep 1
+              continue
+            fi
+
+            # Check for existing ruleset
+            existing_id="$(gh api "repos/${repo}/rulesets" --jq ".[] | select(.name == \"${ruleset_name}\") | .id" 2>/dev/null)" || true
+
+            if [[ -n "${existing_id}" ]]; then
+              echo "  Updating existing ruleset (id: ${existing_id})"
+              if output="$(gh api "repos/${repo}/rulesets/${existing_id}" \
+                --method PUT \
+                --input "${ruleset_file}" 2>&1)"; then
+                echo "  OK: updated"
+              else
+                echo "  FAIL: update failed for ${repo}: ${output}"
+                failed=$((failed + 1))
+              fi
+            else
+              echo "  Creating new ruleset"
+              if output="$(gh api "repos/${repo}/rulesets" \
+                --method POST \
+                --input "${ruleset_file}" 2>&1)"; then
+                echo "  OK: created"
+              else
+                echo "  FAIL: create failed for ${repo}: ${output}"
+                failed=$((failed + 1))
+              fi
+            fi
+
+            sleep 1
+          done < "${targets_file}"
+
+          echo ""
+          echo "=== Summary ==="
+          echo "Total: ${total}, Skipped: ${skipped}, Failed: ${failed}"
+
+          if [[ "${failed}" -gt 0 ]]; then
+            echo "::error::${failed} repo(s) failed ruleset sync"
+            exit 1
+          fi
