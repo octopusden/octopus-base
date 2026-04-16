@@ -1,0 +1,56 @@
+name: Test merge-gate action (manual smoke test)
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  job-success:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Succeed
+        run: exit 0
+
+  job-failure:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Fail
+        run: exit 1
+
+  job-skipped:
+    runs-on: ubuntu-latest
+    if: false
+    steps:
+      - name: Never runs
+        run: exit 0
+
+  gate-all-success:
+    needs: [job-success]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run merge gate (expect PASS)
+        uses: ./.github/actions/merge-gate
+        with:
+          needs: ${{ toJson(needs) }}
+
+  gate-mixed:
+    needs: [job-success, job-failure, job-skipped]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run merge gate (expect FAIL)
+        id: gate
+        uses: ./.github/actions/merge-gate
+        with:
+          needs: ${{ toJson(needs) }}
+        continue-on-error: true
+      - name: Assert gate failed
+        run: |
+          if [[ "${{ steps.gate.outcome }}" != "failure" ]]; then
+            echo "::error::Expected gate-mixed to fail, but outcome was: ${{ steps.gate.outcome }}"
+            exit 1
+          fi
+          echo "gate-mixed correctly failed as expected."

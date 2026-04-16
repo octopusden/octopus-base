@@ -96,8 +96,7 @@ uses: octopusden/octopus-base/.github/actions/<name>@<ref>
 | Directory | Purpose |
 |---|---|
 | `get-version/` | Resolve the project version from Gradle or Maven |
-
-Upcoming: `merge-gate/` (planned for Step 2.3).
+| `merge-gate/` | Aggregate upstream job results; fails unless every job reports "success" |
 
 ---
 
