@@ -28,6 +28,11 @@ on:
         required: true
         type: number
         default: 30
+      convention_plugin_version:
+        description: 'Convention plugin version to bump in octopus-test settings.gradle(.kts)'
+        required: false
+        type: string
+        default: ''
   workflow_call:
     inputs:
       enabled:
@@ -50,6 +55,10 @@ on:
         required: false
         type: number
         default: 30
+      convention_plugin_version:
+        required: false
+        type: string
+        default: ''
     secrets:
       octopus_test_push_token:
         required: false
@@ -148,6 +157,7 @@ jobs:
           OCTOPUS_BASE_REF: ${{ steps.context.outputs.octopus_base_ref }}
           OCTOPUS_TEST_BASE_REF: ${{ steps.context.outputs.octopus_test_base_ref }}
           VERIFY_BRANCH: ${{ steps.context.outputs.verify_branch }}
+          OCTOPUS_QUALITY_VERSION: ${{ inputs.convention_plugin_version }}
         run: |
           set -euo pipefail
 
@@ -162,6 +172,8 @@ jobs:
           bash "$GITHUB_WORKSPACE/.github/scripts/update-octopus-test-refs.sh" "$PWD" "$OCTOPUS_BASE_REF"
 
           git add .github/workflows
+          git add settings.gradle 2>/dev/null || true
+          git add settings.gradle.kts 2>/dev/null || true
           if git diff --cached --quiet; then
             git commit --allow-empty -m "ci: retrigger octopus-test verification for $OCTOPUS_BASE_REF"
           else
