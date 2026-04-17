@@ -1,0 +1,70 @@
+name: Test merge-gate action
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/merge-gate/**'
+      - '.github/workflows/test-merge-gate-action.yml'
+  workflow_dispatch:
+
+# Single-job pattern: feed synthetic `needs` JSON straight into the action.
+# Avoids real "job-failure" fixtures that would surface as red check-runs on
+# the PR even when the action is behaving correctly.
+
+jobs:
+  test:
+    name: test merge-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Case — all success (expect pass)
+        uses: ./.github/actions/merge-gate
+        with:
+          needs: |
+            {"build": {"result": "success"}, "quality": {"result": "success"}, "security": {"result": "success"}}
+
+      - name: Case — one failure (expect fail)
+        id: gate-failure
+        continue-on-error: true
+        uses: ./.github/actions/merge-gate
+        with:
+          needs: |
+            {"build": {"result": "success"}, "quality": {"result": "failure"}, "security": {"result": "success"}}
+
+      - name: Assert failure case detected
+        run: |
+          if [[ "${{ steps.gate-failure.outcome }}" != "failure" ]]; then
+            echo "::error::Expected gate to fail on needs.quality.result == 'failure', got ${{ steps.gate-failure.outcome }}"
+            exit 1
+          fi
+
+      - name: Case — one skipped (expect fail)
+        id: gate-skipped
+        continue-on-error: true
+        uses: ./.github/actions/merge-gate
+        with:
+          needs: |
+            {"build": {"result": "success"}, "quality": {"result": "skipped"}, "security": {"result": "success"}}
+
+      - name: Assert skipped case detected
+        run: |
+          if [[ "${{ steps.gate-skipped.outcome }}" != "failure" ]]; then
+            echo "::error::Expected gate to fail on needs.quality.result == 'skipped', got ${{ steps.gate-skipped.outcome }}"
+            exit 1
+          fi
+
+      - name: Case — one cancelled (expect fail)
+        id: gate-cancelled
+        continue-on-error: true
+        uses: ./.github/actions/merge-gate
+        with:
+          needs: |
+            {"build": {"result": "success"}, "quality": {"result": "cancelled"}, "security": {"result": "success"}}
+
+      - name: Assert cancelled case detected
+        run: |
+          if [[ "${{ steps.gate-cancelled.outcome }}" != "failure" ]]; then
+            echo "::error::Expected gate to fail on needs.quality.result == 'cancelled', got ${{ steps.gate-cancelled.outcome }}"
+            exit 1
+          fi
