@@ -28,8 +28,11 @@ on:
         required: true
         type: number
         default: 30
+      # Opt-in by design: plugin-version validation is manual/post-release.
+      # PR-time canary cannot test an unreleased plugin artifact without extra
+      # publish infrastructure (GitHub Packages etc.) — deferred as a follow-up.
       convention_plugin_version:
-        description: 'Convention plugin version to bump in octopus-test settings.gradle(.kts)'
+        description: 'Convention plugin version to bump in octopus-test settings.gradle(.kts). Leave empty for PR-time canary.'
         required: false
         type: string
         default: ''

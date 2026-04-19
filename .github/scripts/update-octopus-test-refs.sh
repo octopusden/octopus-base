@@ -41,18 +41,10 @@ if [[ ${#workflow_files[@]} -gt 0 ]]; then
 fi
 
 # --- Action ref rewriting ---
-# Scan ALL workflow files (not just those with workflow refs) for action refs.
-all_workflow_files=()
-while IFS= read -r -d '' f; do
-  all_workflow_files+=("$f")
-done < <(find "$workflow_dir" -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | sort -z)
-
 action_files=()
-for wf in "${all_workflow_files[@]}"; do
-  if grep -qE 'uses:[[:space:]]+octopusden/octopus-base/\.github/actions/' "$wf"; then
-    action_files+=("$wf")
-  fi
-done
+while IFS= read -r action_file; do
+  action_files+=("$action_file")
+done < <(bash "$collect_script" "$workflow_dir" "uses:[[:space:]]+octopusden/octopus-base/\\.github/actions/")
 
 if [[ ${#action_files[@]} -eq 0 ]]; then
   echo "No action refs found, skipping"
@@ -89,18 +81,16 @@ else
 
   if [[ -z "$settings_file" ]]; then
     echo "OCTOPUS_QUALITY_VERSION set but no settings.gradle(.kts) found under '$repo_dir' — skipping"
-  elif ! grep -qE 'org\.octopusden\.octopus-quality["\x27]' "$settings_file"; then
+  elif ! grep -qE "org\.octopusden\.octopus-quality[\"']" "$settings_file"; then
     echo "OCTOPUS_QUALITY_VERSION set but no org.octopusden.octopus-quality declaration in $settings_file — skipping"
   else
-    perl -pi -e 's#(org\.octopusden\.octopus-quality["\x27].*?version\s*\(?\s*["\x27])([^"'"'"']+)(["\x27])#${1}$ENV{OCTOPUS_QUALITY_VERSION}${3}#g' \
-      "$settings_file"
-    if grep -qF "${OCTOPUS_QUALITY_VERSION}" "$settings_file"; then
-      printf 'Updated octopus-quality plugin version to %s in %s\n' \
-        "$OCTOPUS_QUALITY_VERSION" \
-        "$settings_file"
-    else
+    if ! perl -0pi -e 'BEGIN { $updated = 0 } $updated += s#(org\.octopusden\.octopus-quality["\x27].*?version\s*\(?\s*["\x27])([^"'"'"']+)(["\x27])#${1}$ENV{OCTOPUS_QUALITY_VERSION}${3}#gs; END { exit($updated > 0 ? 0 : 1) }' \
+      "$settings_file"; then
       echo "Failed to update octopus-quality plugin version to ${OCTOPUS_QUALITY_VERSION} in ${settings_file}"
       exit 1
     fi
+    printf 'Updated octopus-quality plugin version to %s in %s\n' \
+      "$OCTOPUS_QUALITY_VERSION" \
+      "$settings_file"
   fi
 fi
