@@ -24,18 +24,73 @@ while IFS= read -r workflow_file; do
 done < <(bash "$collect_script" "$workflow_dir" "uses:[[:space:]]+octopusden/octopus-base/\\.github/workflows/")
 
 if [[ ${#workflow_files[@]} -eq 0 ]]; then
-  # For consumer verification this is mandatory; fail fast if no refs were rewritten.
   echo "No octopus-base reusable workflow references found under '$workflow_dir'"
-  exit 1
+  # Don't exit yet — action refs may still need rewriting.
 fi
 
 export OCTOPUS_BASE_REF="$octopus_base_ref"
 
-for workflow_file in "${workflow_files[@]}"; do
-  perl -0pi -e 's#(uses:\s+octopusden/octopus-base/\.github/workflows/[^@\s]+@)[^\s]+#$1$ENV{OCTOPUS_BASE_REF}#g' \
-    "$workflow_file"
-done
+if [[ ${#workflow_files[@]} -gt 0 ]]; then
+  for workflow_file in "${workflow_files[@]}"; do
+    perl -0pi -e 's#(uses:\s+octopusden/octopus-base/\.github/workflows/[^@\s]+@)[^\s]+#$1$ENV{OCTOPUS_BASE_REF}#g' \
+      "$workflow_file"
+  done
+  printf 'Updated octopus-base workflow refs to %s in %s file(s)\n' \
+    "$octopus_base_ref" \
+    "${#workflow_files[@]}"
+fi
 
-printf 'Updated octopus-base workflow refs to %s in %s file(s)\n' \
-  "$octopus_base_ref" \
-  "${#workflow_files[@]}"
+# --- Action ref rewriting ---
+action_files=()
+while IFS= read -r action_file; do
+  action_files+=("$action_file")
+done < <(bash "$collect_script" "$workflow_dir" "uses:[[:space:]]+octopusden/octopus-base/\\.github/actions/")
+
+if [[ ${#action_files[@]} -eq 0 ]]; then
+  echo "No action refs found, skipping"
+else
+  echo "Rewriting ${#action_files[@]} action ref(s)"
+  for action_file in "${action_files[@]}"; do
+    perl -0pi -e 's#(uses:\s+octopusden/octopus-base/\.github/actions/[^@\s]+@)[^\s]+#$1$ENV{OCTOPUS_BASE_REF}#g' \
+      "$action_file"
+  done
+fi
+
+# Fail if neither workflow nor action refs were found — nothing was rewritten.
+if [[ ${#workflow_files[@]} -eq 0 ]] && [[ ${#action_files[@]} -eq 0 ]]; then
+  echo "No octopus-base refs (workflow or action) found under '$workflow_dir'"
+  exit 1
+fi
+
+# --- Convention plugin version bump ---
+if [[ -z "${OCTOPUS_QUALITY_VERSION:-}" ]]; then
+  echo "OCTOPUS_QUALITY_VERSION not set, skipping plugin version bump"
+else
+  if [[ ! "${OCTOPUS_QUALITY_VERSION}" =~ ^[0-9A-Za-z._+-]+$ ]]; then
+    echo "Invalid OCTOPUS_QUALITY_VERSION: '${OCTOPUS_QUALITY_VERSION}'"
+    exit 1
+  fi
+
+  settings_file=""
+  for candidate in "$repo_dir/settings.gradle.kts" "$repo_dir/settings.gradle"; do
+    if [[ -f "$candidate" ]]; then
+      settings_file="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$settings_file" ]]; then
+    echo "OCTOPUS_QUALITY_VERSION set but no settings.gradle(.kts) found under '$repo_dir' — skipping"
+  elif ! grep -qE "org\.octopusden\.octopus-quality[\"']" "$settings_file"; then
+    echo "OCTOPUS_QUALITY_VERSION set but no org.octopusden.octopus-quality declaration in $settings_file — skipping"
+  else
+    if ! perl -0pi -e 'BEGIN { $updated = 0 } $updated += s#(org\.octopusden\.octopus-quality["\x27].*?version\s*\(?\s*["\x27])([^"'"'"']+)(["\x27])#${1}$ENV{OCTOPUS_QUALITY_VERSION}${3}#gs; END { exit($updated > 0 ? 0 : 1) }' \
+      "$settings_file"; then
+      echo "Failed to update octopus-quality plugin version to ${OCTOPUS_QUALITY_VERSION} in ${settings_file}"
+      exit 1
+    fi
+    printf 'Updated octopus-quality plugin version to %s in %s\n' \
+      "$OCTOPUS_QUALITY_VERSION" \
+      "$settings_file"
+  fi
+fi
