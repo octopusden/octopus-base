@@ -1,1 +1,2 @@
 octopusden/octopus-base
+octopusden/octopus-release-management-service
