@@ -70,9 +70,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Static analysis
+      - name: Static analysis and coverage gate
         working-directory: gradle-quality-plugin
-        run: ./gradlew detekt ktlintCheck --no-daemon --stacktrace
+        run: ./gradlew detekt ktlintCheck koverXmlReport koverVerify --no-daemon --stacktrace
 
   workflow-lint:
     name: workflow-lint
