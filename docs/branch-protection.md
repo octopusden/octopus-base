@@ -31,9 +31,11 @@ When the rollout is ready to enforce, update the `enforcement` field in `jvm-str
 
 1. Open a PR against `octopus-base` `main` branch.
 2. Add one line to `.github/rulesets/jvm-strict.targets.txt`:
-   ```
+
+   ```text
    octopusden/<repo-name>
    ```
+
 3. Get the PR approved and merged.
 4. Trigger the `sync-rulesets` workflow manually via **Actions → Sync Repository Rulesets → Run workflow**. The push trigger is disabled during initial rollout; after the rollout stabilizes, it will be enabled for automatic sync on merge.
 

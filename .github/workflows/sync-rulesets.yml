@@ -11,6 +11,10 @@ on:
   #     - '.github/rulesets/**'
   workflow_dispatch:
 
+concurrency:
+  group: sync-rulesets
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -28,9 +32,16 @@ jobs:
         run: |
           set -uo pipefail
 
-          # Pre-flight: verify token
+          # Pre-flight: verify token validity and Administration scope.
+          # The /rulesets probe requires Administration: read at minimum, so a PAT
+          # missing the rulesets scope fails here with a clear message instead of
+          # producing per-repo 403s inside the main loop.
           if ! gh api user --jq '.login' >/dev/null 2>&1; then
             echo "::error::RULESETS_ADMIN_TOKEN is invalid or expired"
+            exit 1
+          fi
+          if ! gh api repos/octopusden/octopus-base/rulesets >/dev/null 2>&1; then
+            echo "::error::RULESETS_ADMIN_TOKEN lacks required Administration scope on octopusden/octopus-base"
             exit 1
           fi
           echo "Authenticated as: $(gh api user --jq '.login')"
@@ -42,7 +53,7 @@ jobs:
           total=0
           skipped=0
 
-          while IFS= read -r repo; do
+          while IFS= read -r repo || [[ -n "${repo}" ]]; do
             # Skip empty lines and comments
             [[ -z "${repo}" || "${repo}" == \#* ]] && continue
             total=$((total + 1))
