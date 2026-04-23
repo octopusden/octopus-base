@@ -74,7 +74,7 @@ Run the following script locally with a token that has admin access:
 
 ```bash
 export GH_TOKEN="<your-admin-token>"
-while IFS= read -r repo; do
+while IFS= read -r repo || [[ -n "${repo-}" ]]; do
   [[ -z "${repo}" || "${repo}" == \#* ]] && continue
   id="$(gh api "repos/${repo}/rulesets" --jq '.[] | select(.name == "jvm-strict") | .id' 2>/dev/null)" || true
   if [[ -n "${id}" ]]; then
