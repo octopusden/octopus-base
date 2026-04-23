@@ -112,6 +112,49 @@ surface clean.
 
 ---
 
+## Security rules for workflows
+
+### Rule: no direct expression interpolation in `run:` blocks
+
+Interpolating `${{ inputs.* }}` or user-controlled `${{ github.event.* }}`
+expressions directly inside a `run:` shell block is a **shell injection vector**
+(CVE class: GitHub Actions script injection).  An attacker who can supply the
+input or trigger the event can execute arbitrary shell code.
+
+**Dangerous pattern (do not use):**
+
+```yaml
+- name: Apply skipped tasks
+  run: |
+    IFS=',' read -r -a tasks <<< "${{ inputs.skip-extra-tasks }}"
+```
+
+**Safe pattern — assign to `env:`, reference as `$VAR` in `run:`:**
+
+```yaml
+- name: Apply skipped tasks
+  env:
+    SKIP_EXTRA_TASKS: ${{ inputs.skip-extra-tasks }}
+  run: |
+    IFS=',' read -r -a tasks <<< "$SKIP_EXTRA_TASKS"
+```
+
+The lint script `validate-workflow-injection.sh` enforces this rule in CI
+(added in issue #100, triggered by a CodeRabbit finding in PR #99).
+
+Specifically flagged expression patterns:
+- `${{ inputs.* }}` — caller-supplied strings
+- `${{ github.event.pull_request.title }}` / `.body` / `.head.ref`
+- `${{ github.event.issue.title }}` / `.body`
+- `${{ github.event.comment.body }}`
+- `${{ github.head_ref }}`
+
+**Escape hatch:** if a pattern is provably safe, add a `relative/path:lineno`
+entry to `.github/scripts/workflow-injection-whitelist.txt` with a comment
+explaining why it is safe.
+
+---
+
 ## Adding a new reusable workflow
 
 1. Create `.github/workflows/common-<name>.yml`.
@@ -121,6 +164,8 @@ surface clean.
 4. Update the table in this README.
 5. The automated lint (`validate-workflow-naming.sh`) will enforce rules 2–3
    in CI.
+6. Do not interpolate `${{ inputs.* }}` directly in `run:` blocks — see the
+   security rule above.
 
 ## Adding a new composite action
 

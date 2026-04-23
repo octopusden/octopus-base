@@ -102,6 +102,9 @@ jobs:
       - name: Validate workflow naming convention
         shell: bash
         run: bash .github/scripts/validate-workflow-naming.sh .
+      - name: Validate workflow injection safety
+        shell: bash
+        run: bash .github/scripts/validate-workflow-injection.sh .
 
   security:
     name: security
