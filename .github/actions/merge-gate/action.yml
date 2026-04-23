@@ -1,0 +1,33 @@
+name: Merge Gate
+description: >
+  Aggregates job results from the merge-gate workflow.
+  Fails unless every upstream job reports "success".
+
+inputs:
+  needs:
+    description: 'JSON object of job results; typically the needs context serialized with toJson(needs).'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate gate results
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        results='${{ inputs.needs }}'
+        failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"${results}")"
+
+        {
+          echo "### Merge gate results"
+          jq -r 'to_entries[] | "- \(.key): \(.value.result)"' <<<"${results}"
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+        if [[ -n "${failed}" ]]; then
+          echo "::error::Merge gate failed"
+          echo "${failed}"
+          exit 1
+        fi
+
+        echo "Merge gate passed."

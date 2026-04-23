@@ -99,6 +99,9 @@ jobs:
           while IFS= read -r script; do
             bash -n "$script"
           done < <(find .github/scripts -type f -name '*.sh' | sort)
+      - name: Validate workflow naming convention
+        shell: bash
+        run: bash .github/scripts/validate-workflow-naming.sh .
 
   security:
     name: security
