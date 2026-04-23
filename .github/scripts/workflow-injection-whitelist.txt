@@ -8,46 +8,9 @@
 # To suppress a NEW finding: add the entry here ONLY when the pattern is
 # provably safe or the risk is accepted.  Prefer the safe pattern instead:
 # assign to env:, reference as $VAR in run:.
-
-# common-check-and-register-release.yml — artifact-pattern used as a path template
-.github/workflows/common-check-and-register-release.yml:40
-
-# common-java-gradle-build.yml — flow-type echoed in an error message (diagnostic only)
-.github/workflows/common-java-gradle-build.yml:45
-
-# common-java-gradle-quality-gates.yml — Gradle command passed directly as run value
-.github/workflows/common-java-gradle-quality-gates.yml:89
-.github/workflows/common-java-gradle-quality-gates.yml:112
-
-# common-java-gradle-release.yml — diagnostic echo and env writes (pre-existing)
-.github/workflows/common-java-gradle-release.yml:71
-.github/workflows/common-java-gradle-release.yml:96
-.github/workflows/common-java-gradle-release.yml:97
-.github/workflows/common-java-gradle-release.yml:100
-.github/workflows/common-java-gradle-release.yml:228
-.github/workflows/common-java-gradle-release.yml:241
-
-# common-java-gradle-security-reports.yml — dependency-check command passed as run value
-.github/workflows/common-java-gradle-security-reports.yml:137
-
-# common-java-maven-build.yml — mvn-parameters appended to Maven command
-.github/workflows/common-java-maven-build.yml:33
-
-# common-java-maven-release.yml — diagnostic echo and env writes (pre-existing)
-.github/workflows/common-java-maven-release.yml:63
-.github/workflows/common-java-maven-release.yml:88
-.github/workflows/common-java-maven-release.yml:89
-.github/workflows/common-java-maven-release.yml:92
-.github/workflows/common-java-maven-release.yml:194
-
-# common-py-2-3-build-deploy.yml — process_env echoed for diagnostics
-.github/workflows/common-py-2-3-build-deploy.yml:19
-.github/workflows/common-py-2-3-build-deploy.yml:51
-
-# common-py-build-deploy.yml — process_env echoed for diagnostics
-.github/workflows/common-py-build-deploy.yml:24
-.github/workflows/common-py-build-deploy.yml:64
-
-# common-register-release.yml — repository name/release version in curl payload
-.github/workflows/common-register-release.yml:25
-.github/workflows/common-register-release.yml:35
+#
+# -------------------------------------------------------------------------
+# All 23 pre-existing violations were audited and fixed in PR #134
+# (security: audit and fix pre-existing workflow injection patterns).
+# Every entry has been moved to the canonical env-pattern; none remain here.
+# -------------------------------------------------------------------------

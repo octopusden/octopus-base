@@ -109,6 +109,9 @@ jobs:
   security:
     name: security
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - name: Validate external action refs
@@ -118,6 +121,14 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/validate-github-action-refs.sh "$GITHUB_WORKSPACE"
+      - name: Initialize CodeQL (actions language)
+        uses: github/codeql-action/init@v3
+        with:
+          languages: actions
+      - name: Analyze (actions language)
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:actions
 
   # ---------- Producer-specific: octopus-test consumer canary ----------
 

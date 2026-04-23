@@ -30,4 +30,6 @@ jobs:
           server-password: MAVEN_PASSWORD
           
       - name: Maven build
-        run: mvn --batch-mode --update-snapshots package ${{ inputs.mvn-parameters }}
+        env:
+          MVN_PARAMETERS: ${{ inputs.mvn-parameters }}
+        run: mvn --batch-mode --update-snapshots package $MVN_PARAMETERS

@@ -21,7 +21,9 @@ jobs:
       id-token: write
     steps:
       - name: Check environment
-        run: echo "Environment =  ${{ inputs.process_env }}"
+        env:
+          PROCESS_ENV: ${{ inputs.process_env }}
+        run: echo "Environment =  $PROCESS_ENV"
       - name: Check PyPI url
         run: echo "PyPI url=${{ vars.PYPI_REPO_URL }}"
       - name: Check PyPI API TOKEN
@@ -61,7 +63,9 @@ jobs:
       id-token: write
     steps:
       - name: Check environment
-        run: echo "Environment =  ${{ inputs.process_env }}"
+        env:
+          PROCESS_ENV: ${{ inputs.process_env }}
+        run: echo "Environment =  $PROCESS_ENV"
       - name: Check PyPI url
         run: echo "PyPI url=${{ vars.PYPI_REPO_URL }}"
       - name: Check PyPI API TOKEN

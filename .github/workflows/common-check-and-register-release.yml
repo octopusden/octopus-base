@@ -32,12 +32,14 @@ jobs:
       # check artifact exists on nexus - synchronous implementation
       - name: Check Sonatype Nexus publish
         id: check-artifact
+        env:
+          ARTIFACT_PATTERN: ${{ inputs.artifact-pattern }}
         run: |
           VERSION_FROM_TAG=${{ steps.tag_version.outputs.tag }}      # v2.3.4
           VER=${VERSION_FROM_TAG#v}                                  # 2.3.4
           echo "RELEASE_VERSION=$VER" >> $GITHUB_OUTPUT
 
-          PATTERN=${{ inputs.artifact-pattern }}
+          PATTERN="$ARTIFACT_PATTERN"
           ART_PATH=${PATTERN//_VER_/$VER}
           
           ART_URL=${BASE_URL}/${ART_PATH}
