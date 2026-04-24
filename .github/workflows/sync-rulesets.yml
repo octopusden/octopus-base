@@ -11,6 +11,10 @@ on:
   #     - '.github/rulesets/**'
   workflow_dispatch:
 
+concurrency:
+  group: sync-rulesets
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -28,9 +32,17 @@ jobs:
         run: |
           set -uo pipefail
 
-          # Pre-flight: verify token
+          # Pre-flight: verify token is valid and has at least Administration: read
+          # on this repository. The /rulesets probe catches a PAT with no rulesets
+          # access at all (the common mis-configuration). Full Administration: write
+          # cannot be probed without a side-effecting call and is still validated
+          # per-repo by the POST/PUT in the main loop.
           if ! gh api user --jq '.login' >/dev/null 2>&1; then
             echo "::error::RULESETS_ADMIN_TOKEN is invalid or expired"
+            exit 1
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/rulesets" >/dev/null 2>&1; then
+            echo "::error::RULESETS_ADMIN_TOKEN cannot read rulesets on ${GITHUB_REPOSITORY} — Administration scope is missing or insufficient (write scope is verified per-repo in the sync loop)"
             exit 1
           fi
           echo "Authenticated as: $(gh api user --jq '.login')"
@@ -42,7 +54,7 @@ jobs:
           total=0
           skipped=0
 
-          while IFS= read -r repo; do
+          while IFS= read -r repo || [[ -n "${repo-}" ]]; do
             # Skip empty lines and comments
             [[ -z "${repo}" || "${repo}" == \#* ]] && continue
             total=$((total + 1))
