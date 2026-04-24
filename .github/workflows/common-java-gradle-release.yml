@@ -67,8 +67,10 @@ jobs:
       # check input parameters
       - name: Unknown flow
         if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        env:
+          FLOW_TYPE: ${{ inputs.flow-type }}
         run: |
-          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          echo "Unknown flow specified, should be one of {public, hybrid}: " "$FLOW_TYPE"
           exit 1
 
       - name: Fail if commit-hash is not set for hybrid flow
@@ -90,14 +92,17 @@ jobs:
 
       - name: Hybrid flow
         if: inputs.flow-type == 'hybrid'
+        env:
+          COMMIT_HASH: ${{ inputs.commit-hash }}
+          BUILD_VERSION_INPUT: ${{ inputs.build-version }}
         run: |
           echo "Hybrid flow:"
           echo "- Skipping tests"
-          echo "- Commit hash: ${{ inputs.commit-hash }}"
-          echo "- Version: ${{ inputs.build-version }}"
+          echo "- Commit hash: $COMMIT_HASH"
+          echo "- Version: $BUILD_VERSION_INPUT"
           # set hybrid flow variables
           echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
-          echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
+          echo "BUILD_VERSION=$BUILD_VERSION_INPUT" >> $GITHUB_ENV
 
       - name: Apply extra skipped tasks
         if: inputs.skip-extra-tasks != ''
@@ -225,7 +230,9 @@ jobs:
 
       - name: Gradle build docker image
         if: inputs.docker-image
-        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Pdocker.image=${{ inputs.docker-image }} -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Pdocker.image="$DOCKER_IMAGE" -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
 
       # push to docker
       - name: Log in to Docker Registry
@@ -238,7 +245,9 @@ jobs:
 
       - name: Push to docker registry
         if: inputs.docker-image && !inputs.dry-run
-        run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:${{ env.BUILD_VERSION }}"
 
       # publish to nexus
       - name: Publish to Sonatype Nexus

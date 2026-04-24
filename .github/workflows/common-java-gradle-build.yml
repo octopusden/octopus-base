@@ -41,8 +41,10 @@ jobs:
 
       - name: Unknown flow
         if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        env:
+          FLOW_TYPE: ${{ inputs.flow-type }}
         run: |
-          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          echo "Unknown flow specified, should be one of {public, hybrid}: " "$FLOW_TYPE"
           exit 1
 
       - name: Checkout

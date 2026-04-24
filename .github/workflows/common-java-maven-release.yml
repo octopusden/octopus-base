@@ -59,8 +59,10 @@ jobs:
       # check input parameters
       - name: Unknown flow
         if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        env:
+          FLOW_TYPE: ${{ inputs.flow-type }}
         run: |
-          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          echo "Unknown flow specified, should be one of {public, hybrid}: " "$FLOW_TYPE"
           exit 1
 
       - name: Fail if commit-hash is not set for hybrid flow
@@ -82,14 +84,17 @@ jobs:
 
       - name: Hybrid flow
         if: inputs.flow-type == 'hybrid'
+        env:
+          COMMIT_HASH: ${{ inputs.commit-hash }}
+          BUILD_VERSION_INPUT: ${{ inputs.build-version }}
         run: |
           echo "Hybrid flow:"
           echo "- Skipping tests"
-          echo "- Commit hash: ${{ inputs.commit-hash }}"
-          echo "- Version: ${{ inputs.build-version }}"
+          echo "- Commit hash: $COMMIT_HASH"
+          echo "- Version: $BUILD_VERSION_INPUT"
           # set hybrid flow variables
           echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
-          echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
+          echo "BUILD_VERSION=$BUILD_VERSION_INPUT" >> $GITHUB_ENV
 
       - name: Dry run mode
         if: inputs.dry-run
@@ -191,11 +196,12 @@ jobs:
 
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
-        run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          RELEASE_MVN_PARAMETERS: ${{ inputs.release-mvn-parameters }}
+        run: mvn --batch-mode deploy -P gpg $RELEASE_MVN_PARAMETERS
 
       # github release
       - name: Create release

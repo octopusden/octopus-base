@@ -134,7 +134,9 @@ jobs:
           java-version: ${{ inputs.java-version }}
       - uses: gradle/actions/setup-gradle@v4
       - name: Run OWASP Dependency-Check (report-only)
-        run: ${{ inputs.dependency-check-command }}
+        env:
+          DEPENDENCY_CHECK_COMMAND: ${{ inputs.dependency-check-command }}
+        run: bash -c "$DEPENDENCY_CHECK_COMMAND"
       - name: Upload Dependency-Check SARIF
         if: always()
         # SARIF upload is best-effort; scanner execution already determines the job result.

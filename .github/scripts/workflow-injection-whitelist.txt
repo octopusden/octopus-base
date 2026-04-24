@@ -1,0 +1,16 @@
+# workflow-injection-whitelist.txt
+#
+# Grandfathered pre-existing ${{ inputs.* }} usages in run: blocks.
+# These were present before validate-workflow-injection.sh was introduced (issue #100).
+#
+# Format: relative/path/to/file:lineno   # optional comment
+#
+# To suppress a NEW finding: add the entry here ONLY when the pattern is
+# provably safe or the risk is accepted.  Prefer the safe pattern instead:
+# assign to env:, reference as $VAR in run:.
+#
+# -------------------------------------------------------------------------
+# All 23 pre-existing violations were audited and fixed in PR #134
+# (security: audit and fix pre-existing workflow injection patterns).
+# Every entry has been moved to the canonical env-pattern; none remain here.
+# -------------------------------------------------------------------------
