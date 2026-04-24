@@ -4,8 +4,10 @@ import org.gradle.api.Project
 import java.io.File
 
 /**
- * Extracts bundled config files from plugin resources into the build directory
- * so that Gradle quality tools can reference them by file path.
+ * Extracts bundled config files from plugin resources into Gradle's project cache
+ * directory (`.gradle/` by default, overridable via `--project-cache-dir`) so that
+ * Gradle quality tools can reference them by file path and the files survive
+ * `./gradlew clean`.
  */
 internal object ConfigExtractor {
     private const val RESOURCE_PREFIX = "org/octopusden/octopus/quality/config"
@@ -19,17 +21,26 @@ internal object ConfigExtractor {
         )
 
     /**
-     * Extract all config files to `<rootBuildDir>/octopus-quality/config/`.
+     * Extract all config files to `<projectCacheDir>/octopus-quality/config/`.
+     *
+     * Uses Gradle's project cache directory (not `build/`) so the extracted config
+     * survives `./gradlew clean` — otherwise a `clean build` run deletes configs
+     * between configuration phase (when extraction happens) and execution phase
+     * (when detekt etc. read them).
+     *
+     * Respects `--project-cache-dir` / `projectCacheDir` settings overrides and
+     * falls back to the Gradle default (`<rootDir>/.gradle`) when unset.
+     *
      * Returns the config directory.
      */
     fun extractTo(project: Project): File {
-        val configDir =
-            File(
-                project.layout.buildDirectory.asFile
-                    .get(),
-                "octopus-quality/config",
-            )
-        configDir.mkdirs()
+        val projectCacheDir =
+            project.gradle.startParameter.projectCacheDir
+                ?: File(project.rootDir, ".gradle")
+        val configDir = File(projectCacheDir, "octopus-quality/config")
+        if (!configDir.isDirectory && !configDir.mkdirs()) {
+            error("Failed to create config directory: ${configDir.absolutePath}")
+        }
 
         for (fileName in CONFIG_FILES) {
             val target = File(configDir, fileName)

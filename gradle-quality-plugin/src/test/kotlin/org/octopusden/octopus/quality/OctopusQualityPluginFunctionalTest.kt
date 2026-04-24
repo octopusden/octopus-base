@@ -493,4 +493,43 @@ class OctopusQualityPluginFunctionalTest {
         // url is set, so should NOT be in errors
         assertTrue(!result.output.contains("POM <url> is missing"))
     }
+
+    // ---------------------------------------------------------------
+    // Regression: config extraction must survive `clean` task
+    // ---------------------------------------------------------------
+    @Test
+    fun `detekt config survives clean build cycle`() {
+        settingsFile(kotlinSettings("test-clean-cycle"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("io.gitlab.arturbosch.detekt") version "1.23.5"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            // Explicit ordering: detekt must run AFTER clean, so the test
+            // deterministically exercises the "config wiped by clean" path.
+            tasks.named("detekt") { mustRunAfter(tasks.named("clean")) }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Hello.kt",
+            "package com.example\nfun hello() = \"Hello\"\n",
+        )
+
+        // Clean and detekt in a single build — reproduces CI `gradle clean build` scenario.
+        // If config lived under build/, :clean would delete it before :detekt reads it.
+        val result = runner("clean", "detekt").build()
+        // :clean may be UP_TO_DATE on a fresh workspace (no build dir to remove);
+        // the important invariant is that it executed and :detekt succeeded afterwards.
+        assertTrue(result.task(":clean")?.outcome in setOf(TaskOutcome.SUCCESS, TaskOutcome.UP_TO_DATE))
+        assertEquals(TaskOutcome.SUCCESS, result.task(":detekt")?.outcome)
+    }
 }
