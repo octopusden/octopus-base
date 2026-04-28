@@ -650,5 +650,12 @@ class OctopusQualityPluginFunctionalTest {
             result.output.contains("build.gradle.kts"),
             "Expected ktlintCheck failure to mention build.gradle.kts; got: ${result.output}",
         )
+        // Rule-message assertion guards against false positives where "build.gradle.kts"
+        // appears in unrelated error output (deprecation warnings, stack traces).
+        // ktlint's PLAIN reporter prints the human message, not the rule id.
+        assertTrue(
+            result.output.contains("Wildcard import"),
+            "Expected ktlintCheck failure to fire the wildcard-import rule; got: ${result.output}",
+        )
     }
 }
