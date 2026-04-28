@@ -259,14 +259,14 @@ internal object SubprojectConfigurer {
         // `jacocoTestCoverageVerification` triplet. Coupling every Test task to every
         // JacocoReport (and vice versa) over-couples projects with extra source sets
         // (e.g. `integrationTest` + `jacocoIntegrationTestReport`).
-        val testTask = project.tasks.withType(org.gradle.api.tasks.testing.Test::class.java)
-            .matching { it.name == "test" }
+        val testTasks = project.tasks.withType(org.gradle.api.tasks.testing.Test::class.java)
+        val defaultTestTask = testTasks.matching { it.name == "test" }
         val defaultReportTask = reportTasks.matching { it.name == "jacocoTestReport" }
         val defaultVerifyTask = verifyTasks.matching { it.name == "jacocoTestCoverageVerification" }
 
-        testTask.configureEach { task -> task.finalizedBy(defaultReportTask) }
-        defaultReportTask.configureEach { task -> task.dependsOn(testTask) }
-        defaultVerifyTask.configureEach { task -> task.dependsOn(testTask) }
+        defaultTestTask.configureEach { task -> task.finalizedBy(defaultReportTask) }
+        defaultReportTask.configureEach { task -> task.dependsOn(defaultTestTask) }
+        defaultVerifyTask.configureEach { task -> task.dependsOn(defaultTestTask) }
 
         reportTasks.configureEach { task ->
             task.reports.xml.required
