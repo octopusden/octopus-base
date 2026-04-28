@@ -213,10 +213,12 @@ internal object SubprojectConfigurer {
                 it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.PLAIN)
                 it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.CHECKSTYLE)
             }
-            val baselineFile = File(project.projectDir, "ktlint-baseline.xml")
-            if (baselineFile.exists()) {
-                ext.baseline.set(baselineFile)
-            }
+            // Set the baseline path unconditionally — ktlint-gradle 14.0.1 treats a
+            // missing baseline file as empty at task-execution time, so this is safe on
+            // a fresh checkout. Side effect: `ktlintGenerateBaseline` writes to this
+            // convention path directly, so consumers don't need to relocate the file
+            // from ktlint-gradle's own default (`config/ktlint/baseline.xml`).
+            ext.baseline.set(File(project.projectDir, "ktlint-baseline.xml"))
             ext.filter {
                 it.exclude("**/generated/**")
                 it.exclude("**/build/**")

@@ -564,13 +564,11 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         // Phase 1: capture the violation into a real baseline file via ktlint-gradle's
-        // own task — avoids us hand-rolling the baseline XML schema. ktlint-gradle 14.0.1
-        // writes to its default path (config/ktlint/baseline.xml); the convention plugin
-        // expects the project-root convention path, so we copy.
+        // own task — avoids us hand-rolling the baseline XML schema. The convention
+        // plugin sets ext.baseline to <projectDir>/ktlint-baseline.xml unconditionally,
+        // so ktlintGenerateBaseline writes there directly (no copy needed).
         runner("ktlintGenerateBaseline").build()
-        val generatedBaseline = File(projectDir, "config/ktlint/baseline.xml")
-        assertTrue(generatedBaseline.exists(), "ktlintGenerateBaseline did not write its default baseline")
-        generatedBaseline.copyTo(File(projectDir, "ktlint-baseline.xml"))
+        assertTrue(File(projectDir, "ktlint-baseline.xml").exists(), "baseline not written to convention path")
 
         // Phase 2: with the baseline file pre-existing on the next Gradle invocation,
         // the convention plugin must wire it BEFORE ktlint-gradle reads its task config.
