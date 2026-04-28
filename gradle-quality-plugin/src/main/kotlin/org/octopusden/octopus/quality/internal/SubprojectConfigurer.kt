@@ -248,20 +248,31 @@ internal object SubprojectConfigurer {
         extension: OctopusQualityExtension,
     ) {
         project.pluginManager.apply("jacoco")
-        val testTasks = project.tasks.withType(org.gradle.api.tasks.testing.Test::class.java)
+        // Type-based filtering applies report config (XML+HTML, violation rules) to ANY
+        // JacocoReport / JacocoCoverageVerification instance the consumer registers.
         val reportTasks = project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoReport::class.java)
         val verifyTasks = project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java)
 
-        testTasks.configureEach { testTask -> testTask.finalizedBy(reportTasks) }
+        // Dependency wiring is scoped to the standard `test` ↔ `jacocoTestReport` /
+        // `jacocoTestCoverageVerification` triplet. Coupling every Test task to every
+        // JacocoReport (and vice versa) over-couples projects with extra source sets
+        // (e.g. `integrationTest` + `jacocoIntegrationTestReport`).
+        val testTask = project.tasks.withType(org.gradle.api.tasks.testing.Test::class.java)
+            .matching { it.name == "test" }
+        val defaultReportTask = reportTasks.matching { it.name == "jacocoTestReport" }
+        val defaultVerifyTask = verifyTasks.matching { it.name == "jacocoTestCoverageVerification" }
+
+        testTask.configureEach { task -> task.finalizedBy(defaultReportTask) }
+        defaultReportTask.configureEach { task -> task.dependsOn(testTask) }
+        defaultVerifyTask.configureEach { task -> task.dependsOn(testTask) }
+
         reportTasks.configureEach { task ->
-            task.dependsOn(testTasks)
             task.reports.xml.required
                 .set(true)
             task.reports.html.required
                 .set(true)
         }
         verifyTasks.configureEach { task ->
-            task.dependsOn(testTasks)
             task.violationRules.rule { rule ->
                 rule.element = "BUNDLE"
                 rule.limit { limit ->
