@@ -9,24 +9,40 @@ import java.io.File
  * Configures quality tool plugins on individual subprojects (or root if single-module)
  * based on detected languages.
  */
+@Suppress("TooManyFunctions") // One configurer per supported tool — splitting would just relocate the count.
 internal object SubprojectConfigurer {
-    private const val CHECKSTYLE_VERSION = "10.17.0"
-    private const val PMD_VERSION = "6.55.0"
+    /**
+     * Phase 1 — synchronous, runs during root script evaluation (before any subproject
+     * `afterEvaluate`). Registers `plugins.withId(...)` callbacks for tools whose tasks
+     * read settings during their own configuration (ktlint, detekt). Settings made here
+     * land before the upstream tool wires its tasks, so things like baselines actually
+     * take effect on the first build.
+     *
+     * Inside the registered callbacks, NEVER call `.get()` on consumer-extension
+     * properties — the consumer's `octopusQuality { ... }` block may not have been
+     * processed yet. Use lazy `Provider` wiring (`.map { ... }`) instead, or defer the
+     * setting to the afterEvaluate path (see `configureDetektFailureFlag`).
+     */
+    fun registerEarly(
+        project: Project,
+        rootProject: Project,
+        extension: OctopusQualityExtension,
+    ) {
+        val configDir = resolveConfigDir(rootProject)
+        project.plugins.withId("org.jlleitschuh.gradle.ktlint") {
+            configureKtlint(project, extension)
+        }
+        project.plugins.withId("io.gitlab.arturbosch.detekt") {
+            configureDetektEarly(project, configDir)
+        }
+    }
 
     fun configure(
         project: Project,
         rootProject: Project,
         extension: OctopusQualityExtension,
     ) {
-        val configDir =
-            rootProject.extensions.extraProperties.let { extra ->
-                val key = "octopusQuality.configDir"
-                if (extra.has(key)) {
-                    extra.get(key) as File
-                } else {
-                    ConfigExtractor.extractTo(rootProject).also { extra.set(key, it) }
-                }
-            }
+        val configDir = resolveConfigDir(rootProject)
         val languages = LanguageDetector.detect(project)
 
         // Java/Groovy built-in tools: always safe to apply (Gradle core, no external classloader)
@@ -40,14 +56,13 @@ internal object SubprojectConfigurer {
             configureCodeNarc(project, configDir, extension)
         }
 
-        // Kotlin tools (detekt, ktlint): compileOnly deps — consumer provides versions
-        // via pluginManagement. We only configure when the consumer has applied them.
+        // Detekt's `ignoreFailures` is a plain `var Boolean` (no lazy Provider hook in
+        // 1.23.x), so the failure flag must be applied AFTER the consumer's
+        // `octopusQuality { ... }` block — i.e. from this afterEvaluate path. Everything
+        // else for detekt (config, baseline, reports) is set early via `registerEarly`.
         if (languages.hasKotlin) {
             project.plugins.withId("io.gitlab.arturbosch.detekt") {
-                configureDetekt(project, configDir, extension)
-            }
-            project.plugins.withId("org.jlleitschuh.gradle.ktlint") {
-                configureKtlint(project, extension)
+                configureDetektFailureFlag(project, extension)
             }
         }
 
@@ -64,6 +79,16 @@ internal object SubprojectConfigurer {
         }
     }
 
+    private fun resolveConfigDir(rootProject: Project): File =
+        rootProject.extensions.extraProperties.let { extra ->
+            val key = "octopusQuality.configDir"
+            if (extra.has(key)) {
+                extra.get(key) as File
+            } else {
+                ConfigExtractor.extractTo(rootProject).also { extra.set(key, it) }
+            }
+        }
+
     private fun configureCheckstyle(
         project: Project,
         configDir: File,
@@ -71,7 +96,7 @@ internal object SubprojectConfigurer {
     ) {
         project.pluginManager.apply("checkstyle")
         project.extensions.configure(org.gradle.api.plugins.quality.CheckstyleExtension::class.java) { ext ->
-            ext.toolVersion = CHECKSTYLE_VERSION
+            ext.toolVersion = BuildConstants.CHECKSTYLE_VERSION
             ext.configFile = File(configDir, "checkstyle.xml")
             ext.isShowViolations = true
             ext.isIgnoreFailures = !extension.java.failOnViolation.get()
@@ -91,7 +116,7 @@ internal object SubprojectConfigurer {
     ) {
         project.pluginManager.apply("pmd")
         project.extensions.configure(org.gradle.api.plugins.quality.PmdExtension::class.java) { ext ->
-            ext.toolVersion = PMD_VERSION
+            ext.toolVersion = BuildConstants.PMD_VERSION
             ext.isConsoleOutput = true
             ext.incrementalAnalysis.set(true)
             ext.isIgnoreFailures = !extension.java.failOnViolation.get()
@@ -128,12 +153,17 @@ internal object SubprojectConfigurer {
         }
     }
 
-    private fun configureDetekt(
+    /**
+     * Detekt's settings that must be in place before its tasks are wired (config,
+     * baseline, reports). Runs from a `plugins.withId` callback during root script
+     * evaluation — never call `.get()` on consumer extension properties here.
+     * `ignoreFailures` is intentionally NOT set here (no lazy Provider hook exists in
+     * detekt-gradle-plugin 1.23.x); see `configureDetektFailureFlag`.
+     */
+    private fun configureDetektEarly(
         project: Project,
         configDir: File,
-        extension: OctopusQualityExtension,
     ) {
-        // Plugin already applied by consumer — we only configure it
         project.extensions.configure(io.gitlab.arturbosch.detekt.extensions.DetektExtension::class.java) { ext ->
             ext.buildUponDefaultConfig = true
             ext.allRules = false
@@ -142,7 +172,6 @@ internal object SubprojectConfigurer {
             if (baselineFile.exists()) {
                 ext.baseline = baselineFile
             }
-            ext.ignoreFailures = !extension.kotlin.failOnViolation.get()
         }
         project.tasks.withType(io.gitlab.arturbosch.detekt.Detekt::class.java).configureEach { task ->
             task.reports {
@@ -154,13 +183,31 @@ internal object SubprojectConfigurer {
         }
     }
 
+    /**
+     * Detekt's `DetektExtension.ignoreFailures` is a plain `var Boolean` with no lazy
+     * Provider hook, so it must be set after the consumer's `octopusQuality { ... }`
+     * block has been processed — i.e. from the afterEvaluate path.
+     */
+    private fun configureDetektFailureFlag(
+        project: Project,
+        extension: OctopusQualityExtension,
+    ) {
+        project.extensions.configure(io.gitlab.arturbosch.detekt.extensions.DetektExtension::class.java) { ext ->
+            ext.ignoreFailures = !extension.kotlin.failOnViolation.get()
+        }
+    }
+
+    /**
+     * Runs from a `plugins.withId` callback during root script evaluation — never call
+     * `.get()` on consumer extension properties here; use `.map { }` so the consumer's
+     * `octopusQuality { ... }` override is observed when the property is finally read.
+     */
     private fun configureKtlint(
         project: Project,
         extension: OctopusQualityExtension,
     ) {
-        // Plugin already applied by consumer — we only configure it
         project.extensions.configure(org.jlleitschuh.gradle.ktlint.KtlintExtension::class.java) { ext ->
-            ext.ignoreFailures.set(!extension.kotlin.failOnViolation.get())
+            ext.ignoreFailures.set(extension.kotlin.failOnViolation.map { !it })
             ext.outputToConsole.set(true)
             ext.reporters {
                 it.reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.PLAIN)
@@ -173,17 +220,9 @@ internal object SubprojectConfigurer {
             ext.filter {
                 it.exclude("**/generated/**")
                 it.exclude("**/build/**")
-                it.include("**/src/**/*.kt")
+                it.include("**/*.kt", "**/*.kts")
             }
         }
-        // Disable Kotlin script checks
-        project.tasks
-            .matching { task ->
-                task.name == "runKtlintCheckOverKotlinScripts" ||
-                    task.name == "ktlintKotlinScriptCheck" ||
-                    task.name == "runKtlintFormatOverKotlinScripts" ||
-                    task.name == "ktlintKotlinScriptFormat"
-            }.configureEach { it.enabled = false }
     }
 
     private fun configureCodeNarc(
@@ -209,33 +248,29 @@ internal object SubprojectConfigurer {
         extension: OctopusQualityExtension,
     ) {
         project.pluginManager.apply("jacoco")
-        project.tasks.matching { it.name == "test" }.configureEach { testTask ->
-            testTask.finalizedBy(project.tasks.matching { it.name == "jacocoTestReport" })
+        val testTasks = project.tasks.withType(org.gradle.api.tasks.testing.Test::class.java)
+        val reportTasks = project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoReport::class.java)
+        val verifyTasks = project.tasks.withType(org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java)
+
+        testTasks.configureEach { testTask -> testTask.finalizedBy(reportTasks) }
+        reportTasks.configureEach { task ->
+            task.dependsOn(testTasks)
+            task.reports.xml.required
+                .set(true)
+            task.reports.html.required
+                .set(true)
         }
-        project.tasks
-            .withType(org.gradle.testing.jacoco.tasks.JacocoReport::class.java)
-            .matching { it.name == "jacocoTestReport" }
-            .configureEach { task ->
-                task.dependsOn(project.tasks.matching { it.name == "test" })
-                task.reports.xml.required
-                    .set(true)
-                task.reports.html.required
-                    .set(true)
-            }
-        project.tasks
-            .withType(org.gradle.testing.jacoco.tasks.JacocoCoverageVerification::class.java)
-            .matching { it.name == "jacocoTestCoverageVerification" }
-            .configureEach { task ->
-                task.dependsOn(project.tasks.matching { it.name == "test" })
-                task.violationRules.rule { rule ->
-                    rule.element = "BUNDLE"
-                    rule.limit { limit ->
-                        limit.counter = "LINE"
-                        limit.value = "COVEREDRATIO"
-                        limit.minimum = extension.coverage.minimumLineCoverage.get()
-                    }
+        verifyTasks.configureEach { task ->
+            task.dependsOn(testTasks)
+            task.violationRules.rule { rule ->
+                rule.element = "BUNDLE"
+                rule.limit { limit ->
+                    limit.counter = "LINE"
+                    limit.value = "COVEREDRATIO"
+                    limit.minimum = extension.coverage.minimumLineCoverage.get()
                 }
             }
+        }
     }
 
     @Suppress("UnusedParameter")

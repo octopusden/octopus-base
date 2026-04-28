@@ -24,6 +24,11 @@ on:
         required: true
         type: number
         default: 30
+      actionlint_image:
+        description: 'Docker image (with tag) used for actionlint workflow linting'
+        required: false
+        type: string
+        default: rhysd/actionlint:1.7.7
 
 permissions:
   contents: read
@@ -77,13 +82,16 @@ jobs:
   workflow-lint:
     name: workflow-lint
     runs-on: ubuntu-latest
+    # `pull_request` triggers cannot supply inputs, so default explicitly.
+    env:
+      ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.7' }}
     steps:
       - uses: actions/checkout@v4
       - name: actionlint
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --entrypoint sh -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -lc '
+          docker run --rm --entrypoint sh -v "$PWD:/repo" -w /repo "$ACTIONLINT_IMAGE" -lc '
             set -euo pipefail
             actionlint -color \
               -ignore "the runner of \".+\" action is too old to run on GitHub Actions" \

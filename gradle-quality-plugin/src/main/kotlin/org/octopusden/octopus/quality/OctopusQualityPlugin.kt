@@ -55,17 +55,26 @@ class OctopusQualityPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create("octopusQuality", OctopusQualityExtension::class.java)
 
-        // Configure subprojects after they are evaluated (plugins and source sets resolved).
-        // Use subproject.afterEvaluate so that the consumer's build.gradle.kts has been processed.
-        if (project.subprojects.isEmpty()) {
-            project.afterEvaluate {
-                SubprojectConfigurer.configure(project, project, extension)
+        val targets =
+            if (project.subprojects.isEmpty()) {
+                listOf(project)
+            } else {
+                project.allprojects.filter { it != project }
             }
-        } else {
-            project.allprojects.filter { it != project }.forEach { sub ->
-                sub.afterEvaluate {
-                    SubprojectConfigurer.configure(sub, project, extension)
-                }
+
+        // Phase 1 — synchronous, BEFORE subproject scripts evaluate. Registers
+        // `plugins.withId(...)` callbacks for ktlint/detekt so that settings whose
+        // upstream tools read them during their own configuration (notably ktlint's
+        // baseline) actually land before task wiring. Lazy `Provider` mapping is used
+        // for any consumer-driven property — never `.get()` here.
+        targets.forEach { sub -> SubprojectConfigurer.registerEarly(sub, project, extension) }
+
+        // Phase 2 — afterEvaluate for source-set-dependent wiring (LanguageDetector,
+        // checkstyle/pmd/spotbugs/codenarc/jacoco/kover, and detekt's eager-Boolean
+        // `ignoreFailures` which has no lazy hook in detekt-gradle 1.23.x).
+        targets.forEach { sub ->
+            sub.afterEvaluate {
+                SubprojectConfigurer.configure(sub, project, extension)
             }
         }
 
