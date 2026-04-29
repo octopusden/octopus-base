@@ -36,6 +36,16 @@ on:
         required: false
         type: string
         default: ''
+      octopus_test_repository:
+        description: 'GitHub owner/repo of the consumer test repository to verify against'
+        required: false
+        type: string
+        default: octopusden/octopus-test
+      poll_interval_seconds:
+        description: 'Seconds to wait between consumer-workflow status polls'
+        required: false
+        type: number
+        default: 15
   workflow_call:
     inputs:
       enabled:
@@ -62,6 +72,14 @@ on:
         required: false
         type: string
         default: ''
+      octopus_test_repository:
+        required: false
+        type: string
+        default: octopusden/octopus-test
+      poll_interval_seconds:
+        required: false
+        type: number
+        default: 15
     secrets:
       octopus_test_push_token:
         required: false
@@ -73,7 +91,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     env:
-      OCTOPUS_TEST_REPOSITORY: octopusden/octopus-test
+      OCTOPUS_TEST_REPOSITORY: ${{ inputs.octopus_test_repository }}
       REQUIRED_WORKFLOWS_JSON: '["Merge Gate"]'
       OPTIONAL_WORKFLOWS_JSON: '[]'
       # Uppercase fallback keeps manual workflow_dispatch compatible with repository-level secret.
@@ -199,6 +217,7 @@ jobs:
         env:
           GH_TOKEN: ${{ env.OCTOPUS_TEST_PUSH_TOKEN }}
           TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          POLL_INTERVAL_SECONDS: ${{ inputs.poll_interval_seconds }}
           VERIFY_BRANCH: ${{ steps.context.outputs.verify_branch }}
           VERIFY_SHA: ${{ steps.push.outputs.verify_sha }}
         run: |
@@ -241,7 +260,7 @@ jobs:
                 -r '[ $required[] as $workflow | select(($runs | map(.workflowName) | index($workflow)) | not) ] | join(", ")' \
               )"
               echo "Waiting for workflow runs to appear (found ${found_count}/${expected_count}). Missing: ${missing_workflows}"
-              sleep 15
+              sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
 
@@ -249,7 +268,7 @@ jobs:
             if (( required_pending_count > 0 )); then
               pending_required="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${required_runs}")"
               echo "Waiting for required workflows to complete (pending ${required_pending_count}): ${pending_required}"
-              sleep 15
+              sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
 
@@ -259,7 +278,7 @@ jobs:
             if [[ "${optional_stabilized}" != "true" ]]; then
               optional_stabilized=true
               echo "Required workflows completed. Waiting one extra poll cycle for optional workflows."
-              sleep 15
+              sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
 
@@ -272,7 +291,7 @@ jobs:
             if (( pending_count > 0 )); then
               pending_workflows="$(jq -r '[.[] | select(.status != "completed") | .workflowName] | join(", ")' <<<"${matching_runs}")"
               echo "Waiting for workflows to complete (pending ${pending_count}): ${pending_workflows}"
-              sleep 15
+              sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
 

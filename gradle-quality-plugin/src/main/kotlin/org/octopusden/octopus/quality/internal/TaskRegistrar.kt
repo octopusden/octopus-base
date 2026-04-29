@@ -11,6 +11,15 @@ import org.octopusden.octopus.quality.OctopusQualityExtension
  * Called from `gradle.projectsEvaluated` so all subproject plugins and tasks are already resolved.
  */
 internal object TaskRegistrar {
+    // Kover does not expose stable public types for these report tasks, so type-based
+    // matching is not viable. Names are extracted to constants so a Kover rename
+    // surfaces in one place; `dependOnExpectedTask` logs a warning when the named
+    // task is absent so silent breakage doesn't happen on a tool upgrade.
+    private const val KOVER_XML_REPORT = "koverXmlReport"
+    private const val KOVER_VERIFY = "koverVerify"
+    private const val KOVER_MERGED_XML_REPORT = "koverMergedXmlReport"
+    private const val KOVER_MERGED_VERIFY = "koverMergedVerify"
+
     fun register(
         rootProject: Project,
         extension: OctopusQualityExtension,
@@ -98,8 +107,8 @@ internal object TaskRegistrar {
                         dependOnIfExists(task, project, "jacocoTestCoverageVerification", excludedTasks)
                     }
                     CoverageExtension.Tool.KOVER -> {
-                        dependOnIfExists(task, project, "koverXmlReport", excludedTasks)
-                        dependOnIfExists(task, project, "koverVerify", excludedTasks)
+                        dependOnExpectedTask(task, project, KOVER_XML_REPORT, excludedTasks)
+                        dependOnExpectedTask(task, project, KOVER_VERIFY, excludedTasks)
                     }
                     else -> {}
                 }
@@ -112,10 +121,14 @@ internal object TaskRegistrar {
                 task.dependsOn("jacocoOverallCoverageVerification")
             }
             if (coverageTool == CoverageExtension.Tool.KOVER) {
-                dependOnRootIfExists(task, rootProject, "koverMergedXmlReport")
-                dependOnRootIfExists(task, rootProject, "koverXmlReport")
-                dependOnRootIfExists(task, rootProject, "koverMergedVerify")
-                dependOnRootIfExists(task, rootProject, "koverVerify")
+                // Either merged-* (multi-module) or single-module — exactly one set is
+                // expected to exist. Use the silent helper here so the absent half
+                // doesn't fire a spurious warning. If BOTH are missing, the per-project
+                // `dependOnExpectedTask` calls above will already have warned.
+                dependOnRootIfExists(task, rootProject, KOVER_MERGED_XML_REPORT)
+                dependOnRootIfExists(task, rootProject, KOVER_XML_REPORT)
+                dependOnRootIfExists(task, rootProject, KOVER_MERGED_VERIFY)
+                dependOnRootIfExists(task, rootProject, KOVER_VERIFY)
             }
         }
     }
@@ -278,6 +291,30 @@ internal object TaskRegistrar {
         if (taskName in excludedTasks || fullPath in excludedTasks) return
         if (taskName in project.tasks.names) {
             task.dependsOn(fullPath)
+        }
+    }
+
+    /**
+     * Like `dependOnIfExists` but logs a warning when the named task is absent and
+     * was not explicitly excluded. Use for tasks that the convention plugin requires
+     * by name (e.g. Kover's report tasks) so that an upstream rename surfaces loudly
+     * instead of becoming a silent no-op.
+     */
+    private fun dependOnExpectedTask(
+        task: Task,
+        project: Project,
+        taskName: String,
+        excludedTasks: Set<String>,
+    ) {
+        val fullPath = if (project.path == ":") ":$taskName" else "${project.path}:$taskName"
+        if (taskName in excludedTasks || fullPath in excludedTasks) return
+        if (taskName in project.tasks.names) {
+            task.dependsOn(fullPath)
+        } else {
+            project.logger.warn(
+                "octopusQuality: expected task '$taskName' not found on project '${project.path}'. " +
+                    "If the upstream tool renamed it, update the convention plugin.",
+            )
         }
     }
 

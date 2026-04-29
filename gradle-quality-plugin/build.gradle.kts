@@ -14,6 +14,8 @@ val detektVersion: String by project
 val ktlintGradleVersion: String by project
 val koverVersion: String by project
 val spotbugsGradleVersion: String by project
+val checkstyleVersion: String by project
+val pmdVersion: String by project
 
 repositories {
     mavenCentral()
@@ -65,6 +67,32 @@ kotlin {
     // Repos with bytecode target 1.8 (octopus-rm-gradle-plugin, octopus-license-gradle-plugin)
     // run CI on JDK 11+ — only bytecode target stays 1.8, not the build JVM.
     jvmToolchain(11)
+}
+
+// Surface gradle.properties versions to plugin runtime via a generated Kotlin source.
+val generateBuildConstants by tasks.registering {
+    val outDir = layout.buildDirectory.dir("generated/source/buildConstants/kotlin")
+    outputs.dir(outDir)
+    inputs.property("checkstyleVersion", checkstyleVersion)
+    inputs.property("pmdVersion", pmdVersion)
+    doLast {
+        val pkgDir = outDir.get().dir("org/octopusden/octopus/quality/internal").asFile
+        pkgDir.mkdirs()
+        File(pkgDir, "BuildConstants.kt").writeText(
+            """
+            package org.octopusden.octopus.quality.internal
+
+            internal object BuildConstants {
+                const val CHECKSTYLE_VERSION = "$checkstyleVersion"
+                const val PMD_VERSION = "$pmdVersion"
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+}
+
+kotlin.sourceSets.named("main") {
+    kotlin.srcDir(generateBuildConstants)
 }
 
 detekt {

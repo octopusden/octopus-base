@@ -532,4 +532,130 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(result.task(":clean")?.outcome in setOf(TaskOutcome.SUCCESS, TaskOutcome.UP_TO_DATE))
         assertEquals(TaskOutcome.SUCCESS, result.task(":detekt")?.outcome)
     }
+
+    // ---------------------------------------------------------------
+    // Regression A: ktlint baseline must take effect on the first build cycle.
+    // Locks in the timing fix — pre-fix, `ext.baseline.set(...)` ran inside
+    // subproject.afterEvaluate, too late for ktlint-gradle 14.0.1 to wire the
+    // baseline into its check tasks, so a baselined violation still failed the build.
+    // ---------------------------------------------------------------
+    @Test
+    fun `ktlint baselined violation passes after clean - locks in timing fix`() {
+        settingsFile(kotlinSettings("test-ktlint-baseline"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            tasks.named("ktlintCheck") { mustRunAfter(tasks.named("clean")) }
+            """.trimIndent(),
+        )
+        // Missing final newline → ktlint flags `standard:final-newline`.
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Bad.kt",
+            "package com.example\nfun foo() = 1",
+        )
+
+        // Phase 1: capture the violation into a real baseline file via ktlint-gradle's
+        // own task — avoids us hand-rolling the baseline XML schema. The convention
+        // plugin sets ext.baseline to <projectDir>/ktlint-baseline.xml unconditionally,
+        // so ktlintGenerateBaseline writes there directly (no copy needed).
+        runner("ktlintGenerateBaseline").build()
+        assertTrue(File(projectDir, "ktlint-baseline.xml").exists(), "baseline not written to convention path")
+
+        // Phase 2: with the baseline file pre-existing on the next Gradle invocation,
+        // the convention plugin must wire it BEFORE ktlint-gradle reads its task config.
+        // Pre-fix: this would still fail with the baselined violation reported.
+        val result = runner("clean", "ktlintCheck").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":ktlintCheck")?.outcome)
+    }
+
+    // ---------------------------------------------------------------
+    // Regression B: an unbaselined violation must fail the build when the consumer
+    // sets `failOnViolation = true`. Locks in lazy `Provider` wiring — pre-fix, an
+    // eager `.get()` inside the early withId callback would freeze the convention
+    // default (`false`), translating the consumer's `true` override into
+    // `ignoreFailures = true` and silently passing.
+    // ---------------------------------------------------------------
+    @Test
+    fun `ktlint unbaselined violation fails when failOnViolation is true - locks in lazy provider wiring`() {
+        settingsFile(kotlinSettings("test-ktlint-fail-on-violation"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            tasks.named("ktlintCheck") { mustRunAfter(tasks.named("clean")) }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Bad.kt",
+            "package com.example\nfun foo() = 1",
+        )
+
+        val result = runner("clean", "ktlintCheck").buildAndFail()
+        assertTrue(
+            result.output.contains("Bad.kt"),
+            "Expected ktlint failure output to mention Bad.kt; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Regression C: ktlint must inspect *.gradle.kts files. Locks in the filter
+    // broadening (`include("**/*.kt", "**/*.kts")`) and the removal of the
+    // hardcoded ktlint script-task disable. Pre-fix, build scripts were silently
+    // skipped — a violation in `build.gradle.kts` would never be reported.
+    // ---------------------------------------------------------------
+    @Test
+    fun `ktlintCheck inspects build_gradle_kts violations - locks in filter broadening`() {
+        settingsFile(kotlinSettings("test-ktlint-kts-coverage"))
+        // Build script with a wildcard import (violates `no-wildcard-imports`).
+        // Wildcard imports are flagged on .kts as on .kt; the settings file has none.
+        buildFile(
+            """
+            import java.util.*
+
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            // Reference UUID so the Kotlin compiler doesn't strip the import.
+            val unused: UUID? = null
+            tasks.named("ktlintCheck") { mustRunAfter(tasks.named("clean")) }
+            """.trimIndent(),
+        )
+
+        val result = runner("clean", "ktlintCheck").buildAndFail()
+        assertTrue(
+            result.output.contains("build.gradle.kts"),
+            "Expected ktlintCheck failure to mention build.gradle.kts; got: ${result.output}",
+        )
+        // Rule-message assertion guards against false positives where "build.gradle.kts"
+        // appears in unrelated error output (deprecation warnings, stack traces).
+        // ktlint's PLAIN reporter prints the human message, not the rule id.
+        assertTrue(
+            result.output.contains("Wildcard import"),
+            "Expected ktlintCheck failure to fire the wildcard-import rule; got: ${result.output}",
+        )
+    }
 }
