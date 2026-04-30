@@ -18,6 +18,7 @@ internal object ConfigExtractor {
             "checkstyle.xml",
             "pmd-ruleset.xml",
             "codenarc.groovy",
+            ".editorconfig",
         )
 
     /**

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 
+@Suppress("LargeClass") // Functional smoke-tests for the whole plugin surface — splitting would just relocate cases.
 class OctopusQualityPluginFunctionalTest {
     @TempDir
     lateinit var projectDir: File
@@ -656,6 +657,169 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(
             result.output.contains("Wildcard import"),
             "Expected ktlintCheck failure to fire the wildcard-import rule; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // #136 D: bundled .editorconfig fixes max_line_length at 140 — a 150-char
+    // source line must fail ktlintCheck. Combined with the consumer override
+    // test below, this locks in plugin-config-is-authoritative semantics.
+    // ---------------------------------------------------------------
+    @Test
+    fun `bundled editorconfig sets max_line_length to 140`() {
+        settingsFile(kotlinSettings("test-editorconfig-max-line-length"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent() + "\n",
+        )
+        // Long arithmetic expression — non-comment code so ktlint can't apply any
+        // single-string-literal or comment-only exemption. Line length below works
+        // out to 153 chars, well over 140.
+        val longExpr = (1..30).joinToString(" + ") { it.toString() }
+        writeKotlinFile(
+            "src/main/kotlin/com/example/A.kt",
+            "package com.example\n\nfun a(): Int = $longExpr\n",
+        )
+
+        val result = runner("ktlintCheck").buildAndFail()
+        assertTrue(
+            result.output.contains("Exceeded max line length (140)"),
+            "Expected ktlint violation against bundled max_line_length=140; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // #136 E: bundled .editorconfig disables multiline-expression-wrapping.
+    // Fixture lives in build.gradle.kts so the test simultaneously proves the
+    // rule is off AND that bundled config is applied to .kts files (#138 broadened
+    // the ktlint filter to include *.kts; this test confirms our bundled values
+    // ride along the same selector).
+    // ---------------------------------------------------------------
+    @Test
+    fun `bundled editorconfig disables multiline-expression-wrapping on kts files`() {
+        settingsFile(kotlinSettings("test-editorconfig-disable-rule"))
+        // The trailing `listOf(...)` form on the right-hand side of `=` is the
+        // canonical violation for ktlint_standard_multiline-expression-wrapping
+        // — pre-fix it would force the call onto a new line. Bundled config
+        // disables the rule, so this build script must lint clean.
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            val triggerList: List<String> = listOf(
+                "a",
+                "b",
+            )
+            // Reference the val so the Kotlin compiler doesn't strip it as unused.
+            tasks.register("printTrigger") { doLast { println(triggerList) } }
+            """.trimIndent() + "\n",
+        )
+
+        val result = runner("ktlintCheck").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":ktlintCheck")?.outcome)
+    }
+
+    // ---------------------------------------------------------------
+    // #136 F: plugin-bundled values take precedence over a consumer-level
+    // <projectDir>/.editorconfig. ktlint-gradle's additionalEditorconfig is
+    // applied as an EditorConfigOverride, so a 100-char line must PASS even
+    // though the local .editorconfig sets max_line_length=80 — plugin's 140
+    // wins. Implicitly also asserts startup doesn't throw
+    // EditorConfigPropertyNotFoundException (would occur if the parser leaked
+    // a non-ktlint key like `charset`).
+    // ---------------------------------------------------------------
+    @Test
+    fun `plugin editorconfig values override consumer-level dot-editorconfig`() {
+        settingsFile(kotlinSettings("test-editorconfig-plugin-wins"))
+        File(projectDir, ".editorconfig").writeText(
+            """
+            [*.{kt,kts}]
+            max_line_length = 80
+            """.trimIndent(),
+        )
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent() + "\n",
+        )
+        // 100 chars: violates local 80, well within plugin's 140.
+        val line100 = "// " + "x".repeat(97)
+        writeKotlinFile(
+            "src/main/kotlin/com/example/A.kt",
+            "package com.example\n\nfun a() {\n    $line100\n}\n",
+        )
+
+        val result = runner("ktlintCheck").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":ktlintCheck")?.outcome)
+    }
+
+    // ---------------------------------------------------------------
+    // #136 G: a consumer can still override plugin-bundled values from their
+    // build.gradle.kts via `ktlint { additionalEditorconfig.put(...) }` —
+    // MapProperty last-set-wins semantics. Documents the supported escape
+    // hatch: a 130-char line is within plugin's 140 limit but breaks the
+    // consumer's lowered 100 limit.
+    // ---------------------------------------------------------------
+    @Test
+    fun `consumer can override plugin editorconfig via build script`() {
+        settingsFile(kotlinSettings("test-editorconfig-consumer-override"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            ktlint {
+                additionalEditorconfig.put("max_line_length", "100")
+            }
+            """.trimIndent() + "\n",
+        )
+        // Long arithmetic expression — non-comment code so ktlint can't apply any
+        // single-literal or comment-only exemption. 113 chars: passes plugin's
+        // 140, breaks consumer's 100.
+        val longExpr = (1..22).joinToString(" + ") { it.toString() }
+        writeKotlinFile(
+            "src/main/kotlin/com/example/A.kt",
+            "package com.example\n\nfun a(): Int = $longExpr\n",
+        )
+
+        val result = runner("ktlintCheck").buildAndFail()
+        assertTrue(
+            result.output.contains("max line length"),
+            "Expected ktlint violation against consumer override; got: ${result.output}",
         )
     }
 }

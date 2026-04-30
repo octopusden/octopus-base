@@ -30,7 +30,7 @@ internal object SubprojectConfigurer {
     ) {
         val configDir = resolveConfigDir(rootProject)
         project.plugins.withId("org.jlleitschuh.gradle.ktlint") {
-            configureKtlint(project, extension)
+            configureKtlint(project, configDir, extension)
         }
         project.plugins.withId("io.gitlab.arturbosch.detekt") {
             configureDetektEarly(project, configDir)
@@ -204,8 +204,20 @@ internal object SubprojectConfigurer {
      */
     private fun configureKtlint(
         project: Project,
+        configDir: File,
         extension: OctopusQualityExtension,
     ) {
+        // Bundled .editorconfig is the authoritative source for ktlint editorconfig
+        // values across the org. Parse it once at configuration time and feed the
+        // ktlint-recognized keys into ktlint-gradle's additionalEditorconfig
+        // MapProperty (14.x has no path-based editorconfig API). Fail-fast if the
+        // resource is missing — that means jar packaging dropped the dotfile.
+        val editorConfig = File(configDir, ".editorconfig")
+        require(editorConfig.isFile) {
+            "Bundled .editorconfig missing at ${editorConfig.absolutePath}. " +
+                "Check gradle-quality-plugin resource packaging."
+        }
+        val editorConfigEntries = EditorConfigParser.parseKotlinSection(editorConfig)
         project.extensions.configure(org.jlleitschuh.gradle.ktlint.KtlintExtension::class.java) { ext ->
             ext.ignoreFailures.set(extension.kotlin.failOnViolation.map { !it })
             ext.outputToConsole.set(true)
@@ -224,6 +236,7 @@ internal object SubprojectConfigurer {
                 it.exclude("**/build/**")
                 it.include("**/*.kt", "**/*.kts")
             }
+            ext.additionalEditorconfig.putAll(editorConfigEntries)
         }
     }
 
