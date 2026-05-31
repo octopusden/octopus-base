@@ -45,10 +45,18 @@ internal object SubprojectConfigurer {
         val configDir = resolveConfigDir(rootProject)
         val languages = LanguageDetector.detect(project)
 
-        // Java/Groovy built-in tools: always safe to apply (Gradle core, no external classloader)
+        // Checkstyle/PMD analyse Java *source* — harmless no-ops on modules without `.java`,
+        // so keep them broadly applied. SpotBugs analyses *bytecode* and scans the module's
+        // whole compiled output: when Kotlin is present it reads the Kotlin classes too and
+        // produces ~95% false positives (lateinit / DSL getters / synthetic accessors). Gate it
+        // to modules that have Java and NO Kotlin (Java-only or Java+Groovy qualify — only Kotlin
+        // triggers the false-positive flood). Java 25 / class file v69 support is handled by the
+        // engine pin in configureSpotBugs.
         if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
             configureCheckstyle(project, configDir, extension)
             configurePmd(project, configDir, extension)
+        }
+        if (languages.hasJava && !languages.hasKotlin) {
             configureSpotBugs(project, extension)
         }
 
@@ -137,6 +145,9 @@ internal object SubprojectConfigurer {
     ) {
         project.pluginManager.apply("com.github.spotbugs")
         project.extensions.configure(com.github.spotbugs.snom.SpotBugsExtension::class.java) { ext ->
+            // Pin the analysis engine: the spotbugs-gradle-plugin default (4.8.x) ships ASM 9.7
+            // and aborts on Java 25 bytecode (class file v69). 4.9.x brings ASM 9.9 / BCEL 6.11.
+            ext.toolVersion.set(BuildConstants.SPOTBUGS_VERSION)
             ext.ignoreFailures.set(!extension.java.failOnViolation.get())
             ext.showProgress.set(false)
         }

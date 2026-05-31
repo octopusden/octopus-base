@@ -67,6 +67,7 @@ val detektVersion: String by project
 val ktlintGradleVersion: String by project
 val koverVersion: String by project
 val spotbugsGradleVersion: String by project
+val spotbugsVersion: String by project
 val checkstyleVersion: String by project
 val pmdVersion: String by project
 
@@ -128,6 +129,7 @@ val generateBuildConstants by tasks.registering {
     outputs.dir(outDir)
     inputs.property("checkstyleVersion", checkstyleVersion)
     inputs.property("pmdVersion", pmdVersion)
+    inputs.property("spotbugsVersion", spotbugsVersion)
     doLast {
         val pkgDir = outDir.get().dir("org/octopusden/octopus/quality/internal").asFile
         pkgDir.mkdirs()
@@ -138,6 +140,7 @@ val generateBuildConstants by tasks.registering {
             internal object BuildConstants {
                 const val CHECKSTYLE_VERSION = "$checkstyleVersion"
                 const val PMD_VERSION = "$pmdVersion"
+                const val SPOTBUGS_VERSION = "$spotbugsVersion"
             }
             """.trimIndent() + "\n",
         )
