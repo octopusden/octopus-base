@@ -117,8 +117,9 @@ subprojects {
 //       apply(plugin = "io.gitlab.arturbosch.detekt")
 //       apply(plugin = "org.jlleitschuh.gradle.ktlint")
 //   }
-// Java/Groovy modules need NO extra apply — the convention plugin
-// auto-applies checkstyle, pmd, spotbugs, codenarc based on source dirs.
+// Java/Groovy modules need NO extra apply — the convention plugin auto-applies
+// checkstyle, pmd, codenarc based on source dirs (and spotbugs on modules with
+// Java and no Kotlin — it false-positives on Kotlin bytecode).
 
 // Optional overrides:
 octopusQuality {
@@ -152,10 +153,12 @@ octopusQuality {
 
 | Language detected | Tools configured | Coverage |
 |-------------------|-----------------|----------|
-| Kotlin | detekt + ktlint + checkstyle + pmd + spotbugs | Kover (consumer applies kover plugin) |
-| Java | checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
-| Groovy | codenarc + checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
-| Mixed | All applicable | JaCoCo |
+| Kotlin | detekt + ktlint + checkstyle + pmd | Kover (consumer applies kover plugin) |
+| Java (no Kotlin) | checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
+| Groovy (no Java) | codenarc + checkstyle + pmd | JaCoCo (plugin applies jacoco) |
+| Mixed Java + Kotlin | detekt + ktlint + checkstyle + pmd | JaCoCo |
+
+> **SpotBugs** is wired only on modules that have Java **and no Kotlin** (Java-only or Java+Groovy). It analyses *bytecode* and false-positives heavily on compiled Kotlin (lateinit / DSL getters / synthetic accessors), so any module containing Kotlin is skipped. Checkstyle/PMD are applied broadly but only act on `.java` source.
 
 ### What stays local in each repo
 

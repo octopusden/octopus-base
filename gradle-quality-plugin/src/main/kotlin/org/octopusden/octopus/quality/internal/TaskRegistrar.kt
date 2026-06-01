@@ -45,7 +45,9 @@ internal object TaskRegistrar {
             for (project in targets) {
                 val languages = LanguageDetector.detect(project)
 
-                // Java tools: checkstyle, pmd, spotbugs
+                // checkstyle/pmd are Java-source analysers (no-op without `.java`); spotbugs is
+                // bytecode-based and gated to Java-without-Kotlin modules (it would false-positive
+                // on co-located Kotlin classes) — see SubprojectConfigurer.configure.
                 if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
                     dependOnIfExists(task, project, "checkstyleMain", excludedTasks)
                     dependOnIfExists(task, project, "checkstyleTest", excludedTasks)
@@ -53,10 +55,12 @@ internal object TaskRegistrar {
                     dependOnIfExists(task, project, "pmdMain", excludedTasks)
                     dependOnIfExists(task, project, "pmdTest", excludedTasks)
                     dependOnIfExists(task, project, "pmdIntegrationTest", excludedTasks)
-                    dependOnIfExists(task, project, "spotbugsMain", excludedTasks)
-                    dependOnIfExists(task, project, "spotbugsTest", excludedTasks)
                     dependOnIfExists(task, project, "classes", excludedTasks)
                     dependOnIfExists(task, project, "testClasses", excludedTasks)
+                }
+                if (languages.hasJava && !languages.hasKotlin) {
+                    dependOnIfExists(task, project, "spotbugsMain", excludedTasks)
+                    dependOnIfExists(task, project, "spotbugsTest", excludedTasks)
                 }
 
                 // Kotlin tools: detekt, ktlint

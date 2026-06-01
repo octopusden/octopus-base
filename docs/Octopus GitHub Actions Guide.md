@@ -181,7 +181,7 @@ jobs:
 - `qualityCoverage` task for tests + coverage
 - `securityReport` task for dependency-check report (if dependency-check is enabled)
 
-For mixed JVM repositories (`Java` + `Kotlin` + `Groovy`), keep these tasks language-agnostic and aggregate all enabled tools (for example `checkstyle`/`pmd`/`spotbugs`/`codenarc`/`detekt`/`ktlint`) under `qualityStatic`.
+For mixed JVM repositories (`Java` + `Kotlin` + `Groovy`), keep these tasks language-agnostic and aggregate all enabled tools (for example `checkstyle`/`pmd`/`codenarc`/`detekt`/`ktlint`, plus `spotbugs` on modules that have Java and no Kotlin) under `qualityStatic`.
 
 Style references:
 - `docs/Octopus JVM Style Guidelines.md`

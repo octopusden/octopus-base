@@ -41,7 +41,10 @@ import org.octopusden.octopus.quality.internal.TaskRegistrar
  *
  * The plugin auto-detects languages per subproject and configures:
  * - **Kotlin** (when detekt/ktlint applied): shared detekt.yml, baseline support, report formats
- * - **Java/Groovy** (always): checkstyle, pmd, spotbugs, codenarc — bundled by plugin
+ * - **Checkstyle / PMD** (any JVM module): bundled by plugin — Java-source analysers, no-op without `.java`
+ * - **SpotBugs** (Java module with no Kotlin): bytecode analyser — skipped on any module
+ *   containing Kotlin (it false-positives on Kotlin bytecode)
+ * - **CodeNarc** (Groovy): bundled by plugin
  * - **Coverage**: JaCoCo (Java/mixed, applied by plugin) or Kover (Kotlin-only, applied by consumer)
  *
  * Aggregate tasks registered at root level:

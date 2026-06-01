@@ -3,6 +3,7 @@ package org.octopusden.octopus.quality
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -181,6 +182,158 @@ class OctopusQualityPluginFunctionalTest {
         val result = runner("qualityStatic").build()
         assertEquals(TaskOutcome.SUCCESS, result.task(":qualityStatic")?.outcome)
         assertTrue(result.output.contains("codenarcMain"))
+    }
+
+    // ---------------------------------------------------------------
+    // 3a. SpotBugs is bytecode analysis — gated to modules with Java source
+    // ---------------------------------------------------------------
+    @Test
+    fun `kotlin-only repo - spotbugs not applied`() {
+        settingsFile(kotlinSettings("test-kotlin-no-spotbugs"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Hello.kt",
+            "package com.example\nfun hello() = \"Hello\"\n",
+        )
+
+        // `tasks --all` lists every realised task, so this asserts the SpotBugs plugin/tasks
+        // were never created — stronger than checking they're merely absent from qualityStatic.
+        val result = runner("tasks", "--all").build()
+        assertFalse(
+            result.output.contains("spotbugsMain"),
+            "SpotBugs must not be applied to a Kotlin-only module (bytecode analysis = false positives)",
+        )
+    }
+
+    @Test
+    fun `mixed java-kotlin repo - spotbugs not applied`() {
+        settingsFile(kotlinSettings("test-mixed-no-spotbugs"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                kotlin { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Hello.kt",
+            "package com.example\nfun hello() = \"Hello\"\n",
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Helper.java")
+            .writeText("package com.example;\npublic class Helper { public int answer() { return 42; } }\n")
+
+        val result = runner("tasks", "--all").build()
+        assertFalse(
+            result.output.contains("spotbugsMain"),
+            "SpotBugs must not be applied to a mixed Java+Kotlin module (would false-positive on the Kotlin bytecode)",
+        )
+    }
+
+    @Test
+    fun `java repo - spotbugs applied`() {
+        settingsFile(kotlinSettings("test-java-spotbugs"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertTrue(
+            result.output.contains("spotbugsMain"),
+            "SpotBugs must apply to a module with Java source",
+        )
+    }
+
+    @Test
+    fun `java plus groovy repo - spotbugs applied`() {
+        settingsFile(kotlinSettings("test-java-groovy-spotbugs"))
+        buildFile(
+            """
+            plugins {
+                groovy
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            dependencies { implementation(localGroovy()) }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                groovy { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+        subDir("src/main/groovy/com/example")
+        File(projectDir, "src/main/groovy/com/example/Greeter.groovy")
+            .writeText("package com.example\nclass Greeter { String hi() { 'hi' } }\n")
+
+        // Java + Groovy, no Kotlin -> SpotBugs runs (no Kotlin bytecode to false-positive on).
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertTrue(
+            result.output.contains("spotbugsMain"),
+            "SpotBugs must apply to a Java+Groovy module (Java present, no Kotlin)",
+        )
+    }
+
+    @Test
+    fun `java repo - pinned spotbugs engine resolves and runs`() {
+        settingsFile(kotlinSettings("test-java-spotbugs-run"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        // NOT --dry-run: actually resolves the pinned engine (BuildConstants.SPOTBUGS_VERSION)
+        // from Maven Central and runs analysis — guards against a mispinned / non-existent
+        // version that a dry-run graph check would silently pass.
+        val result = runner("spotbugsMain").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":spotbugsMain")?.outcome)
     }
 
     // ---------------------------------------------------------------
