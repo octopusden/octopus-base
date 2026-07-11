@@ -1,0 +1,74 @@
+name: Publish quality-plugin SNAPSHOT
+
+# Publishes a -SNAPSHOT of org.octopusden.octopus-quality on every push to main that
+# touches the plugin, so consumers can pin the latest (unreleased) convention plugin
+# during the Phase 4 quality-gates rollout without waiting for a tagged release.
+# workflow_dispatch allows a manual publish from any branch (e.g. a pre-merge feature
+# branch). On a real release, consumers re-pin from the SNAPSHOT to the release tag.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gradle-quality-plugin/**'
+      - '.github/workflows/publish-snapshot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-snapshot:
+    name: Publish quality convention plugin SNAPSHOT
+    runs-on: ubuntu-latest
+    environment: Prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v5
+        with:
+          min-wrapper-count: 0
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compute SNAPSHOT version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          latest_tag="$(git tag -l 'v*' --sort=-v:refname | head -n1 || true)"
+          latest_tag="${latest_tag:-v0.0.0}"
+          base="${latest_tag#v}"
+          IFS='.' read -r maj min pat <<< "$base"
+          snapshot="${maj}.${min}.$((pat + 1))-SNAPSHOT"
+          echo "snapshot_version=${snapshot}" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${snapshot} (next patch after ${latest_tag})"
+
+      - name: Build and publish SNAPSHOT
+        working-directory: gradle-quality-plugin
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          # SNAPSHOT versions route to snapshotRepositoryUrl; no staging repo to close
+          # (that's release-only via closeAndReleaseSonatypeStagingRepository).
+          ./gradlew build publishToSonatype \
+            -Pversion=${{ steps.ver.outputs.snapshot_version }} \
+            -Pnexus=true \
+            --no-daemon --info -s
