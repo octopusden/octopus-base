@@ -266,10 +266,12 @@ internal object TaskRegistrar {
 
     private fun allTargetProjects(rootProject: Project): List<Project> {
         val allSubs = rootProject.allprojects.filter { it != rootProject }
-        return if (allSubs.isEmpty()) {
-            listOf(rootProject)
-        } else {
-            allSubs
+        return when {
+            allSubs.isEmpty() -> listOf(rootProject)
+            // Include the root when it carries its own sources, so root-module code is wired into
+            // qualityStatic (otherwise it escapes the gate in multi-module repos with a source root).
+            LanguageDetector.hasAnySource(rootProject) -> allSubs + rootProject
+            else -> allSubs
         }
     }
 
@@ -279,10 +281,13 @@ internal object TaskRegistrar {
     ): List<Project> {
         val excluded = extension.coverageExcludedProjects.get()
         val allSubs = rootProject.allprojects.filter { it != rootProject }
-        return if (allSubs.isEmpty()) {
-            listOf(rootProject)
-        } else {
-            allSubs.filter { it.name !in excluded }
+        return when {
+            allSubs.isEmpty() -> listOf(rootProject)
+            else -> {
+                val withRoot =
+                    if (LanguageDetector.hasAnySource(rootProject)) allSubs + rootProject else allSubs
+                withRoot.filter { it.name !in excluded }
+            }
         }
     }
 

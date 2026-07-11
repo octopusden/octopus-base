@@ -242,9 +242,26 @@ internal object SubprojectConfigurer {
             // convention path directly, so consumers don't need to relocate the file
             // from ktlint-gradle's own default (`config/ktlint/baseline.xml`).
             ext.baseline.set(File(project.projectDir, "ktlint-baseline.xml"))
+            // Exclude the project's ACTUAL build output dir by absolute path — NOT a "**/build/**"
+            // glob. That glob matches any path segment named "build", so a repo whose package path
+            // contains `build` (e.g. org.octopusden.octopus.build.integration) would have EVERY source
+            // file excluded and ktlint would run hollow (0 files) despite the task existing.
+            val buildPath =
+                project.layout.buildDirectory
+                    .get()
+                    .asFile
+                    .toPath()
+                    .toAbsolutePath()
+                    .normalize()
             ext.filter {
+                it.exclude { element ->
+                    element.file
+                        .toPath()
+                        .toAbsolutePath()
+                        .normalize()
+                        .startsWith(buildPath)
+                }
                 it.exclude("**/generated/**")
-                it.exclude("**/build/**")
                 it.include("**/*.kt", "**/*.kts")
             }
             ext.additionalEditorconfig.putAll(editorConfigEntries)
@@ -316,7 +333,28 @@ internal object SubprojectConfigurer {
         rootProject: Project,
         extension: OctopusQualityExtension,
     ) {
-        // Kover is applied by consumer (with their version via pluginManagement).
-        // Convention plugin only wires qualityCoverage tasks to kover tasks if they exist.
+        // Kover is applied by the consumer (version via pluginManagement). When present, enforce the
+        // same per-module line-coverage floor the JaCoCo path enforces. Previously this was a no-op,
+        // so `koverVerify` passed with NO threshold — a coverage gate that measured nothing.
+        project.plugins.withId("org.jetbrains.kotlinx.kover") {
+            val minPercent =
+                extension.coverage.minimumLineCoverage
+                    .get()
+                    .movePointRight(2)
+                    .toInt()
+                    .coerceIn(0, 100)
+            project.extensions.configure(kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension::class.java) { kover ->
+                kover.reports { reports ->
+                    reports.verify { verify ->
+                        verify.rule { rule ->
+                            rule.minBound(
+                                minValue = minPercent,
+                                coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

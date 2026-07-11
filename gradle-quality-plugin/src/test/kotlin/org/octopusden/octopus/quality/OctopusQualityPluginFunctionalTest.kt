@@ -1009,4 +1009,85 @@ class OctopusQualityPluginFunctionalTest {
             "Expected the hollow-gate guard to fail qualityStatic; got: ${result.output}",
         )
     }
+
+    // ---------------------------------------------------------------
+    // Fix: ktlint must NOT be excluded just because the package path contains a
+    // "build" segment. Pre-fix, the `**/build/**` glob excluded any source under a
+    // `.../build/...` package (e.g. org.octopusden.octopus.build.integration), so
+    // ktlint ran hollow (0 files). A violation in such a file must now be caught.
+    // ---------------------------------------------------------------
+    @Test
+    fun `ktlint scans sources under a build package segment - not excluded by build glob`() {
+        settingsFile(kotlinSettings("test-ktlint-build-segment"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(true) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        // Package path contains a literal `build` segment; file has a wildcard import (violation).
+        writeKotlinFile(
+            "src/main/kotlin/org/octopusden/octopus/build/integration/Bad.kt",
+            "package org.octopusden.octopus.build.integration\n\nimport java.util.*\n\nval x: UUID? = null\n",
+        )
+
+        val result = runner("ktlintCheck").buildAndFail()
+        assertTrue(
+            result.output.contains("Bad.kt") && result.output.contains("Wildcard import"),
+            "Expected ktlint to scan the file under a 'build' package segment; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Fix: in a multi-module build whose ROOT project also carries Kotlin sources,
+    // the root module must be wired into qualityStatic (previously only subprojects
+    // were, so root-module code escaped the gate).
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module with root sources - root detekt-ktlint wired into qualityStatic`() {
+        settingsFile(kotlinSettings("test-root-sources", """include("lib")"""))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("io.gitlab.arturbosch.detekt") version "1.23.5"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            subprojects {
+                apply(plugin = "org.jetbrains.kotlin.jvm")
+                apply(plugin = "io.gitlab.arturbosch.detekt")
+                apply(plugin = "org.jlleitschuh.gradle.ktlint")
+                repositories { mavenCentral() }
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        // Root project has its own Kotlin source (in addition to the :lib subproject).
+        writeKotlinFile("src/main/kotlin/com/example/Root.kt", "package com.example\nfun root() = 1\n")
+        writeKotlinFile("lib/src/main/kotlin/com/example/Lib.kt", "package com.example\nfun lib() = 2\n")
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        val lines = result.output.lines().map { it.trim() }
+        // Root-module tasks are printed with a single leading colon (`:detekt`); subproject tasks
+        // as `:lib:detekt`. Match by line prefix so the root task isn't confused with :lib:detekt.
+        val hasRootDetekt = lines.any { it.startsWith(":detekt ") || it == ":detekt" }
+        val hasRootKtlint = lines.any { it.startsWith(":ktlintCheck ") || it == ":ktlintCheck" }
+        assertTrue(hasRootDetekt, "root :detekt not wired; got: ${result.output}")
+        assertTrue(hasRootKtlint, "root :ktlintCheck not wired; got: ${result.output}")
+        assertTrue(result.output.contains(":lib:detekt"), "subproject :lib:detekt missing")
+    }
 }
