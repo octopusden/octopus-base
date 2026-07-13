@@ -975,4 +975,38 @@ class OctopusQualityPluginFunctionalTest {
             "Expected ktlint violation against consumer override; got: ${result.output}",
         )
     }
+
+    // ---------------------------------------------------------------
+    // #144: hollow-gate guard — a Kotlin module that never applied detekt/ktlint
+    // must FAIL qualityStatic instead of passing green with zero analysis.
+    // ---------------------------------------------------------------
+    @Test
+    fun `hollow gate - Kotlin without detekt-ktlint fails qualityStatic`() {
+        settingsFile(kotlinSettings("test-hollow-gate"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Hello.kt",
+            "package com.example\nfun hello() = \"Hello\"\n",
+        )
+
+        val result = runner("qualityStatic").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, result.task(":verifyStaticAnalysisApplied")?.outcome)
+        assertTrue(
+            result.output.contains("Hollow quality gate"),
+            "Expected the hollow-gate guard to fail qualityStatic; got: ${result.output}",
+        )
+    }
 }

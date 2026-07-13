@@ -29,6 +29,7 @@ internal object TaskRegistrar {
         val excludedTasks = extension.excludedTasks.get()
 
         registerQualityStatic(rootProject, allProjects, excludedTasks)
+        HollowGateGuard.register(rootProject, allProjects)
         registerQualityCoverage(rootProject, coverageProjects, extension, excludedTasks)
         registerQualityCheck(rootProject)
     }

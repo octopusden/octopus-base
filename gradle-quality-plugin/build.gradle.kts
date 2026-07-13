@@ -48,6 +48,8 @@ kover {
                     "org.octopusden.octopus.quality.internal.TaskRegistrar\$*",
                     "org.octopusden.octopus.quality.internal.PublicationValidator",
                     "org.octopusden.octopus.quality.internal.PublicationValidator\$*",
+                    "org.octopusden.octopus.quality.internal.HollowGateGuard",
+                    "org.octopusden.octopus.quality.internal.HollowGateGuard\$*",
                 )
             }
         }
