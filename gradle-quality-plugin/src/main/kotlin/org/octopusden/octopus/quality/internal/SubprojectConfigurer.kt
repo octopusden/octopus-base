@@ -246,15 +246,18 @@ internal object SubprojectConfigurer {
             // glob. That glob matches any path segment named "build", so a repo whose package path
             // contains `build` (e.g. org.octopusden.octopus.build.integration) would have EVERY source
             // file excluded and ktlint would run hollow (0 files) despite the task existing.
-            val buildPath =
-                project.layout.buildDirectory
-                    .get()
-                    .asFile
-                    .toPath()
-                    .toAbsolutePath()
-                    .normalize()
+            // buildDirectory is resolved lazily INSIDE the exclude spec (evaluated at task time) so a
+            // consumer's later buildDir customization is honored.
+            val buildDirectory = project.layout.buildDirectory
             ext.filter {
                 it.exclude { element ->
+                    val buildPath =
+                        buildDirectory
+                            .get()
+                            .asFile
+                            .toPath()
+                            .toAbsolutePath()
+                            .normalize()
                     element.file
                         .toPath()
                         .toAbsolutePath()
