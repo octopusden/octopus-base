@@ -2,6 +2,7 @@ package org.octopusden.octopus.quality
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.octopusden.octopus.quality.internal.LanguageDetector
 import org.octopusden.octopus.quality.internal.PublicationValidator
 import org.octopusden.octopus.quality.internal.SubprojectConfigurer
 import org.octopusden.octopus.quality.internal.TaskRegistrar
@@ -58,11 +59,15 @@ class OctopusQualityPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension = project.extensions.create("octopusQuality", OctopusQualityExtension::class.java)
 
+        // In a multi-module build the root project is normally a pure aggregator (no sources),
+        // so targets = subprojects. But if the root ALSO carries its own JVM sources, it must be
+        // configured/gated too — otherwise root-module code silently escapes the quality gate.
+        val subprojects = project.allprojects.filter { it != project }
         val targets =
-            if (project.subprojects.isEmpty()) {
-                listOf(project)
-            } else {
-                project.allprojects.filter { it != project }
+            when {
+                subprojects.isEmpty() -> listOf(project)
+                LanguageDetector.hasAnySource(project) -> subprojects + project
+                else -> subprojects
             }
 
         // Phase 1 — synchronous, BEFORE subproject scripts evaluate. Registers

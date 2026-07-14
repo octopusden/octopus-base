@@ -28,6 +28,9 @@ internal object LanguageDetector {
         return DetectedLanguages(hasKotlin, hasJava, hasGroovy)
     }
 
+    /** True if the project carries any JVM source (kotlin/java/groovy) of its own. */
+    fun hasAnySource(project: Project): Boolean = detect(project).let { it.hasKotlin || it.hasJava || it.hasGroovy }
+
     /**
      * Detect languages across all subprojects (or the root project if single-module).
      */
