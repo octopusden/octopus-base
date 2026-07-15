@@ -153,12 +153,14 @@ octopusQuality {
 
 | Language detected | Tools configured | Coverage |
 |-------------------|-----------------|----------|
-| Kotlin | detekt + ktlint + checkstyle + pmd | Kover (consumer applies kover plugin) |
+| Kotlin (no Java) | detekt + ktlint | Kover (consumer applies kover plugin) |
 | Java (no Kotlin) | checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
-| Groovy (no Java) | codenarc + checkstyle + pmd | JaCoCo (plugin applies jacoco) |
+| Groovy (no Java) | codenarc | JaCoCo (plugin applies jacoco) |
 | Mixed Java + Kotlin | detekt + ktlint + checkstyle + pmd | JaCoCo |
 
-> **SpotBugs** is wired only on modules that have Java **and no Kotlin** (Java-only or Java+Groovy). It analyses *bytecode* and false-positives heavily on compiled Kotlin (lateinit / DSL getters / synthetic accessors), so any module containing Kotlin is skipped. Checkstyle/PMD are applied broadly but only act on `.java` source.
+> **Checkstyle/PMD** are Java-only tools — they are applied only to modules that have Java source. A Kotlin-only module gets detekt + ktlint; a Groovy-only module gets codenarc; only Java (Java-only or mixed Java + Kotlin/Groovy) gets checkstyle + pmd.
+>
+> **SpotBugs** is wired only on modules that have Java **and no Kotlin** (Java-only or Java+Groovy). It analyses *bytecode* and false-positives heavily on compiled Kotlin (lateinit / DSL getters / synthetic accessors), so any module containing Kotlin is skipped.
 
 ### What stays local in each repo
 

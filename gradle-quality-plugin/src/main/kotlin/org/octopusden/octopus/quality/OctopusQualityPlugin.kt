@@ -93,7 +93,9 @@ class OctopusQualityPlugin : Plugin<Project> {
         }
 
         // Validate Maven Central publication readiness (sources, javadoc, POM fields)
-        // for every project that applies maven-publish. Wired into `check`.
-        project.allprojects.forEach { PublicationValidator.register(it) }
+        // for every project that applies maven-publish. Wired into `check`, unless the repo
+        // opts out via octopusQuality { publication { validateForMavenCentral.set(false) } }
+        // (root-level / per-repo / all-or-nothing) — then the task is skipped on `check`.
+        project.allprojects.forEach { PublicationValidator.register(it, extension) }
     }
 }

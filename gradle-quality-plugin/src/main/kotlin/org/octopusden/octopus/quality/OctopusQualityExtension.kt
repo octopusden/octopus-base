@@ -11,6 +11,7 @@ open class OctopusQualityExtension
         objects: ObjectFactory,
     ) {
         val coverage: CoverageExtension = objects.newInstance(CoverageExtension::class.java)
+        val publication: PublicationExtension = objects.newInstance(PublicationExtension::class.java)
         val kotlin: KotlinExtension = objects.newInstance(KotlinExtension::class.java)
         val java: JavaExtension = objects.newInstance(JavaExtension::class.java)
         val groovy: GroovyExtension = objects.newInstance(GroovyExtension::class.java)
@@ -18,10 +19,19 @@ open class OctopusQualityExtension
         /** Subproject names to exclude from coverage verification (qualityCoverage). */
         val coverageExcludedProjects: SetProperty<String> = objects.setProperty(String::class.java).convention(emptySet())
 
-        /** Task names to exclude from quality gate dependencies. Applies to both qualityStatic and qualityCoverage. */
+        /**
+         * Task names to exclude from the aggregate quality-gate task dependencies.
+         *
+         * Applies ONLY to the `qualityStatic` / `qualityCoverage` aggregate tasks (and, transitively,
+         * `qualityCheck`) — it prunes which analysis/coverage tasks those aggregates depend on.
+         * It does NOT touch the standard `check` → `test` task graph: an excluded `test` still runs
+         * under `check`, it is simply not pulled in by `qualityCoverage`.
+         */
         val excludedTasks: SetProperty<String> = objects.setProperty(String::class.java).convention(emptySet())
 
         fun coverage(action: Action<CoverageExtension>) = action.execute(coverage)
+
+        fun publication(action: Action<PublicationExtension>) = action.execute(publication)
 
         fun kotlin(action: Action<KotlinExtension>) = action.execute(kotlin)
 
@@ -62,6 +72,21 @@ open class CoverageExtension
             objects
                 .property(java.math.BigDecimal::class.java)
                 .convention(java.math.BigDecimal("0.70"))
+    }
+
+open class PublicationExtension
+    @Inject
+    constructor(
+        objects: ObjectFactory,
+    ) {
+        /**
+         * Enforce Maven Central readiness (`validatePublications` wired into `check`) for every
+         * `maven-publish` project. Set to false for repos that are not published to Maven Central,
+         * so `check` does not require sources/javadoc JARs and full POM metadata.
+         *
+         * Root-level / per-repo / all-or-nothing by design.
+         */
+        val validateForMavenCentral = objects.property(Boolean::class.java).convention(true)
     }
 
 open class KotlinExtension

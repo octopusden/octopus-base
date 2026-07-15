@@ -155,7 +155,7 @@ class OctopusQualityPluginFunctionalTest {
     }
 
     // ---------------------------------------------------------------
-    // 3. Groovy-only: codenarc + checkstyle + pmd applied
+    // 3. Groovy-only: codenarc only (checkstyle/pmd are Java-only, not applied)
     // ---------------------------------------------------------------
     @Test
     fun `groovy-only repo - qualityStatic applies codenarc`() {
@@ -1089,5 +1089,200 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(hasRootDetekt, "root :detekt not wired; got: ${result.output}")
         assertTrue(hasRootKtlint, "root :ktlintCheck not wired; got: ${result.output}")
         assertTrue(result.output.contains(":lib:detekt"), "subproject :lib:detekt missing")
+    }
+
+    // ---------------------------------------------------------------
+    // checkstyle/PMD are Java-only: a Kotlin-only module must get NO
+    // :checkstyleMain/:pmdMain, but must still get :classes + :detekt in qualityStatic.
+    // ---------------------------------------------------------------
+    @Test
+    fun `kotlin-only repo - no checkstyle or pmd but detekt and classes wired`() {
+        settingsFile(kotlinSettings("test-kotlin-no-checkstyle"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("io.gitlab.arturbosch.detekt") version "1.23.5"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Hello.kt",
+            "package com.example\nfun hello() = \"Hello\"\n",
+        )
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertFalse(
+            result.output.contains(":checkstyleMain"),
+            "checkstyle is Java-only and must not be wired for a Kotlin-only module; got: ${result.output}",
+        )
+        assertFalse(
+            result.output.contains(":pmdMain"),
+            "pmd is Java-only and must not be wired for a Kotlin-only module; got: ${result.output}",
+        )
+        assertTrue(result.output.contains(":detekt"), "Kotlin-only module must still run :detekt")
+        assertTrue(result.output.contains(":classes"), "Kotlin-only module must still compile (:classes)")
+    }
+
+    // ---------------------------------------------------------------
+    // checkstyle/PMD are Java-only: a Groovy-only module must get NO
+    // :checkstyleMain/:pmdMain, but must still get :classes + :codenarcMain in qualityStatic.
+    // ---------------------------------------------------------------
+    @Test
+    fun `groovy-only repo - no checkstyle or pmd but codenarc and classes wired`() {
+        settingsFile(kotlinSettings("test-groovy-no-checkstyle"))
+        buildFile(
+            """
+            plugins {
+                groovy
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            dependencies { implementation(localGroovy()) }
+            octopusQuality {
+                groovy { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/groovy/com/example")
+        File(projectDir, "src/main/groovy/com/example/Hello.groovy")
+            .writeText("package com.example\nclass Hello { String greet() { 'hi' } }\n")
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertFalse(
+            result.output.contains(":checkstyleMain"),
+            "checkstyle is Java-only and must not be wired for a Groovy-only module; got: ${result.output}",
+        )
+        assertFalse(
+            result.output.contains(":pmdMain"),
+            "pmd is Java-only and must not be wired for a Groovy-only module; got: ${result.output}",
+        )
+        assertTrue(result.output.contains(":codenarcMain"), "Groovy-only module must still run :codenarcMain")
+        assertTrue(result.output.contains(":classes"), "Groovy-only module must still compile (:classes)")
+    }
+
+    // ---------------------------------------------------------------
+    // A Java module still gets checkstyle + pmd wired into qualityStatic.
+    // ---------------------------------------------------------------
+    @Test
+    fun `java repo - checkstyle and pmd wired into qualityStatic`() {
+        settingsFile(kotlinSettings("test-java-checkstyle-pmd"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertTrue(result.output.contains(":checkstyleMain"), "Java module must wire :checkstyleMain")
+        assertTrue(result.output.contains(":pmdMain"), "Java module must wire :pmdMain")
+    }
+
+    // ---------------------------------------------------------------
+    // validatePublications opt-out: with validateForMavenCentral=false the task is
+    // SKIPPED on `check`, so a publication that would fail validation no longer blocks check.
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications skipped on check when validateForMavenCentral is false`() {
+        settingsFile(kotlinSettings("test-pub-optout"))
+        buildFile(
+            """
+            plugins {
+                java
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            publishing {
+                publications {
+                    // No sources/javadoc JARs and no POM metadata — would FAIL validation if enforced.
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                    }
+                }
+            }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+                publication { validateForMavenCentral.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("check").build()
+        assertEquals(
+            TaskOutcome.SKIPPED,
+            result.task(":validatePublications")?.outcome,
+            "validatePublications must be SKIPPED when validateForMavenCentral=false; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // validatePublications default (true): still enforced on `check` — an incomplete
+    // publication fails the build.
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications enforced on check by default`() {
+        settingsFile(kotlinSettings("test-pub-default-enforced"))
+        buildFile(
+            """
+            plugins {
+                java
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            publishing {
+                publications {
+                    // No sources/javadoc JARs and no POM metadata — must FAIL validation (default true).
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                    }
+                }
+            }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("check").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, result.task(":validatePublications")?.outcome)
+        assertTrue(
+            result.output.contains("Maven Central publication validation failed"),
+            "Expected validatePublications to enforce by default; got: ${result.output}",
+        )
     }
 }

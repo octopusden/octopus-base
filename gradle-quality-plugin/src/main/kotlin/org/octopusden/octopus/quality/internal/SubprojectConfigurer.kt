@@ -45,14 +45,15 @@ internal object SubprojectConfigurer {
         val configDir = resolveConfigDir(rootProject)
         val languages = LanguageDetector.detect(project)
 
-        // Checkstyle/PMD analyse Java *source* — harmless no-ops on modules without `.java`,
-        // so keep them broadly applied. SpotBugs analyses *bytecode* and scans the module's
-        // whole compiled output: when Kotlin is present it reads the Kotlin classes too and
-        // produces ~95% false positives (lateinit / DSL getters / synthetic accessors). Gate it
-        // to modules that have Java and NO Kotlin (Java-only or Java+Groovy qualify — only Kotlin
-        // triggers the false-positive flood). Java 25 / class file v69 support is handled by the
-        // engine pin in configureSpotBugs.
-        if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
+        // Checkstyle/PMD are Java-only tools (they analyse `.java` *source*), so apply them only
+        // to modules that actually have Java source — applying them to Kotlin-only / Groovy-only
+        // modules just adds no-op tasks (and misleadingly-named ones) to the graph. SpotBugs
+        // analyses *bytecode* and scans the module's whole compiled output: when Kotlin is present
+        // it reads the Kotlin classes too and produces ~95% false positives (lateinit / DSL getters
+        // / synthetic accessors). Gate it to modules that have Java and NO Kotlin (Java-only or
+        // Java+Groovy qualify — only Kotlin triggers the false-positive flood). Java 25 / class file
+        // v69 support is handled by the engine pin in configureSpotBugs.
+        if (languages.hasJava) {
             configureCheckstyle(project, configDir, extension)
             configurePmd(project, configDir, extension)
         }

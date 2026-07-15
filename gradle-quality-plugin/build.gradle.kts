@@ -36,6 +36,7 @@ kover {
                     // Extension classes — constructed via Gradle ObjectFactory, not unit-testable
                     "org.octopusden.octopus.quality.OctopusQualityExtension",
                     "org.octopusden.octopus.quality.CoverageExtension",
+                    "org.octopusden.octopus.quality.PublicationExtension",
                     "org.octopusden.octopus.quality.KotlinExtension",
                     "org.octopusden.octopus.quality.JavaExtension",
                     "org.octopusden.octopus.quality.GroovyExtension",
