@@ -42,7 +42,8 @@ import org.octopusden.octopus.quality.internal.TaskRegistrar
  *
  * The plugin auto-detects languages per subproject and configures:
  * - **Kotlin** (when detekt/ktlint applied): shared detekt.yml, baseline support, report formats
- * - **Checkstyle / PMD** (any JVM module): bundled by plugin — Java-source analysers, no-op without `.java`
+ * - **Checkstyle / PMD** (Java-source modules only): applied and wired into `qualityStatic` only when the module
+ *   has `.java` sources (`hasJava`) — they are Java-only analysers and are skipped entirely on Kotlin-only/Groovy-only modules
  * - **SpotBugs** (Java module with no Kotlin): bytecode analyser — skipped on any module
  *   containing Kotlin (it false-positives on Kotlin bytecode)
  * - **CodeNarc** (Groovy): bundled by plugin
