@@ -42,21 +42,21 @@ below are what the plugin build itself pins and tests against.
 | Plugin build language | Kotlin `2.2.0` | `build.gradle.kts` `plugins { id("org.jetbrains.kotlin.jvm") version "2.2.0" }` |
 | Plugin JVM toolchain | JDK `11` | `build.gradle.kts` `kotlin { jvmToolchain(11) }` — minimum CI runtime across target repos |
 | Kotlin Gradle plugin compiled against | `1.9.25` | `build.gradle.kts` `compileOnly(...kotlin-gradle-plugin:${kotlinGradlePluginVersion})`; `kotlinGradlePluginVersion=1.9.25` in `gradle.properties` |
-| Kotlin generation detekt targets | Kotlin 1.9 / 2.0-era | detekt `1.23.8` (see caveat below) |
+| Kotlin generation detekt targets | `kotlin-compiler-embeddable 2.0.21` | detekt `1.23.8` bundles it as its analysis engine (see caveat below) |
 
-### JDK caveat: detekt must run on JDK 21, not JDK 25
+### JDK caveat: run the detekt job on a supported JDK (17 or 21), not JDK 25
 
-detekt `1.23.8` (`detektVersion` in `gradle.properties`) embeds a Kotlin 1.9 / 2.0-era
-analysis engine — consistent with the plugin compiling against Kotlin Gradle plugin
-`1.9.25`. That analysis engine does **not** support JDK 25 and crashes when the detekt
-task runs on a JDK 25 runtime.
+detekt `1.23.8` (`detektVersion` in `gradle.properties`) bundles
+`kotlin-compiler-embeddable 2.0.21` as its analysis engine. That engine does **not** support
+JDK 25 and crashes when the detekt task runs on a JDK 25 runtime.
 
-Practical rule for CI: **run the detekt (Kotlin static-analysis) job on JDK 21.** This is
-distinct from the SpotBugs situation, where the fix was a newer *engine pin* (`4.9.8`) that
-adds JDK 25 bytecode support — see the engine-pin comment in
-`SubprojectConfigurer.configureSpotBugs`. detekt has no equivalent JDK-25-capable pin at
-`1.23.x`, so the mitigation is the runtime JDK, not a version bump. The rest of the build
-(compile, tests, coverage, Java analyzers) can run on the repo's normal JDK.
+Practical rule for CI: **run the detekt (Kotlin static-analysis) job on a supported JDK — 17
+or 21** (the GitHub Actions `quality` job runs it on JDK 17); just not JDK 25. This is distinct
+from the SpotBugs situation, where the fix was a newer *engine pin* (`4.9.8`) that adds JDK 25
+bytecode support — see the engine-pin comment in `SubprojectConfigurer.configureSpotBugs`.
+detekt has no equivalent JDK-25-capable pin at `1.23.x`, so the mitigation is the runtime JDK,
+not a version bump. The rest of the build (compile, tests, coverage, Java analyzers) can run on
+the repo's normal JDK.
 
 ## (b) Consuming from non-GitHub CI
 
@@ -73,7 +73,7 @@ combines them.
 | Task | Runs | Registered in |
 |------|------|---------------|
 | `qualityStatic` | All static-analysis tasks across modules: `checkstyleMain/Test/IntegrationTest`, `pmdMain/Test/IntegrationTest` (Java-source modules), `spotbugsMain/Test` (Java-and-no-Kotlin modules), `detekt` + `ktlintCheck` (Kotlin modules), `codenarcMain/Test` (Groovy modules) | `TaskRegistrar.registerQualityStatic` |
-| `qualityCoverage` | `test` for all modules, then per-module coverage verification + report: JaCoCo (`jacocoTestReport`, `jacocoTestCoverageVerification`) or Kover (`koverXmlReport`, `koverVerify`), plus the aggregated report/verification (`jacocoOverallCoverageReport`/`...Verification` for multi-module JaCoCo, or `koverMerged*`) | `TaskRegistrar.registerQualityCoverage` |
+| `qualityCoverage` | `test` for all modules, then per-module coverage verification + report: JaCoCo (`jacocoTestReport`, `jacocoTestCoverageVerification`) or Kover (`koverXmlReport`, `koverVerify`). Multi-module JaCoCo additionally gets an aggregated report/verification (`jacocoOverallCoverageReport`/`...Verification`). **Kover has no aggregated task** — under pinned Kover `0.9.4` coverage aggregation is JaCoCo-only; Kover produces per-module reports only (the legacy `KOVER_MERGED_*` task-name constants match no task under 0.9.x and are silently ignored) | `TaskRegistrar.registerQualityCoverage` |
 | `qualityCheck` | `qualityStatic` + `qualityCoverage` | `TaskRegistrar.registerQualityCheck` |
 
 Typical non-GitHub invocation:
@@ -83,7 +83,7 @@ Typical non-GitHub invocation:
 ./gradlew qualityCoverage --no-daemon --stacktrace
 ```
 
-Run the `qualityStatic` job on JDK 21 for Kotlin repos (detekt JDK-25 caveat above).
+Run the `qualityStatic` job on a supported JDK (17 or 21) for Kotlin repos (detekt JDK-25 caveat above).
 
 ### Per-analyzer report output paths
 
@@ -100,7 +100,9 @@ explicitly so you do not configure collectors for files that will never exist.
 | pmd | `build/reports/pmd/*.xml` | `build/reports/pmd/*.html` | — | `configurePmd`: `xml` + `html` = true |
 | spotbugs | `build/reports/spotbugs/*.xml` | `build/reports/spotbugs/*.html` | — | `configureSpotBugs`: `xml` + `html` = true (via `reports.maybeCreate`) |
 | codenarc | `build/reports/codenarc/*.xml` | `build/reports/codenarc/*.html` | — | `configureCodeNarc`: `xml` + `html` = true |
-| kover (per module) | `build/reports/kover/report.xml` (via `koverXmlReport`) | **not wired** — `koverHtmlReport` exists in Kover but the convention plugin does not depend on it, so `qualityCoverage` does not produce Kover HTML | Kover HTML (unless invoked directly) | `qualityCoverage` wires `koverXmlReport` + `koverVerify` only (`TaskRegistrar.registerQualityCoverage`); `configureKover` sets the verify threshold |
+| kover (per module) | `build/reports/kover/report.xml` (via `koverXmlReport`) | `build/reports/kover/html/` — **not produced by `qualityCoverage`** (which depends on `koverXmlReport` only), but generated on `check`/`build` when `coverage.enabled=true` (see note) | — | `qualityCoverage` wires `koverXmlReport` + `koverVerify` only (`TaskRegistrar.registerQualityCoverage`); `configureKover` sets `reports.total.{xml,html}.onCheck = coverage.enabled` and the verify threshold |
+
+> **Kover XML vs HTML — where each is produced.** `qualityCoverage` depends only on `koverXmlReport`, so that aggregate never produces Kover HTML. Separately, from **2.4.1** (`verifyInCheck` / coverage-on-check semantics) `configureKover` sets `reports.total.html.onCheck = coverage.enabled`, so a plain `check`/`build` run **does** generate `build/reports/kover/html/` per module when coverage is enabled. If your CI collects Kover coverage via `qualityCoverage`, collect the XML; if it runs `check`/`build`, the HTML is there too. (JaCoCo produces both XML and HTML on `check` when enabled, symmetrically.)
 | jacoco (per module) | `build/reports/jacoco/test/jacocoTestReport.xml` | `build/reports/jacoco/test/html/` | — | `configureJaCoCo`: `xml` + `html` = true |
 
 Filenames for checkstyle/pmd/spotbugs/codenarc follow the Gradle convention of one file
