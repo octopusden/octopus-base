@@ -1,5 +1,6 @@
 package org.octopusden.octopus.quality
 
+import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -39,6 +40,8 @@ class OctopusQualityPluginFunctionalTest {
             }
         }
         """.trimIndent()
+
+    private val ansiEscape = Regex("\\u001B\\[[0-9;]*m")
 
     private fun settingsFile(content: String) {
         File(projectDir, "settings.gradle.kts").writeText(content)
@@ -85,6 +88,39 @@ class OctopusQualityPluginFunctionalTest {
         rootProject.name = "$projectName"
         $extraIncludes
         """.trimIndent()
+
+    /**
+     * All ktlint report files (PLAIN + CHECKSTYLE), ANSI-stripped, concatenated.
+     *
+     * ktlint writes its findings under `build/reports/ktlint/<task>/` deterministically before the
+     * task fails the build, whereas the same findings reaching the GradleRunner console
+     * (`result.output`) races with worker-output flushing and is intermittently absent on CI. So
+     * ktlint-content assertions read the report file as the authoritative source. The report is
+     * colorized, so escape codes are stripped.
+     */
+    private fun ktlintFindings(): String {
+        val dir = File(projectDir, "build/reports/ktlint")
+        if (!dir.exists()) return ""
+        return dir
+            .walkTopDown()
+            .filter { it.isFile }
+            .joinToString("\n") { it.readText() }
+            .replace(ansiEscape, "")
+    }
+
+    /** Assert each needle appears in the ktlint findings (console output OR the report files). */
+    private fun assertKtlintReported(
+        result: BuildResult,
+        vararg needles: String,
+    ) {
+        val findings = result.output + "\n" + ktlintFindings()
+        needles.forEach { needle ->
+            assertTrue(
+                findings.contains(needle),
+                "Expected ktlint findings to contain \"$needle\"; console+report was:\n$findings",
+            )
+        }
+    }
 
     // ---------------------------------------------------------------
     // 1. Single-module Kotlin: qualityStatic registers and runs
@@ -762,10 +798,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("clean", "ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("Bad.kt"),
-            "Expected ktlint failure output to mention Bad.kt; got: ${result.output}",
-        )
+        assertKtlintReported(result, "Bad.kt")
     }
 
     // ---------------------------------------------------------------
@@ -800,17 +833,10 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("clean", "ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("build.gradle.kts"),
-            "Expected ktlintCheck failure to mention build.gradle.kts; got: ${result.output}",
-        )
-        // Rule-message assertion guards against false positives where "build.gradle.kts"
-        // appears in unrelated error output (deprecation warnings, stack traces).
-        // ktlint's PLAIN reporter prints the human message, not the rule id.
-        assertTrue(
-            result.output.contains("Wildcard import"),
-            "Expected ktlintCheck failure to fire the wildcard-import rule; got: ${result.output}",
-        )
+        // "build.gradle.kts" proves the .kts file was scanned; the rule-message assertion guards
+        // against a false positive where the filename appears in unrelated output (deprecation
+        // warnings, stack traces). ktlint's PLAIN reporter prints the human message, not the rule id.
+        assertKtlintReported(result, "build.gradle.kts", "Wildcard import")
     }
 
     // ---------------------------------------------------------------
@@ -845,10 +871,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("Exceeded max line length (140)"),
-            "Expected ktlint violation against bundled max_line_length=140; got: ${result.output}",
-        )
+        assertKtlintReported(result, "Exceeded max line length (140)")
     }
 
     // ---------------------------------------------------------------
@@ -970,10 +993,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("max line length"),
-            "Expected ktlint violation against consumer override; got: ${result.output}",
-        )
+        assertKtlintReported(result, "max line length")
     }
 
     // ---------------------------------------------------------------
@@ -1040,10 +1060,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("Bad.kt") && result.output.contains("Wildcard import"),
-            "Expected ktlint to scan the file under a 'build' package segment; got: ${result.output}",
-        )
+        assertKtlintReported(result, "Bad.kt", "Wildcard import")
     }
 
     // ---------------------------------------------------------------
