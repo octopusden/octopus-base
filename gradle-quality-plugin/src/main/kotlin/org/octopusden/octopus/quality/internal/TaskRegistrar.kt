@@ -46,19 +46,27 @@ internal object TaskRegistrar {
             for (project in targets) {
                 val languages = LanguageDetector.detect(project)
 
-                // checkstyle/pmd are Java-source analysers (no-op without `.java`); spotbugs is
-                // bytecode-based and gated to Java-without-Kotlin modules (it would false-positive
-                // on co-located Kotlin classes) — see SubprojectConfigurer.configure.
-                if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
+                // checkstyle/pmd are Java-only source analysers — gated (plugin-apply and here) to
+                // modules with Java source; see SubprojectConfigurer.configure.
+                if (languages.hasJava) {
                     dependOnIfExists(task, project, "checkstyleMain", excludedTasks)
                     dependOnIfExists(task, project, "checkstyleTest", excludedTasks)
                     dependOnIfExists(task, project, "checkstyleIntegrationTest", excludedTasks)
                     dependOnIfExists(task, project, "pmdMain", excludedTasks)
                     dependOnIfExists(task, project, "pmdTest", excludedTasks)
                     dependOnIfExists(task, project, "pmdIntegrationTest", excludedTasks)
+                }
+
+                // Compilation is needed by every JVM module's analysis (detekt/codenarc modules
+                // included), so `classes`/`testClasses` stay under the broad language condition —
+                // NOT gated to hasJava, which would silently drop compilation for Kotlin/Groovy.
+                if (languages.hasJava || languages.hasKotlin || languages.hasGroovy) {
                     dependOnIfExists(task, project, "classes", excludedTasks)
                     dependOnIfExists(task, project, "testClasses", excludedTasks)
                 }
+
+                // spotbugs is bytecode-based and gated to Java-without-Kotlin modules (it would
+                // false-positive on co-located Kotlin classes) — see SubprojectConfigurer.configure.
                 if (languages.hasJava && !languages.hasKotlin) {
                     dependOnIfExists(task, project, "spotbugsMain", excludedTasks)
                     dependOnIfExists(task, project, "spotbugsTest", excludedTasks)

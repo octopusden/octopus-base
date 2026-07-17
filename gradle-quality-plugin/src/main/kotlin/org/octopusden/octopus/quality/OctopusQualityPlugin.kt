@@ -42,7 +42,8 @@ import org.octopusden.octopus.quality.internal.TaskRegistrar
  *
  * The plugin auto-detects languages per subproject and configures:
  * - **Kotlin** (when detekt/ktlint applied): shared detekt.yml, baseline support, report formats
- * - **Checkstyle / PMD** (any JVM module): bundled by plugin — Java-source analysers, no-op without `.java`
+ * - **Checkstyle / PMD** (Java-source modules only): applied and wired into `qualityStatic` only when the module
+ *   has `.java` sources (`hasJava`) — they are Java-only analysers and are skipped entirely on Kotlin-only/Groovy-only modules
  * - **SpotBugs** (Java module with no Kotlin): bytecode analyser — skipped on any module
  *   containing Kotlin (it false-positives on Kotlin bytecode)
  * - **CodeNarc** (Groovy): bundled by plugin
@@ -93,7 +94,9 @@ class OctopusQualityPlugin : Plugin<Project> {
         }
 
         // Validate Maven Central publication readiness (sources, javadoc, POM fields)
-        // for every project that applies maven-publish. Wired into `check`.
-        project.allprojects.forEach { PublicationValidator.register(it) }
+        // for every project that applies maven-publish. Wired into `check`, unless the repo
+        // opts out via octopusQuality { publication { validateForMavenCentral.set(false) } }
+        // (root-level / per-repo / all-or-nothing) — then the task is skipped on `check`.
+        project.allprojects.forEach { PublicationValidator.register(it, extension) }
     }
 }

@@ -1,5 +1,6 @@
 package org.octopusden.octopus.quality
 
+import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -39,6 +40,8 @@ class OctopusQualityPluginFunctionalTest {
             }
         }
         """.trimIndent()
+
+    private val ansiEscape = Regex("\\u001B\\[[0-9;]*m")
 
     private fun settingsFile(content: String) {
         File(projectDir, "settings.gradle.kts").writeText(content)
@@ -85,6 +88,39 @@ class OctopusQualityPluginFunctionalTest {
         rootProject.name = "$projectName"
         $extraIncludes
         """.trimIndent()
+
+    /**
+     * All ktlint report files (PLAIN + CHECKSTYLE), ANSI-stripped, concatenated.
+     *
+     * ktlint writes its findings under `build/reports/ktlint/<task>/` deterministically before the
+     * task fails the build, whereas the same findings reaching the GradleRunner console
+     * (`result.output`) races with worker-output flushing and is intermittently absent on CI. So
+     * ktlint-content assertions read the report file as the authoritative source. The report is
+     * colorized, so escape codes are stripped.
+     */
+    private fun ktlintFindings(): String {
+        val dir = File(projectDir, "build/reports/ktlint")
+        if (!dir.exists()) return ""
+        return dir
+            .walkTopDown()
+            .filter { it.isFile }
+            .joinToString("\n") { it.readText() }
+            .replace(ansiEscape, "")
+    }
+
+    /** Assert each needle appears in the ktlint findings (console output OR the report files). */
+    private fun assertKtlintReported(
+        result: BuildResult,
+        vararg needles: String,
+    ) {
+        val findings = result.output + "\n" + ktlintFindings()
+        needles.forEach { needle ->
+            assertTrue(
+                findings.contains(needle),
+                "Expected ktlint findings to contain \"$needle\"; console+report was:\n$findings",
+            )
+        }
+    }
 
     // ---------------------------------------------------------------
     // 1. Single-module Kotlin: qualityStatic registers and runs
@@ -155,7 +191,7 @@ class OctopusQualityPluginFunctionalTest {
     }
 
     // ---------------------------------------------------------------
-    // 3. Groovy-only: codenarc + checkstyle + pmd applied
+    // 3. Groovy-only: codenarc only (checkstyle/pmd are Java-only, not applied)
     // ---------------------------------------------------------------
     @Test
     fun `groovy-only repo - qualityStatic applies codenarc`() {
@@ -762,10 +798,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("clean", "ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("Bad.kt"),
-            "Expected ktlint failure output to mention Bad.kt; got: ${result.output}",
-        )
+        assertKtlintReported(result, "Bad.kt")
     }
 
     // ---------------------------------------------------------------
@@ -800,17 +833,10 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("clean", "ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("build.gradle.kts"),
-            "Expected ktlintCheck failure to mention build.gradle.kts; got: ${result.output}",
-        )
-        // Rule-message assertion guards against false positives where "build.gradle.kts"
-        // appears in unrelated error output (deprecation warnings, stack traces).
-        // ktlint's PLAIN reporter prints the human message, not the rule id.
-        assertTrue(
-            result.output.contains("Wildcard import"),
-            "Expected ktlintCheck failure to fire the wildcard-import rule; got: ${result.output}",
-        )
+        // "build.gradle.kts" proves the .kts file was scanned; the rule-message assertion guards
+        // against a false positive where the filename appears in unrelated output (deprecation
+        // warnings, stack traces). ktlint's PLAIN reporter prints the human message, not the rule id.
+        assertKtlintReported(result, "build.gradle.kts", "Wildcard import")
     }
 
     // ---------------------------------------------------------------
@@ -845,10 +871,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("Exceeded max line length (140)"),
-            "Expected ktlint violation against bundled max_line_length=140; got: ${result.output}",
-        )
+        assertKtlintReported(result, "Exceeded max line length (140)")
     }
 
     // ---------------------------------------------------------------
@@ -970,10 +993,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("max line length"),
-            "Expected ktlint violation against consumer override; got: ${result.output}",
-        )
+        assertKtlintReported(result, "max line length")
     }
 
     // ---------------------------------------------------------------
@@ -1040,10 +1060,7 @@ class OctopusQualityPluginFunctionalTest {
         )
 
         val result = runner("ktlintCheck").buildAndFail()
-        assertTrue(
-            result.output.contains("Bad.kt") && result.output.contains("Wildcard import"),
-            "Expected ktlint to scan the file under a 'build' package segment; got: ${result.output}",
-        )
+        assertKtlintReported(result, "Bad.kt", "Wildcard import")
     }
 
     // ---------------------------------------------------------------
@@ -1089,5 +1106,200 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(hasRootDetekt, "root :detekt not wired; got: ${result.output}")
         assertTrue(hasRootKtlint, "root :ktlintCheck not wired; got: ${result.output}")
         assertTrue(result.output.contains(":lib:detekt"), "subproject :lib:detekt missing")
+    }
+
+    // ---------------------------------------------------------------
+    // checkstyle/PMD are Java-only: a Kotlin-only module must get NO
+    // :checkstyleMain/:pmdMain, but must still get :classes + :detekt in qualityStatic.
+    // ---------------------------------------------------------------
+    @Test
+    fun `kotlin-only repo - no checkstyle or pmd but detekt and classes wired`() {
+        settingsFile(kotlinSettings("test-kotlin-no-checkstyle"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("io.gitlab.arturbosch.detekt") version "1.23.5"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Hello.kt",
+            "package com.example\nfun hello() = \"Hello\"\n",
+        )
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertFalse(
+            result.output.contains(":checkstyleMain"),
+            "checkstyle is Java-only and must not be wired for a Kotlin-only module; got: ${result.output}",
+        )
+        assertFalse(
+            result.output.contains(":pmdMain"),
+            "pmd is Java-only and must not be wired for a Kotlin-only module; got: ${result.output}",
+        )
+        assertTrue(result.output.contains(":detekt"), "Kotlin-only module must still run :detekt")
+        assertTrue(result.output.contains(":classes"), "Kotlin-only module must still compile (:classes)")
+    }
+
+    // ---------------------------------------------------------------
+    // checkstyle/PMD are Java-only: a Groovy-only module must get NO
+    // :checkstyleMain/:pmdMain, but must still get :classes + :codenarcMain in qualityStatic.
+    // ---------------------------------------------------------------
+    @Test
+    fun `groovy-only repo - no checkstyle or pmd but codenarc and classes wired`() {
+        settingsFile(kotlinSettings("test-groovy-no-checkstyle"))
+        buildFile(
+            """
+            plugins {
+                groovy
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            dependencies { implementation(localGroovy()) }
+            octopusQuality {
+                groovy { failOnViolation.set(false) }
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/groovy/com/example")
+        File(projectDir, "src/main/groovy/com/example/Hello.groovy")
+            .writeText("package com.example\nclass Hello { String greet() { 'hi' } }\n")
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertFalse(
+            result.output.contains(":checkstyleMain"),
+            "checkstyle is Java-only and must not be wired for a Groovy-only module; got: ${result.output}",
+        )
+        assertFalse(
+            result.output.contains(":pmdMain"),
+            "pmd is Java-only and must not be wired for a Groovy-only module; got: ${result.output}",
+        )
+        assertTrue(result.output.contains(":codenarcMain"), "Groovy-only module must still run :codenarcMain")
+        assertTrue(result.output.contains(":classes"), "Groovy-only module must still compile (:classes)")
+    }
+
+    // ---------------------------------------------------------------
+    // A Java module still gets checkstyle + pmd wired into qualityStatic.
+    // ---------------------------------------------------------------
+    @Test
+    fun `java repo - checkstyle and pmd wired into qualityStatic`() {
+        settingsFile(kotlinSettings("test-java-checkstyle-pmd"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("qualityStatic", "--dry-run").build()
+        assertTrue(result.output.contains(":checkstyleMain"), "Java module must wire :checkstyleMain")
+        assertTrue(result.output.contains(":pmdMain"), "Java module must wire :pmdMain")
+    }
+
+    // ---------------------------------------------------------------
+    // validatePublications opt-out: with validateForMavenCentral=false the task is
+    // SKIPPED on `check`, so a publication that would fail validation no longer blocks check.
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications skipped on check when validateForMavenCentral is false`() {
+        settingsFile(kotlinSettings("test-pub-optout"))
+        buildFile(
+            """
+            plugins {
+                java
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            publishing {
+                publications {
+                    // No sources/javadoc JARs and no POM metadata — would FAIL validation if enforced.
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                    }
+                }
+            }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+                publication { validateForMavenCentral.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("check").build()
+        assertEquals(
+            TaskOutcome.SKIPPED,
+            result.task(":validatePublications")?.outcome,
+            "validatePublications must be SKIPPED when validateForMavenCentral=false; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // validatePublications default (true): still enforced on `check` — an incomplete
+    // publication fails the build.
+    // ---------------------------------------------------------------
+    @Test
+    fun `validatePublications enforced on check by default`() {
+        settingsFile(kotlinSettings("test-pub-default-enforced"))
+        buildFile(
+            """
+            plugins {
+                java
+                `maven-publish`
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            group = "org.example"
+            version = "1.0.0"
+            publishing {
+                publications {
+                    // No sources/javadoc JARs and no POM metadata — must FAIL validation (default true).
+                    create<MavenPublication>("mavenJava") {
+                        from(components["java"])
+                    }
+                }
+            }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Hello.java")
+            .writeText("package com.example;\npublic class Hello { public String greet() { return \"hi\"; } }\n")
+
+        val result = runner("check").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, result.task(":validatePublications")?.outcome)
+        assertTrue(
+            result.output.contains("Maven Central publication validation failed"),
+            "Expected validatePublications to enforce by default; got: ${result.output}",
+        )
     }
 }

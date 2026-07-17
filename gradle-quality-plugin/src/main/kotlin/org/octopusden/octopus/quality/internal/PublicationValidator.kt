@@ -4,6 +4,7 @@ import org.gradle.api.Project
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.publish.maven.tasks.GenerateMavenPom
+import org.octopusden.octopus.quality.OctopusQualityExtension
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
@@ -18,9 +19,16 @@ import javax.xml.parsers.DocumentBuilderFactory
  * - Only POM metadata is validated (no sources/javadoc required)
  *
  * Wired into `check` (when available) so issues are caught on PR, not at publish time.
+ * Opt-out per repo via `octopusQuality { publication { validateForMavenCentral.set(false) } }`
+ * — the task stays registered but its action is skipped (lazy `onlyIf`), so it no longer
+ * enforces Maven Central readiness on `check` for repos that don't publish there.
  */
 internal object PublicationValidator {
-    fun register(project: Project) {
+    fun register(
+        project: Project,
+        rootExtension: OctopusQualityExtension,
+    ) {
+        val validateForMavenCentral = rootExtension.publication.validateForMavenCentral
         project.plugins.withId("maven-publish") {
             val validateTask =
                 project.tasks.register("validatePublications") { task ->
@@ -79,6 +87,13 @@ internal object PublicationValidator {
                         )
                     }
                 }
+
+            // Opt-out: skip enforcement when the repo opts out of Maven Central validation.
+            // Lazy `onlyIf` — the consumer's octopusQuality { publication { ... } } override is
+            // read at task-execution time, not at configuration time.
+            validateTask.configure { task ->
+                task.onlyIf { validateForMavenCentral.get() }
+            }
 
             // Wire into check lazily — safe regardless of plugin application order
             project.tasks.matching { it.name == "check" }.configureEach {
