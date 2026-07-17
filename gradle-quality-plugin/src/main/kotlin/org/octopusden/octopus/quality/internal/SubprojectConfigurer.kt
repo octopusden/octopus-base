@@ -309,9 +309,29 @@ internal object SubprojectConfigurer {
         val defaultReportTask = reportTasks.matching { it.name == "jacocoTestReport" }
         val defaultVerifyTask = verifyTasks.matching { it.name == "jacocoTestCoverageVerification" }
 
-        defaultTestTask.configureEach { task -> task.finalizedBy(defaultReportTask) }
+        // Coverage semantics (read eagerly — this runs from the subproject afterEvaluate, so the
+        // consumer's octopusQuality { } block has already been processed). These are structural
+        // task-graph decisions, so they cannot be deferred to a lazy Provider.
+        val coverageEnabled = extension.coverage.enabled.get()
+        val verifyInCheck = extension.coverage.verifyInCheck.get()
+
+        // Report-on-check follows `enabled`: the jacoco plugin ties the report to `check` only
+        // through this `test.finalizedBy(jacocoTestReport)` edge, so gating it here removes the
+        // report from `check` when coverage is disabled.
+        if (coverageEnabled) {
+            defaultTestTask.configureEach { task -> task.finalizedBy(defaultReportTask) }
+        }
         defaultReportTask.configureEach { task -> task.dependsOn(defaultTestTask) }
         defaultVerifyTask.configureEach { task -> task.dependsOn(defaultTestTask) }
+
+        // Unlike Kover, Gradle's jacoco plugin does NOT put verification on `check` by default, so
+        // there is no pre-existing floor to remove. Add the opt-in edge only when the consumer asks
+        // for it. Wired lazily via `matching` so it is safe regardless of plugin application order.
+        if (coverageEnabled && verifyInCheck) {
+            project.tasks.matching { it.name == "check" }.configureEach { task ->
+                task.dependsOn(defaultVerifyTask)
+            }
+        }
 
         reportTasks.configureEach { task ->
             task.reports.xml.required
@@ -319,13 +339,17 @@ internal object SubprojectConfigurer {
             task.reports.html.required
                 .set(true)
         }
-        verifyTasks.configureEach { task ->
-            task.violationRules.rule { rule ->
-                rule.element = "BUNDLE"
-                rule.limit { limit ->
-                    limit.counter = "LINE"
-                    limit.value = "COVEREDRATIO"
-                    limit.minimum = extension.coverage.minimumLineCoverage.get()
+        // Configure the violation rule only when coverage is enabled — an enabled=false project has
+        // no floor at all, so a direct `jacocoTestCoverageVerification` invocation passes vacuously.
+        if (coverageEnabled) {
+            verifyTasks.configureEach { task ->
+                task.violationRules.rule { rule ->
+                    rule.element = "BUNDLE"
+                    rule.limit { limit ->
+                        limit.counter = "LINE"
+                        limit.value = "COVEREDRATIO"
+                        limit.minimum = extension.coverage.minimumLineCoverage.get()
+                    }
                 }
             }
         }
@@ -341,20 +365,40 @@ internal object SubprojectConfigurer {
         // same per-module line-coverage floor the JaCoCo path enforces. Previously this was a no-op,
         // so `koverVerify` passed with NO threshold — a coverage gate that measured nothing.
         project.plugins.withId("org.jetbrains.kotlinx.kover") {
+            val coverage = extension.coverage
             val minPercent =
-                extension.coverage.minimumLineCoverage
+                coverage.minimumLineCoverage
                     .get()
                     .movePointRight(2)
                     .toInt()
                     .coerceIn(0, 100)
+            // Structural gate for the rule (read eagerly — runs from the subproject afterEvaluate,
+            // so the consumer's octopusQuality { } block is already processed). The onCheck flags
+            // below are wired lazily as Providers.
+            val coverageEnabled = coverage.enabled.get()
             project.extensions.configure(kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension::class.java) { kover ->
                 kover.reports { reports ->
-                    reports.verify { verify ->
-                        verify.rule { rule ->
-                            rule.minBound(
-                                minValue = minPercent,
-                                coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE,
-                            )
+                    // Report-on-check follows `enabled`. Verify-on-check is opt-in: Kover binds
+                    // `koverVerify` into `check` by default via `total.verify.onCheck.convention(true)`,
+                    // so we ACTIVELY set it to false unless the consumer asked for `verifyInCheck` —
+                    // this is the loosening relative to #147, which always enforced the floor on check.
+                    reports.total { total ->
+                        total.xml.onCheck.set(coverage.enabled)
+                        total.html.onCheck.set(coverage.enabled)
+                        total.verify.onCheck.set(
+                            coverage.enabled.zip(coverage.verifyInCheck) { enabled, verify -> enabled && verify },
+                        )
+                    }
+                    // Configure the floor rule only when coverage is enabled — an enabled=false
+                    // project has no rule at all, so a direct `koverVerify` invocation passes vacuously.
+                    if (coverageEnabled) {
+                        reports.verify { verify ->
+                            verify.rule { rule ->
+                                rule.minBound(
+                                    minValue = minPercent,
+                                    coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE,
+                                )
+                            }
                         }
                     }
                 }

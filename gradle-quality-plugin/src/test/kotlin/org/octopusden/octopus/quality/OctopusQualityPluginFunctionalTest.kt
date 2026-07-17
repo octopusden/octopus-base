@@ -41,6 +41,17 @@ class OctopusQualityPluginFunctionalTest {
         }
         """.trimIndent()
 
+    // JUnit 5 wiring for coverage fixtures that actually execute `test` (and thus produce
+    // coverage data). Gradle 8.9 needs the platform launcher explicitly on the runtime classpath.
+    private val junitDeps =
+        """
+        dependencies {
+            testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+            testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
+        }
+        tasks.withType<Test> { useJUnitPlatform() }
+        """.trimIndent()
+
     private val ansiEscape = Regex("\\u001B\\[[0-9;]*m")
 
     private fun settingsFile(content: String) {
@@ -1301,5 +1312,398 @@ class OctopusQualityPluginFunctionalTest {
             result.output.contains("Maven Central publication validation failed"),
             "Expected validatePublications to enforce by default; got: ${result.output}",
         )
+    }
+
+    /** Kotlin `Calc` with four methods; the paired test covers only `add` → ~40% line coverage. */
+    private fun writeKotlinCalc() {
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Calc.kt",
+            """
+            package com.example
+            class Calc {
+                fun add(a: Int, b: Int): Int = a + b
+                fun sub(a: Int, b: Int): Int = a - b
+                fun mul(a: Int, b: Int): Int = a * b
+                fun div(a: Int, b: Int): Int = a / b
+            }
+            """.trimIndent() + "\n",
+        )
+        writeKotlinFile(
+            "src/test/kotlin/com/example/CalcTest.kt",
+            """
+            package com.example
+            import org.junit.jupiter.api.Test
+            import org.junit.jupiter.api.Assertions.assertEquals
+            class CalcTest {
+                @Test fun t() { assertEquals(3, Calc().add(1, 2)) }
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+
+    /** Java `Calc` with four methods; the paired test covers only `add` → ~40% line coverage. */
+    private fun writeJavaCalc() {
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Calc.java").writeText(
+            """
+            package com.example;
+            public class Calc {
+                public int add(int a, int b) { return a + b; }
+                public int sub(int a, int b) { return a - b; }
+                public int mul(int a, int b) { return a * b; }
+                public int div(int a, int b) { return a / b; }
+            }
+            """.trimIndent() + "\n",
+        )
+        subDir("src/test/java/com/example")
+        File(projectDir, "src/test/java/com/example/CalcTest.java").writeText(
+            """
+            package com.example;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class CalcTest {
+                @Test void t() { assertEquals(3, new Calc().add(1, 2)); }
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+
+    // ===============================================================
+    // Coverage-on-check semantics (#150)
+    //
+    // Kover binds `koverVerify` into `check` by default (`total.verify.onCheck` convention is
+    // true); JaCoCo never puts verification on `check`. The plugin normalises both: with coverage
+    // enabled (default) the REPORT runs on `check` but the floor is NOT enforced there unless the
+    // consumer opts in with `verifyInCheck = true`. Anchored on task PATHS via `--dry-run`.
+    // ===============================================================
+
+    // ---------------------------------------------------------------
+    // Kover (a): enabled (default) — report on check, but verify actively OFF.
+    // LOAD-BEARING: proves we overrode Kover's `total.verify.onCheck.convention(true)`.
+    // ---------------------------------------------------------------
+    @Test
+    fun `kover enabled default - check runs report but not koverVerify`() {
+        settingsFile(kotlinSettings("test-kover-report-on-check"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jetbrains.kotlinx.kover") version "0.9.4"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("check", "--dry-run").build()
+        assertTrue(
+            result.output.contains(":koverXmlReport"),
+            "Kover report must run on check when coverage is enabled; got: ${result.output}",
+        )
+        assertFalse(
+            result.output.contains(":koverVerify"),
+            "koverVerify must NOT run on check by default — Kover's onCheck convention must be disabled; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Kover (b): verifyInCheck=true — koverVerify wired onto check.
+    // ---------------------------------------------------------------
+    @Test
+    fun `kover verifyInCheck true - koverVerify runs on check`() {
+        settingsFile(kotlinSettings("test-kover-verify-on-check"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jetbrains.kotlinx.kover") version "0.9.4"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                coverage { verifyInCheck.set(true) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val result = runner("check", "--dry-run").build()
+        assertTrue(
+            result.output.contains(":koverVerify"),
+            "koverVerify must run on check when verifyInCheck=true; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Kover (c): enabled=false — no report and no verify on check; a direct koverVerify
+    // invocation PASSES because no rule was configured at all (green check alone can't prove this).
+    // ---------------------------------------------------------------
+    @Test
+    fun `kover disabled - no report or verify on check and direct koverVerify passes`() {
+        settingsFile(kotlinSettings("test-kover-disabled"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jetbrains.kotlinx.kover") version "0.9.4"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/Hello.kt", "package com.example\nfun hello() = 1\n")
+
+        val dryRun = runner("check", "--dry-run").build()
+        assertFalse(
+            dryRun.output.contains(":koverXmlReport"),
+            "No Kover report on check when disabled; got: ${dryRun.output}",
+        )
+        assertFalse(
+            dryRun.output.contains(":koverVerify"),
+            "No koverVerify on check when disabled; got: ${dryRun.output}",
+        )
+
+        // No rule configured → koverVerify passes vacuously (0% coverage, no bound).
+        val direct = runner("koverVerify").build()
+        assertEquals(TaskOutcome.SUCCESS, direct.task(":koverVerify")?.outcome)
+    }
+
+    // ---------------------------------------------------------------
+    // Kover (d): a below-floor project fails `check` with verifyInCheck=true, but passes
+    // `check` when coverage is disabled (no rule enforced anywhere).
+    // ---------------------------------------------------------------
+    @Test
+    fun `kover below floor - check fails with verifyInCheck and passes when disabled`() {
+        settingsFile(kotlinSettings("test-kover-below-floor"))
+
+        fun script(coverageBlock: String) =
+            """
+            import java.math.BigDecimal
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jetbrains.kotlinx.kover") version "0.9.4"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            $junitDeps
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                coverage { $coverageBlock }
+            }
+            """.trimIndent()
+        writeKotlinCalc()
+
+        // ~40% covered, floor 99% + verifyInCheck → check FAILS on koverVerify.
+        buildFile(script("""enabled.set(true); verifyInCheck.set(true); minimumLineCoverage.set(BigDecimal("0.99"))"""))
+        val failed = runner("check").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, failed.task(":koverVerify")?.outcome)
+
+        // Same project, coverage disabled → no rule, koverVerify not on check → check PASSES.
+        buildFile(script("""enabled.set(false); minimumLineCoverage.set(BigDecimal("0.99"))"""))
+        val passed = runner("check").build()
+        assertTrue(passed.task(":koverVerify") == null, "koverVerify must not run under check when disabled")
+    }
+
+    // ---------------------------------------------------------------
+    // JaCoCo (a): enabled (default) — report on check, verification NOT on check.
+    // ---------------------------------------------------------------
+    @Test
+    fun `jacoco enabled default - check runs report but not verification`() {
+        settingsFile(kotlinSettings("test-jacoco-report-on-check"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeJavaCalc()
+
+        val result = runner("check", "--dry-run").build()
+        assertTrue(
+            result.output.contains(":jacocoTestReport"),
+            "JaCoCo report must run on check when coverage is enabled; got: ${result.output}",
+        )
+        assertFalse(
+            result.output.contains(":jacocoTestCoverageVerification"),
+            "jacocoTestCoverageVerification must NOT run on check by default; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // JaCoCo (b): verifyInCheck=true — verification wired onto check.
+    // ---------------------------------------------------------------
+    @Test
+    fun `jacoco verifyInCheck true - verification runs on check`() {
+        settingsFile(kotlinSettings("test-jacoco-verify-on-check"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { verifyInCheck.set(true) }
+            }
+            """.trimIndent(),
+        )
+        writeJavaCalc()
+
+        val result = runner("check", "--dry-run").build()
+        assertTrue(
+            result.output.contains(":jacocoTestCoverageVerification"),
+            "jacocoTestCoverageVerification must run on check when verifyInCheck=true; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // JaCoCo (c): enabled=false — no report and no verification on check; a direct
+    // jacocoTestCoverageVerification invocation PASSES because no rule was configured.
+    // ---------------------------------------------------------------
+    @Test
+    fun `jacoco disabled - no report or verification on check and direct verification passes`() {
+        settingsFile(kotlinSettings("test-jacoco-disabled"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            $junitDeps
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        writeJavaCalc()
+
+        val dryRun = runner("check", "--dry-run").build()
+        assertFalse(
+            dryRun.output.contains(":jacocoTestReport"),
+            "No JaCoCo report on check when disabled; got: ${dryRun.output}",
+        )
+        assertFalse(
+            dryRun.output.contains(":jacocoTestCoverageVerification"),
+            "No jacocoTestCoverageVerification on check when disabled; got: ${dryRun.output}",
+        )
+
+        // No rule configured → verification passes vacuously.
+        val direct = runner("jacocoTestCoverageVerification").build()
+        assertEquals(TaskOutcome.SUCCESS, direct.task(":jacocoTestCoverageVerification")?.outcome)
+    }
+
+    // ---------------------------------------------------------------
+    // JaCoCo (d): a below-floor project fails `check` with verifyInCheck=true, but passes
+    // `check` when coverage is disabled (no rule enforced anywhere).
+    // ---------------------------------------------------------------
+    @Test
+    fun `jacoco below floor - check fails with verifyInCheck and passes when disabled`() {
+        settingsFile(kotlinSettings("test-jacoco-below-floor"))
+
+        fun script(coverageBlock: String) =
+            """
+            import java.math.BigDecimal
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            $junitDeps
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { $coverageBlock }
+            }
+            """.trimIndent()
+        writeJavaCalc()
+
+        // ~40% covered, floor 99% + verifyInCheck → check FAILS on the verification task.
+        buildFile(script("""enabled.set(true); verifyInCheck.set(true); minimumLineCoverage.set(BigDecimal("0.99"))"""))
+        val failed = runner("check").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, failed.task(":jacocoTestCoverageVerification")?.outcome)
+
+        // Same project, coverage disabled → no rule, verification not on check → check PASSES.
+        buildFile(script("""enabled.set(false); minimumLineCoverage.set(BigDecimal("0.99"))"""))
+        val passed = runner("check").build()
+        assertTrue(
+            passed.task(":jacocoTestCoverageVerification") == null,
+            "jacocoTestCoverageVerification must not run under check when disabled",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // qualityCoverage is the enforcement path with the new default (verifyInCheck=false): the
+    // verifyInCheck KDoc directs consumers to it. A below-floor project therefore PASSES `check`
+    // (no verify on check) yet FAILS `qualityCoverage` — proving the floor is still enforced
+    // somewhere and the gate is not hollow. Kover and JaCoCo, both at default verifyInCheck.
+    // ---------------------------------------------------------------
+    @Test
+    fun `kover below floor - qualityCoverage enforces floor even when verifyInCheck is false`() {
+        settingsFile(kotlinSettings("test-kover-qualitycoverage-floor"))
+        buildFile(
+            """
+            import java.math.BigDecimal
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("org.jetbrains.kotlinx.kover") version "0.9.4"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            $junitDeps
+            octopusQuality {
+                kotlin { failOnViolation.set(false) }
+                coverage { enabled.set(true); minimumLineCoverage.set(BigDecimal("0.99")) }
+            }
+            """.trimIndent(),
+        )
+        writeKotlinCalc()
+
+        // Default verifyInCheck=false → check does not enforce the floor (build() would throw otherwise).
+        runner("check").build()
+        // ...but qualityCoverage does: ~40% covered vs a 99% floor → koverVerify FAILS.
+        val failed = runner("qualityCoverage").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, failed.task(":koverVerify")?.outcome)
+    }
+
+    @Test
+    fun `jacoco below floor - qualityCoverage enforces floor even when verifyInCheck is false`() {
+        settingsFile(kotlinSettings("test-jacoco-qualitycoverage-floor"))
+        buildFile(
+            """
+            import java.math.BigDecimal
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            $junitDeps
+            octopusQuality {
+                java { failOnViolation.set(false) }
+                coverage { enabled.set(true); minimumLineCoverage.set(BigDecimal("0.99")) }
+            }
+            """.trimIndent(),
+        )
+        writeJavaCalc()
+
+        runner("check").build()
+        val failed = runner("qualityCoverage").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, failed.task(":jacocoTestCoverageVerification")?.outcome)
     }
 }
