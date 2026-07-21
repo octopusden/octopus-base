@@ -55,8 +55,24 @@ open class CoverageExtension
     ) {
         enum class Tool { AUTO, JACOCO, KOVER }
 
-        /** Enable coverage verification. Set to false for repos without tests. */
+        /**
+         * Enable coverage. Governs BOTH the coverage report and verification on `check`/`build`:
+         * when `false`, neither the report nor the verify task runs on `check` and no coverage rule is
+         * configured (for Kover and JaCoCo alike); when `true` (default) the report runs on `check` while
+         * floor enforcement is gated by [verifyInCheck] (or the `qualityCoverage` aggregate).
+         * Set to `false` for repos without tests.
+         */
         val enabled = objects.property(Boolean::class.java).convention(true)
+
+        /**
+         * Enforce the per-module line-coverage floor on `check`/`build`.
+         *
+         * Default `false`: with coverage `enabled` (the default) the report still runs on `check`,
+         * but the floor is NOT enforced there — enforce it via the `qualityCoverage` aggregate task.
+         * Set to `true` to additionally gate `check` on `koverVerify` / `jacocoTestCoverageVerification`.
+         * Has no effect when `enabled` is `false` (no report and no verify run on `check`).
+         */
+        val verifyInCheck = objects.property(Boolean::class.java).convention(false)
 
         /** Coverage tool selection. AUTO detects based on project languages. */
         val tool = objects.property(Tool::class.java).convention(Tool.AUTO)
