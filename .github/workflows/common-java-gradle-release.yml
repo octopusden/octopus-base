@@ -267,14 +267,72 @@ jobs:
 
       # publish to nexus
       - name: Publish to Sonatype Nexus
+        id: publish-sonatype
         if: ${{ !inputs.dry-run }}
-        run: ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: |
+          set -o pipefail
+          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+
+      # On a Sonatype publish failure, surface WHY and whether a retry can help.
+      # Dumps: (1) the staging profiles the account sees (profile-lookup issues),
+      # (2) the created staging repo's state + activity events (close/release
+      # validation-rule reasons), and classifies the failure as deterministic
+      # (do not retry) vs transient (a re-dispatch may help). Emits a machine
+      # marker (RELEASE_PUBLISH_RETRYABLE + step output) so the caller/TeamCity
+      # can stop re-dispatching on deterministic failures.
+      - name: Diagnose & classify Sonatype publish failure
+        id: diagnose-sonatype
+        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' && !inputs.dry-run }}
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+        run: |
+          set +e
+          base="https://ossrh-staging-api.central.sonatype.com/service/local"
+          log="$RUNNER_TEMP/publish.log"
+          auth=(-u "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" -H 'Accept: application/json')
+
+          echo "::group::Staging profiles visible to this account"
+          curl -s "${auth[@]}" "$base/staging/profiles" \
+            | (jq -r '.data[]? | "  name=\(.name)  id=\(.id)"' 2>/dev/null || cat)
+          echo "::endgroup::"
+
+          # If a staging repo was created, dump its state + activity — this is where
+          # close/release validation-rule failures are reported.
+          repo=$(grep -oE 'org\.octopusden--[0-9a-f-]+' "$log" 2>/dev/null | head -1)
+          if [ -n "$repo" ]; then
+            echo "::group::Staging repository $repo — state & activity"
+            curl -s "${auth[@]}" "$base/staging/repository/$repo" \
+              | (jq -r '"  type=\(.type)  transitioning=\(.transitioning)  notifications=\(.notifications // 0)"' 2>/dev/null || cat)
+            curl -s "${auth[@]}" "$base/staging/repository/$repo/activity" \
+              | (jq -r '.[]?.events[]? | select((.name // "")|test("fail|error|rule|broken";"i")) | "  event=\(.name) " + ([.properties[]? | "\(.name)=\(.value)"] | join(" "))' 2>/dev/null \
+                 || echo "  (could not parse activity)")
+            echo "::endgroup::"
+          else
+            echo "No staging repository id found in publish log (failure before repo creation)."
+          fi
+
+          # Classify the failure for retry decisions.
+          retryable=true; reason="unknown"
+          if grep -qiE 'Failed to find staging profile|status code 401|401 Unauthorized|Content validation failed|Invalid POM|missing .*signature|No public key|Invalid signature' "$log" 2>/dev/null; then
+            retryable=false; reason="deterministic (profile / auth / artifact validation)"
+          elif grep -qiE 'No objects found|status code 5[0-9][0-9]|timed out|Connection reset|Read timed out|not in desired state' "$log" 2>/dev/null; then
+            retryable=true; reason="transient (OSSRH-compat instability)"
+          fi
+          echo "RELEASE_PUBLISH_FAILURE_CLASS=${reason}"
+          echo "RELEASE_PUBLISH_RETRYABLE=${retryable}"
+          echo "retryable=${retryable}" >> "$GITHUB_OUTPUT"
+          if [ "$retryable" = "false" ]; then
+            echo "::error title=Deterministic publish failure::${reason} — retrying will NOT help. Fix config/credentials/artifact; do not re-dispatch."
+          else
+            echo "::warning title=Transient publish failure::${reason} — a re-dispatch may succeed."
+          fi
 
       # github release
       - name: Create release
