@@ -329,7 +329,9 @@ jobs:
             sf="$RUNNER_TEMP/diag-search.json"
             scode=$(curl -sS -o "$sf" -w '%{http_code}' "${net[@]}" -H "$bearer" -H 'Accept: application/json' "$host/manual/search/repositories" 2>/dev/null)
             echo "GET /manual/search/repositories -> HTTP ${scode:-?}"
-            did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key==$k) | .portal_deployment_id' "$sf" 2>/dev/null | head -1)
+            # The search 'key' is prefixed (e.g. "<user>/any/org.octopusden--<uuid>"),
+            # so match on the repo id as a suffix rather than exact equality.
+            did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key | endswith($k)) | .portal_deployment_id' "$sf" 2>/dev/null | head -1)
             if [ -n "$did" ] && [ "$did" != "null" ]; then
               stf="$RUNNER_TEMP/diag-status.json"
               # Poll while the deployment is still validating; .errors appear only once FAILED.
