@@ -201,6 +201,24 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Bind stagingProfileId to the gradle-nexus sonatype repository so publishing
+      # bypasses the flaky OSSRH-compat staging-profile auto-lookup (same fix as the
+      # reusable release workflow). Consumer build needs no change.
+      - name: Prepare staging-profile init script
+        run: |
+          cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
+          allprojects { proj ->
+              proj.plugins.withId('io.github.gradle-nexus.publish-plugin') {
+                  def spid = proj.findProperty('stagingProfileId')?.toString()?.trim()
+                  if (spid) {
+                      proj.extensions.getByName('nexusPublishing')
+                          .repositories.all { repo -> if (repo.name == 'sonatype') repo.stagingProfileId.set(spid) }
+                  }
+              }
+          }
+          GRADLE
+          echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
+
       - name: Build and publish plugin
         working-directory: gradle-quality-plugin
         env:
@@ -212,6 +230,8 @@ jobs:
           ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository \
             -Pversion=${{ needs.calculate-version.outputs.release_version }} \
             -Pnexus=true \
+            -PstagingProfileId=org.octopusden \
+            --init-script "$RUNNER_TEMP/staging-profile.init.gradle" \
             --no-daemon --info -s
 
   create-release:
