@@ -91,7 +91,8 @@ jobs:
       # property (the commit SHA of the workflow file defining the current job).
       # common-java-gradle-release.yml uses it to pin its helper script to its own
       # version. actionlint — including the newest 1.7.12 — still ships an older
-      # job-context type list (check_run_id/container/services/status only) and
+      # job-context type list (container/services/status, plus check_run_id since
+      # 1.7.8) and
       # reports it as undefined, so that one message is filtered out. The workflow
       # additionally fails loudly if the value is ever empty, so the filter cannot
       # hide a real breakage.
@@ -106,7 +107,7 @@ jobs:
               -ignore "shellcheck reported issue in this script: SC2034:" \
               -ignore "shellcheck reported issue in this script: SC2046:" \
               -ignore "shellcheck reported issue in this script: SC2086:" \
-              -ignore "property \"workflow_sha\" is not defined in object type \{check_run_id" \
+              -ignore "property \"workflow_sha\" is not defined in object type \{(check_run_id|container)" \
               $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
           '
       - name: Validate helper scripts
