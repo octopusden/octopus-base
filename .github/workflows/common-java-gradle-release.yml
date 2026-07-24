@@ -45,6 +45,11 @@ on:
         required: false
         type: string
         default: ''
+      staging-profile-id:
+        description: 'Sonatype staging profile id (Central Portal namespace, e.g. org.octopusden). Bound to the gradle-nexus sonatype repository automatically via an injected init script — consumers need NO build-script change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. Blank = keep auto-lookup.'
+        required: false
+        type: string
+        default: 'org.octopusden'
     secrets:
       OSSRH_USERNAME:
         required: false
@@ -240,11 +245,32 @@ jobs:
         if: inputs.docker-image && !inputs.dry-run
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
+      # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
+      # every project that applies it, without requiring any consumer build-script
+      # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
+      # when staging-profile-id is blank (falls back to auto-lookup).
+      - name: Prepare staging-profile init script
+        if: ${{ !inputs.dry-run }}
+        run: |
+          cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
+          allprojects { proj ->
+              proj.plugins.withId('io.github.gradle-nexus.publish-plugin') {
+                  def spid = proj.findProperty('stagingProfileId')?.toString()?.trim()
+                  if (spid) {
+                      proj.extensions.getByName('nexusPublishing')
+                          .repositories.all { repo -> if (repo.name == 'sonatype') repo.stagingProfileId.set(spid) }
+                  }
+              }
+          }
+          GRADLE
+          echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
+
       # publish to nexus
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
-        run: ./gradlew -Pnexus=true publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
+          STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
