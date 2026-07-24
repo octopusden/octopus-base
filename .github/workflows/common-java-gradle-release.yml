@@ -327,14 +327,18 @@ jobs:
           if [ -n "$repo" ]; then
             echo "::group::Deployment status & validation errors for $repo"
             sf="$RUNNER_TEMP/diag-search.json"
-            scode=$(curl -sS -o "$sf" -w '%{http_code}' "${auth[@]}" "$host/manual/search/repositories" 2>/dev/null)
+            scode=$(curl -sS -o "$sf" -w '%{http_code}' "${net[@]}" -H "$bearer" -H 'Accept: application/json' "$host/manual/search/repositories" 2>/dev/null)
             echo "GET /manual/search/repositories -> HTTP ${scode:-?}"
             did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key==$k) | .portal_deployment_id' "$sf" 2>/dev/null | head -1)
             if [ -n "$did" ] && [ "$did" != "null" ]; then
               stf="$RUNNER_TEMP/diag-status.json"
-              pcode=$(curl -sS -o "$stf" -w '%{http_code}' "${net[@]}" -X POST -H "$bearer" -H 'Accept: application/json' "$portal/status?id=$did" 2>/dev/null)
-              echo "POST /api/v1/publisher/status?id=$did -> HTTP ${pcode:-?}"
-              echo "  deploymentState=$(jq -r '.deploymentState // "?"' "$stf" 2>/dev/null)"
+              # Poll while the deployment is still validating; .errors appear only once FAILED.
+              for i in 1 2 3 4 5; do
+                pcode=$(curl -sS -o "$stf" -w '%{http_code}' "${net[@]}" -X POST -H "$bearer" -H 'Accept: application/json' "$portal/status?id=$did" 2>/dev/null)
+                dstate=$(jq -r '.deploymentState // "?"' "$stf" 2>/dev/null)
+                echo "POST /api/v1/publisher/status?id=$did (try $i) -> HTTP ${pcode:-?}  deploymentState=${dstate}"
+                case "$dstate" in PENDING|VALIDATING|PUBLISHING) sleep 5 ;; *) break ;; esac
+              done
               errs=$(jq -r 'if (.errors|type)=="object" then (.errors|to_entries[]|"  - \(.key): \(.value|tostring)") elif (.errors|type)=="array" then (.errors[]|"  - \(.|tostring)") else empty end' "$stf" 2>/dev/null)
               if [ -n "$errs" ]; then
                 echo "  errors:"; echo "$errs"; portal_errors="$errs"
