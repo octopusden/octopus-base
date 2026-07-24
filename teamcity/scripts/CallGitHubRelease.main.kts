@@ -21,7 +21,11 @@ val octopusModule = args[0]
 val githubToken = args[1]
 val currentCommit = args[2]
 val versionToRelease = args[3]
-val timeoutMinutes = Integer.valueOf(args[4])
+val timeoutMinutes = args[4].toIntOrNull() ?: -1
+if (timeoutMinutes < 0) {
+    System.err.println("timeoutInMinutes must be a non-negative integer, got: ${args[4]}")
+    System.exit(-1)
+}
 val eventType = args[5]
 
 val repo = "octopusden/$octopusModule"
@@ -37,7 +41,7 @@ fun buildProblem(description: String) {
         .replace("|", "||").replace("'", "|'")
         .replace("\n", "|n").replace("\r", "|r")
         .replace("[", "|[").replace("]", "|]")
-    println("##teamcity[buildProblem description='$escaped' identity='github-release']")
+    println("##teamcity[buildProblem description='$escaped' identity='github-release-$octopusModule']")
 }
 
 fun fail(description: String): Nothing {
@@ -63,11 +67,16 @@ fun listDispatchRunIds(): Pair<Boolean, Set<Long>> {
 val (preOk, preExisting) = listDispatchRunIds()
 if (!preOk) println("Warning: could not snapshot existing runs before dispatch; new-run detection is best-effort.")
 
-// 1) Trigger the release.
+// 1) Trigger the release. Build the body with org.json so special characters in
+//    the arguments can't break the JSON.
+val dispatchBody = JSONObject()
+    .put("event_type", eventType)
+    .put("client_payload", JSONObject().put("commit", currentCommit).put("project_version", versionToRelease))
+    .toString()
 val respCreate = post(
     "$api/dispatches",
-    headers = ghHeaders,
-    data = """{"event_type":"$eventType","client_payload":{"commit":"$currentCommit","project_version":"$versionToRelease"}}"""
+    headers = ghHeaders + ("Content-Type" to "application/json"),
+    data = dispatchBody
 )
 if (respCreate.statusCode / 100 != 2) {
     fail("Failed to trigger release dispatch for $repo (HTTP ${respCreate.statusCode}): ${respCreate.text}")
@@ -126,12 +135,19 @@ while (true) {
     if (status == "completed") {
         if (conclusion == "success") {
             println("Release run succeeded: $runUrl")
-            System.exit(0)
+            // Belt-and-braces: confirm the expected release tag actually exists.
+            val tag = get("$api/releases/tags/v$versionToRelease", headers = ghHeaders)
+            if (tag.statusCode / 100 == 2) {
+                println("Release tag v$versionToRelease is present.")
+                System.exit(0)
+            }
+            fail("Release run for $repo succeeded but release tag v$versionToRelease was not found (HTTP ${tag.statusCode}). See $runUrl")
+        } else {
+            fail(
+                "Release run for $repo $versionToRelease concluded '$conclusion'. See $runUrl " +
+                "(open the 'Diagnose & classify Sonatype publish failure' step for the cause and " +
+                "RELEASE_PUBLISH_RETRYABLE: deterministic => do not re-dispatch; transient => a re-dispatch may help)."
+            )
         }
-        fail(
-            "Release run for $repo $versionToRelease concluded '$conclusion'. See $runUrl " +
-            "(open the 'Diagnose & classify Sonatype publish failure' step for the cause and " +
-            "RELEASE_PUBLISH_RETRYABLE: deterministic => do not re-dispatch; transient => a re-dispatch may help)."
-        )
     }
 }
