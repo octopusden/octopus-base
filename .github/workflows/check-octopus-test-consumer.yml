@@ -87,6 +87,14 @@ jobs:
       ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.7' }}
     steps:
       - uses: actions/checkout@v4
+      # Note on the last -ignore: `job.workflow_sha` is a documented job-context
+      # property (the commit SHA of the workflow file defining the current job).
+      # common-java-gradle-release.yml uses it to pin its helper script to its own
+      # version. actionlint — including the newest 1.7.12 — still ships an older
+      # job-context type list and
+      # reports it as undefined, so that one message is filtered out. The workflow
+      # additionally fails loudly if the value is ever empty, so the filter cannot
+      # hide a real breakage.
       - name: actionlint
         shell: bash
         run: |
@@ -98,6 +106,7 @@ jobs:
               -ignore "shellcheck reported issue in this script: SC2034:" \
               -ignore "shellcheck reported issue in this script: SC2046:" \
               -ignore "shellcheck reported issue in this script: SC2086:" \
+              -ignore "property \"workflow_sha\" is not defined" \
               $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
           '
       - name: Validate helper scripts
@@ -110,6 +119,12 @@ jobs:
       - name: Validate workflow naming convention
         shell: bash
         run: bash .github/scripts/validate-workflow-naming.sh .
+      # Exercises the Portal publish state machine against a stubbed Central API,
+      # covering paths that cannot be triggered on demand against the live service
+      # (FAILED validation, ambiguous publish responses, wrong deployment ids).
+      - name: Portal publish helper scenarios
+        shell: bash
+        run: bash .github/scripts/test/portal-publish-scenarios.sh
 
   security:
     name: security

@@ -55,6 +55,11 @@ on:
         required: false
         type: boolean
         default: true
+      resume-deployment-id:
+        description: 'Emergency re-run knob: Portal deployment id printed as RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID by a failed run OF THIS SAME REPOSITORY. When set, the Gradle upload is SKIPPED and that existing deployment is published instead — use it after a run died past the upload, so the version is not uploaded twice. Callers must expose it in their own workflow_dispatch inputs to use it.'
+        required: false
+        type: string
+        default: ''
     secrets:
       OSSRH_USERNAME:
         required: false
@@ -69,6 +74,18 @@ jobs:
   prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
+    # Serialize REAL releases per repository: two overlapping ones would compute the
+    # same next version and upload it twice. Dry runs must NOT share that group —
+    # a repository can run several release variants at once (octopus-test's
+    # release-smoke matrix), and since GitHub keeps only one pending member per
+    # group, the extra variants would be cancelled. So dry runs get a key that is
+    # unique per run and variant, real publishes get the shared per-repository one.
+    concurrency:
+      group: >-
+        release-${{ github.repository }}-${{ inputs.dry-run
+          && format('dry-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image)
+          || 'publish' }}
+      cancel-in-progress: false
     env:
       SKIP_TESTS: ''
       BUILD_VERSION: ''
@@ -250,12 +267,47 @@ jobs:
         if: inputs.docker-image && !inputs.dry-run
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
+      # The publish helper lives in octopus-base, but this reusable workflow runs
+      # against the CONSUMER's checkout — so fetch the script from the very commit
+      # THIS workflow file comes from (`job.workflow_sha`), keeping script and
+      # workflow versions in lockstep.
+      #
+      # Both steps deliberately run BEFORE the upload: once artifacts are staged a
+      # failure here would leave an orphaned deployment that nothing can classify,
+      # and the operator's natural plain re-run would upload the version twice.
+      #
+      # The guard requires a full commit SHA: an empty or non-SHA ref would make
+      # actions/checkout silently resolve a branch/tag (its default branch), i.e. run
+      # a different script than the pinned workflow — the very skew this prevents.
+      - name: Resolve Portal publish helper ref
+        id: helper-ref
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
+
+      - name: Fetch Portal publish helper
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-helper
+          sparse-checkout: .github/scripts
+
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
       # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
       # when staging-profile-id is blank (falls back to auto-lookup).
       - name: Prepare staging-profile init script
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         run: |
           cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
           allprojects { proj ->
@@ -270,19 +322,39 @@ jobs:
           GRADLE
           echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
 
-      # publish to nexus
+      # Upload + close the staging repository. The Nexus2-compat `release`
+      # transition is NOT used: it leaves the deployment `closed`, so nothing ever
+      # reaches Maven Central. The publish is driven explicitly through the Central
+      # Portal API in the next step. Skipped entirely when resuming an existing
+      # deployment (the artifacts are already uploaded).
       - name: Publish to Sonatype Nexus
         id: publish-sonatype
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         run: |
           set -o pipefail
-          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
+          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+
+      # Explicit Central Portal publish: map the closed staging repository to its
+      # Portal deployment, wait for VALIDATED, verify it is really OUR version and
+      # namespace, publish, wait for PUBLISHED, and confirm every artifact is
+      # resolvable on Maven Central. Only then may the release/tag be created.
+      - name: Publish deployment via Central Portal
+        id: portal-publish
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        run: bash .octopus-base-helper/.github/scripts/portal-publish.sh
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          BUILD_VERSION: ${{ env.BUILD_VERSION }}
+          STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
+          PUBLISH_LOG: ${{ runner.temp }}/publish.log
+          RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
 
       # On a Sonatype publish failure, surface WHY (and whether a retry can help):
       #  (1) HTTP status + body of the account's staging profiles;
@@ -298,10 +370,11 @@ jobs:
       #      deterministic; everything else stays 'unknown'. Reads only the Gradle
       #      failure section to avoid false matches from --info chatter.
       - name: Diagnose & classify Sonatype publish failure
-        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' && !inputs.dry-run }}
+        if: ${{ failure() && (steps.publish-sonatype.outcome == 'failure' || steps.portal-publish.outcome == 'failure') && !inputs.dry-run }}
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          RESUME_ID: ${{ inputs.resume-deployment-id }}
         run: |
           set +e
           host="https://ossrh-staging-api.central.sonatype.com"
@@ -357,7 +430,11 @@ jobs:
             fi
             echo "::endgroup::"
           else
-            echo "No staging repository was created (failure before repo creation)."
+            if [ -n "${RESUME_ID:-}" ]; then
+              echo "Resume mode: no local publish log (the upload was skipped by design)."
+            else
+              echo "No staging repository was created (failure before repo creation)."
+            fi
           fi
 
           # Classify. Deterministic = Portal reported validation errors, or an explicit
@@ -368,16 +445,30 @@ jobs:
           cls="unknown"; retryable="unknown"
           if [ -n "$portal_errors" ] || printf '%s' "$sec" | grep -qiE 'responded with status code 40[13]|401 Unauthorized|403 Forbidden'; then
             cls="deterministic"; retryable="false"
+          elif [ -n "$repo" ]; then
+            # Artifacts are already staged (and possibly handed off to the Portal):
+            # a plain re-dispatch would upload this version a second time.
+            cls="resumable"; retryable="false"
+            echo "RELEASE_PUBLISH_COMPAT_KEY=$repo"
+            [ -n "${did:-}" ] && [ "${did:-}" != "null" ] && echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$did"
           elif printf '%s' "$sec" | grep -qiE 'responded with status code 5[0-9][0-9]|status code 5[0-9][0-9]|timed out|Read timed out|Connection reset|Connection refused'; then
             cls="transient"; retryable="true"
           fi
-          echo "RELEASE_PUBLISH_CLASS=${cls}"
-          echo "RELEASE_PUBLISH_RETRYABLE=${retryable}"
-          case "$cls" in
-            deterministic) echo "::error title=Deterministic publish failure::Validation / auth error (see deployment errors above) — retrying will NOT help. Fix the artifact/credentials; do not re-dispatch." ;;
-            transient)     echo "::warning title=Transient publish failure::Infrastructure instability (5xx/timeout) — a re-dispatch may succeed." ;;
-            *)             echo "::warning title=Unclassified publish failure::Could not classify — inspect the deployment errors and log above; there is no evidence a retry will help." ;;
-          esac
+          # The Portal publish helper classifies its own failures precisely (it knows
+          # whether a deployment exists and is resumable). Only classify here when it
+          # did not, i.e. the failure happened in the Gradle upload/close stage.
+          if [ -f "$RUNNER_TEMP/publish-classified" ]; then
+            echo "Classification already emitted by the Portal publish step (see above)."
+          else
+            echo "RELEASE_PUBLISH_CLASS=${cls}"
+            echo "RELEASE_PUBLISH_RETRYABLE=${retryable}"
+            case "$cls" in
+              deterministic) echo "::error title=Deterministic publish failure::Validation / auth error (see deployment errors above) — retrying will NOT help. Fix the artifact/credentials; do not re-dispatch." ;;
+              transient)     echo "::warning title=Transient publish failure::Infrastructure instability (5xx/timeout) before anything was staged — a re-dispatch may succeed." ;;
+              resumable)     echo "::error title=Resumable publish failure::The version is already staged, so a plain re-dispatch would upload it twice. Finish it with resume-deployment-id (see the id/compat key above), or drop that staging repository first." ;;
+              *)             echo "::warning title=Unclassified publish failure::Could not classify — inspect the deployment errors and log above; there is no evidence a retry will help." ;;
+            esac
+          fi
 
       # github release
       - name: Create release

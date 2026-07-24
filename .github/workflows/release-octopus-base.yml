@@ -27,9 +27,21 @@ on:
         required: true
         type: boolean
         default: false
+      resume-deployment-id:
+        description: 'Emergency re-run knob: Portal deployment id of a release whose artifacts were already uploaded (printed by the failed run as RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID). When set, the Gradle upload is SKIPPED and that deployment is published instead — prevents uploading the same version twice.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
+
+# Never let two self-releases overlap: both would compute the same version and
+# upload it twice. Queue instead of cancelling — a cancelled run can leave an
+# unpublished deployment behind.
+concurrency:
+  group: release-octopus-base
+  cancel-in-progress: false
 
 jobs:
   resolve-target:
@@ -205,6 +217,7 @@ jobs:
       # bypasses the flaky OSSRH-compat staging-profile auto-lookup (same fix as the
       # reusable release workflow). Consumer build needs no change.
       - name: Prepare staging-profile init script
+        if: ${{ inputs.resume-deployment-id == '' }}
         run: |
           cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
           allprojects { proj ->
@@ -219,7 +232,12 @@ jobs:
           GRADLE
           echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
 
+      # Upload + close only. The Nexus2-compat `release` transition leaves the
+      # deployment `closed` (nothing reaches Central), so the publish is driven
+      # explicitly through the Central Portal API in the next step.
       - name: Build and publish plugin
+        id: publish-sonatype
+        if: ${{ inputs.resume-deployment-id == '' }}
         working-directory: gradle-quality-plugin
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
@@ -227,12 +245,68 @@ jobs:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
         run: |
-          ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository \
+          set -o pipefail
+          ./gradlew build publishToSonatype closeSonatypeStagingRepository \
             -Pversion=${{ needs.calculate-version.outputs.release_version }} \
             -Pnexus=true \
             -PstagingProfileId=org.octopusden \
             --init-script "$RUNNER_TEMP/staging-profile.init.gradle" \
-            --no-daemon --info -s
+            --no-daemon --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
+
+      # Explicit Central Portal publish + verification that the plugin is really
+      # resolvable on Maven Central. REQUIRE_COORDS pins the plugin marker POM —
+      # that is what every consumer's plugin resolution hits first, so the release
+      # must not be tagged unless the marker is live (see #158).
+      - name: Publish deployment via Central Portal
+        id: portal-publish
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          BUILD_VERSION: ${{ needs.calculate-version.outputs.release_version }}
+          STAGING_PROFILE_ID: org.octopusden
+          PUBLISH_LOG: ${{ runner.temp }}/publish.log
+          RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          REQUIRE_COORDS: 'org.octopusden.octopus-quality:org.octopusden.octopus-quality.gradle.plugin'
+        run: bash .github/scripts/portal-publish.sh
+
+      # If the Gradle upload/close failed after the staging repository was created,
+      # the artifacts already exist and a plain re-run would upload this version
+      # twice. The Portal helper classifies its own failures; this covers the
+      # Gradle stage, which has no diagnose step here.
+      - name: Report resumable publish failure
+        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' }}
+        env:
+          RELEASE_VERSION: ${{ needs.calculate-version.outputs.release_version }}
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/publish.log"
+          repo=$(grep -oE "Created staging repository '[^']+'" "$log" 2>/dev/null | head -1 | sed -E "s/^.*'([^']+)'.*$/\1/")
+          if [ -n "$repo" ]; then
+            echo "RELEASE_PUBLISH_CLASS=resumable"
+            echo "RELEASE_PUBLISH_RETRYABLE=false"
+            echo "RELEASE_PUBLISH_COMPAT_KEY=$repo"
+            # Resolve the Portal deployment id too, so the operator can resume
+            # directly instead of looking it up by hand.
+            auth="Authorization: Bearer $(printf '%s' "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" | base64 | tr -d '\n')"
+            sf="$RUNNER_TEMP/diag-search.json"
+            scode=$(curl -sS --connect-timeout 15 --max-time 60 -o "$sf" -w '%{http_code}' \
+              -H "$auth" -H 'Accept: application/json' \
+              "https://ossrh-staging-api.central.sonatype.com/manual/search/repositories?ip=any&profile_id=org.octopusden" 2>/dev/null)
+            did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key | endswith($k)) | .portal_deployment_id // empty' "$sf" 2>/dev/null | head -1)
+            echo "GET /manual/search/repositories -> HTTP ${scode:-?}"
+            if [ -n "$did" ] && [ "$did" != "null" ]; then
+              echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$did"
+              echo "::error title=Resumable publish failure::${RELEASE_VERSION} is already staged as ${repo} (Portal deployment ${did}). Do NOT plainly re-run — that uploads the version twice. Re-dispatch this workflow with resume-deployment-id=${did}."
+            else
+              echo "::error title=Resumable publish failure::${RELEASE_VERSION} is already staged as ${repo}, but no Portal deployment is mapped to it yet. Do NOT plainly re-run — that uploads the version twice. Re-check the Compat/Portal state and resume with resume-deployment-id once the id appears, or drop that staging repository first."
+            fi
+          else
+            echo "RELEASE_PUBLISH_CLASS=unknown"
+            echo "RELEASE_PUBLISH_RETRYABLE=unknown"
+            echo "::warning title=Publish failed, staging state unknown::Staging repository could not be identified from the log, which does NOT prove the remote create/upload failed. A plain re-dispatch is not proven safe: inspect the Compat/Portal state for ${RELEASE_VERSION} first."
+          fi
 
   create-release:
     name: Create GitHub release
