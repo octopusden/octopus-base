@@ -245,10 +245,30 @@ jobs:
         if: inputs.docker-image && !inputs.dry-run
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
+      # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
+      # every project that applies it, without requiring any consumer build-script
+      # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
+      # when staging-profile-id is blank (falls back to auto-lookup).
+      - name: Prepare staging-profile init script
+        if: ${{ !inputs.dry-run }}
+        run: |
+          cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
+          allprojects { proj ->
+              proj.plugins.withId('io.github.gradle-nexus.publish-plugin') {
+                  def spid = proj.findProperty('stagingProfileId')?.toString()?.trim()
+                  if (spid) {
+                      proj.extensions.getByName('nexusPublishing')
+                          .repositories.all { repo -> repo.stagingProfileId.set(spid) }
+                  }
+              }
+          }
+          GRADLE
+          echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
+
       # publish to nexus
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
-        run: ./gradlew -Pnexus=true -PstagingProfileId=${{ inputs.staging-profile-id }} publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew -Pnexus=true -PstagingProfileId=${{ inputs.staging-profile-id }} --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
