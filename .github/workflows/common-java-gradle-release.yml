@@ -267,7 +267,6 @@ jobs:
 
       # publish to nexus
       - name: Publish to Sonatype Nexus
-        id: publish-sonatype
         if: ${{ !inputs.dry-run }}
         run: ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
@@ -276,40 +275,6 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-
-      # On publish failure, dump what the account actually sees so that
-      # "Failed to find staging profile for package group" is diagnosable:
-      # which staging profiles the OSSRH-compat service returns for these
-      # credentials (401 => bad token; list without org.octopusden => the
-      # server-side profile regression; present but unmatched => prefix issue).
-      - name: Diagnose Sonatype staging (on failure)
-        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' && !inputs.dry-run }}
-        env:
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-        run: |
-          set +e
-          endpoint="https://ossrh-staging-api.central.sonatype.com/service/local/staging/profiles"
-          echo "::group::Sonatype staging profiles visible to this account"
-          echo "GET ${endpoint}"
-          code=$(curl -s -o /tmp/staging-profiles.json -w '%{http_code}' \
-            -u "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" \
-            -H 'Accept: application/json' \
-            "${endpoint}")
-          echo "HTTP ${code}"
-          if command -v jq >/dev/null 2>&1; then
-            jq -r '.data[]? | "  name=\(.name)  id=\(.id)  mode=\(.mode // "n/a")"' /tmp/staging-profiles.json 2>/dev/null \
-              || { echo "(non-JSON body)"; cat /tmp/staging-profiles.json; }
-          else
-            cat /tmp/staging-profiles.json
-          fi
-          echo "::endgroup::"
-          echo "Auto-lookup picks a profile whose name is a dot-boundary prefix of the package group."
-          echo "  - HTTP 401                    -> credentials/token problem (OSSRH_USERNAME/OSSRH_TOKEN)."
-          echo "  - 200 but org.octopusden absent -> server-side staging-profile regression (Sonatype)."
-          echo "  - 200 with org.octopusden but group unmatched -> pass -PstagingProfileId explicitly."
-          echo "This workflow already sets staging-profile-id (default 'org.octopusden') and binds it via the"
-          echo "injected init script, so a present-but-unmatched profile should not occur with the default."
 
       # github release
       - name: Create release
