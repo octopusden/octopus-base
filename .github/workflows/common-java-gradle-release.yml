@@ -302,15 +302,33 @@ jobs:
 
       # The publish helper lives in octopus-base, but this reusable workflow runs
       # against the CONSUMER's checkout — so fetch the script from the very commit
-      # this workflow file comes from (job_workflow_sha), keeping script and
-      # workflow versions in lockstep. Runs before any irreversible step, so a
-      # failure here is a plain retry.
+      # THIS workflow file comes from (`job.workflow_sha`), keeping script and
+      # workflow versions in lockstep. Both steps run before anything irreversible,
+      # so a failure here is a plain retry.
+      #
+      # Guard first: an empty ref would make actions/checkout silently fall back to
+      # octopus-base's default branch, i.e. run a newer script than the pinned
+      # workflow — exactly the version skew this is meant to prevent.
+      - name: Resolve Portal publish helper ref
+        id: helper-ref
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HELPER_SHA}" ]; then
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha is empty, so the helper script version cannot be pinned to this workflow. Refusing to publish with an unpinned helper."
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
+
       - name: Fetch Portal publish helper
         if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
         uses: actions/checkout@v4
         with:
           repository: octopusden/octopus-base
-          ref: ${{ github.job_workflow_sha }}
+          ref: ${{ steps.helper-ref.outputs.sha }}
           path: .octopus-base-helper
           sparse-checkout: .github/scripts
 
