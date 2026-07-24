@@ -277,6 +277,8 @@ jobs:
         if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' }}
         env:
           RELEASE_VERSION: ${{ needs.calculate-version.outputs.release_version }}
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
         run: |
           set +e
           log="$RUNNER_TEMP/publish.log"
@@ -285,11 +287,25 @@ jobs:
             echo "RELEASE_PUBLISH_CLASS=resumable"
             echo "RELEASE_PUBLISH_RETRYABLE=false"
             echo "RELEASE_PUBLISH_COMPAT_KEY=$repo"
-            echo "::error title=Resumable publish failure::${RELEASE_VERSION} is already staged as ${repo}. Do NOT plainly re-run (that uploads the version twice): look the deployment up via GET https://ossrh-staging-api.central.sonatype.com/manual/search/repositories?ip=any (Bearer auth) and re-dispatch with resume-deployment-id, or drop that staging repository first."
+            # Resolve the Portal deployment id too, so the operator can resume
+            # directly instead of looking it up by hand.
+            auth="Authorization: Bearer $(printf '%s' "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" | base64 | tr -d '\n')"
+            sf="$RUNNER_TEMP/diag-search.json"
+            scode=$(curl -sS --connect-timeout 15 --max-time 60 -o "$sf" -w '%{http_code}' \
+              -H "$auth" -H 'Accept: application/json' \
+              "https://ossrh-staging-api.central.sonatype.com/manual/search/repositories?ip=any&profile_id=org.octopusden" 2>/dev/null)
+            did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key | endswith($k)) | .portal_deployment_id // empty' "$sf" 2>/dev/null | head -1)
+            echo "GET /manual/search/repositories -> HTTP ${scode:-?}"
+            if [ -n "$did" ] && [ "$did" != "null" ]; then
+              echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$did"
+              echo "::error title=Resumable publish failure::${RELEASE_VERSION} is already staged as ${repo} (Portal deployment ${did}). Do NOT plainly re-run — that uploads the version twice. Re-dispatch this workflow with resume-deployment-id=${did}."
+            else
+              echo "::error title=Resumable publish failure::${RELEASE_VERSION} is already staged as ${repo}, but no Portal deployment is mapped to it yet. Do NOT plainly re-run — that uploads the version twice. Re-check the Compat/Portal state and resume with resume-deployment-id once the id appears, or drop that staging repository first."
+            fi
           else
             echo "RELEASE_PUBLISH_CLASS=unknown"
             echo "RELEASE_PUBLISH_RETRYABLE=unknown"
-            echo "::warning title=Publish failed before staging::Nothing was staged, so a plain re-dispatch is safe."
+            echo "::warning title=Publish failed, staging state unknown::Staging repository could not be identified from the log, which does NOT prove the remote create/upload failed. A plain re-dispatch is not proven safe: inspect the Compat/Portal state for ${RELEASE_VERSION} first."
           fi
 
   create-release:
