@@ -126,8 +126,11 @@ while (true) {
             println("Attempt $attempt: new release run not visible yet...")
             continue
         }
-        runId = chosen.getLong("id")
-        runUrl = chosen.optString("html_url")
+        // !! is safe: the null-check above `continue`s when chosen is null. A plain
+        // smart-cast doesn't compile here — in a .main.kts the script body is a
+        // closure, so the captured `var chosen` cannot be smart-cast.
+        runId = chosen!!.getLong("id")
+        runUrl = chosen!!.optString("html_url")
         println("Watching new run: $runUrl")
         continue
     }
