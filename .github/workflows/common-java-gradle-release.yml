@@ -56,7 +56,7 @@ on:
         type: boolean
         default: true
       resume-deployment-id:
-        description: 'Emergency re-run knob: Portal deployment id of a release whose artifacts were already uploaded (printed by the failed run as RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID). When set, the Gradle upload is SKIPPED and the existing deployment is published instead — use this after a run died past the upload, so the version is not uploaded twice.'
+        description: 'Emergency re-run knob: Portal deployment id printed as RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID by a failed run OF THIS SAME REPOSITORY. When set, the Gradle upload is SKIPPED and that existing deployment is published instead — use it after a run died past the upload, so the version is not uploaded twice. Callers must expose it in their own workflow_dispatch inputs to use it.'
         required: false
         type: string
         default: ''
@@ -262,6 +262,41 @@ jobs:
         if: inputs.docker-image && !inputs.dry-run
         run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
 
+      # The publish helper lives in octopus-base, but this reusable workflow runs
+      # against the CONSUMER's checkout — so fetch the script from the very commit
+      # THIS workflow file comes from (`job.workflow_sha`), keeping script and
+      # workflow versions in lockstep.
+      #
+      # Both steps deliberately run BEFORE the upload: once artifacts are staged a
+      # failure here would leave an orphaned deployment that nothing can classify,
+      # and the operator's natural plain re-run would upload the version twice.
+      #
+      # The guard requires a full commit SHA: an empty or non-SHA ref would make
+      # actions/checkout silently resolve a branch/tag (its default branch), i.e. run
+      # a different script than the pinned workflow — the very skew this prevents.
+      - name: Resolve Portal publish helper ref
+        id: helper-ref
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
+
+      - name: Fetch Portal publish helper
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-helper
+          sparse-checkout: .github/scripts
+
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
       # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
@@ -300,38 +335,6 @@ jobs:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
 
-      # The publish helper lives in octopus-base, but this reusable workflow runs
-      # against the CONSUMER's checkout — so fetch the script from the very commit
-      # THIS workflow file comes from (`job.workflow_sha`), keeping script and
-      # workflow versions in lockstep. Both steps run before anything irreversible,
-      # so a failure here is a plain retry.
-      #
-      # Guard first: an empty ref would make actions/checkout silently fall back to
-      # octopus-base's default branch, i.e. run a newer script than the pinned
-      # workflow — exactly the version skew this is meant to prevent.
-      - name: Resolve Portal publish helper ref
-        id: helper-ref
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
-        env:
-          HELPER_SHA: ${{ job.workflow_sha }}
-        run: |
-          set -euo pipefail
-          if [ -z "${HELPER_SHA}" ]; then
-            echo "::error title=Cannot pin the publish helper::job.workflow_sha is empty, so the helper script version cannot be pinned to this workflow. Refusing to publish with an unpinned helper."
-            exit 1
-          fi
-          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
-          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
-
-      - name: Fetch Portal publish helper
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
-        uses: actions/checkout@v4
-        with:
-          repository: octopusden/octopus-base
-          ref: ${{ steps.helper-ref.outputs.sha }}
-          path: .octopus-base-helper
-          sparse-checkout: .github/scripts
-
       # Explicit Central Portal publish: map the closed staging repository to its
       # Portal deployment, wait for VALIDATED, verify it is really OUR version and
       # namespace, publish, wait for PUBLISHED, and confirm every artifact is
@@ -366,6 +369,7 @@ jobs:
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          RESUME_ID: ${{ inputs.resume-deployment-id }}
         run: |
           set +e
           host="https://ossrh-staging-api.central.sonatype.com"
@@ -421,7 +425,11 @@ jobs:
             fi
             echo "::endgroup::"
           else
-            echo "No staging repository was created (failure before repo creation)."
+            if [ -n "${RESUME_ID:-}" ]; then
+              echo "Resume mode: no local publish log (the upload was skipped by design)."
+            else
+              echo "No staging repository was created (failure before repo creation)."
+            fi
           fi
 
           # Classify. Deterministic = Portal reported validation errors, or an explicit

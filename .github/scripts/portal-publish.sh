@@ -11,22 +11,26 @@
 # Inputs (env):
 #   MAVEN_USERNAME, MAVEN_PASSWORD  Portal/OSSRH token pair (required)
 #   BUILD_VERSION                   expected release version (required)
-#   STAGING_PROFILE_ID              namespace, e.g. org.octopusden (required)
+#   STAGING_PROFILE_ID              namespace, e.g. org.octopusden (optional; when
+#                                   blank the search is unfiltered and the namespace
+#                                   check is skipped — matches "blank = auto-lookup")
 #   PUBLISH_LOG                     Gradle publish log, to read the compat repo key
 #   RESUME_DEPLOYMENT_ID            optional: skip the search, use this deployment
 #   REQUIRE_COORDS                  optional: "group:artifact ..." that must be present
 #
-# On failure it emits classification markers for the caller / TeamCity to scrape:
+# Emits classification markers for the caller / TeamCity to scrape:
+#   RELEASE_PUBLISH_CLASS=published                  (success)
 #   RELEASE_PUBLISH_CLASS=deterministic|transient|resumable
 #   RELEASE_PUBLISH_RETRYABLE=false|true
-#   RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=<id>   (when the run can be resumed)
+#   RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=<id>        (resumable, deployment known)
+#   RELEASE_PUBLISH_COMPAT_KEY=<key>                 (staging repo, for manual triage)
 
 set -uo pipefail
 
 : "${MAVEN_USERNAME:?MAVEN_USERNAME is required}"
 : "${MAVEN_PASSWORD:?MAVEN_PASSWORD is required}"
 : "${BUILD_VERSION:?BUILD_VERSION is required}"
-: "${STAGING_PROFILE_ID:?STAGING_PROFILE_ID is required}"
+STAGING_PROFILE_ID="${STAGING_PROFILE_ID:-}"
 PUBLISH_LOG="${PUBLISH_LOG:-}"
 RESUME_DEPLOYMENT_ID="${RESUME_DEPLOYMENT_ID:-}"
 REQUIRE_COORDS="${REQUIRE_COORDS:-}"
@@ -44,6 +48,8 @@ SEARCH_DEADLINE="${SEARCH_DEADLINE:-600}"
 VALIDATE_DEADLINE="${VALIDATE_DEADLINE:-1800}"
 PUBLISH_DEADLINE="${PUBLISH_DEADLINE:-1800}"
 CENTRAL_DEADLINE="${CENTRAL_DEADLINE:-1800}"
+# Settling window before re-reading state after an inconclusive publish response.
+SETTLE_SECONDS="${SETTLE_SECONDS:-45}"
 
 DID="${RESUME_DEPLOYMENT_ID}"
 REPO_KEY=""
@@ -52,6 +58,8 @@ STATUS_JSON="$TMP/portal-status.json"
 classify() { # class retryable
   echo "RELEASE_PUBLISH_CLASS=$1"
   echo "RELEASE_PUBLISH_RETRYABLE=$2"
+  [ -n "$DID" ] && echo "RELEASE_PUBLISH_DEPLOYMENT_ID=$DID"
+  [ -n "$REPO_KEY" ] && echo "RELEASE_PUBLISH_COMPAT_KEY=$REPO_KEY"
   : > "$TMP/publish-classified"
 }
 
@@ -60,16 +68,20 @@ fail_transient()     { classify transient true;      echo "::error title=Transie
 # After a deployment exists, a blind re-dispatch would upload the version twice.
 fail_resumable() {
   classify resumable false
-  [ -n "$DID" ] && echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$DID"
-  [ -n "$REPO_KEY" ] && echo "RELEASE_PUBLISH_COMPAT_KEY=$REPO_KEY"
-  echo "::error title=Resumable publish failure::$* Re-dispatch with resume-deployment-id=${DID:-<unknown>} instead of a plain re-run (a plain re-run would create a second deployment of ${BUILD_VERSION})."
+  if [ -n "$DID" ]; then
+    echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$DID"
+    echo "::error title=Resumable publish failure::$* Re-dispatch with resume-deployment-id=${DID} — a plain re-run would upload ${BUILD_VERSION} a second time."
+  else
+    echo "::error title=Resumable publish failure::$* The artifacts are staged but no Portal deployment id is known yet. Do NOT plainly re-run (that uploads ${BUILD_VERSION} again): look it up with the compat key above via GET ${HOST}/manual/search/repositories?ip=any (Bearer auth) and re-dispatch with resume-deployment-id, or drop that staging repository first."
+  fi
   exit 1
 }
 
-# http METHOD URL OUTFILE -> prints HTTP status (000 on transport error)
+# http METHOD URL OUTFILE -> prints HTTP status (000 on transport error).
+# Response headers land in <OUTFILE>.headers (needed for Retry-After).
 http() {
   local method="$1" url="$2" out="$3" code
-  code=$(curl "${NET[@]}" -o "$out" -w '%{http_code}' -X "$method" -H "$AUTH" -H 'Accept: application/json' "$url" 2>/dev/null)
+  code=$(curl "${NET[@]}" -o "$out" -D "${out}.headers" -w '%{http_code}' -X "$method" -H "$AUTH" -H 'Accept: application/json' "$url" 2>/dev/null)
   if [ -z "$code" ]; then echo "000"; else echo "$code"; fi
 }
 
@@ -83,16 +95,25 @@ if [ -n "$DID" ]; then
 else
   [ -n "$PUBLISH_LOG" ] && [ -f "$PUBLISH_LOG" ] \
     || fail_deterministic "PUBLISH_LOG is required when RESUME_DEPLOYMENT_ID is not set."
-  REPO_KEY=$(grep -oE "Created staging repository '[^']+'" "$PUBLISH_LOG" 2>/dev/null | head -1 | sed -E "s/^.*'([^']+)'.*$/\1/")
-  [ -n "$REPO_KEY" ] \
-    || fail_deterministic "No 'Created staging repository' line in the publish log — nothing was staged."
+  mapfile -t created < <(grep -oE "Created staging repository '[^']+'" "$PUBLISH_LOG" 2>/dev/null | sed -E "s/^.*'([^']+)'.*$/\1/" | sort -u)
+  if [ "${#created[@]}" -eq 0 ]; then
+    fail_deterministic "No 'Created staging repository' line in the publish log — nothing was staged."
+  elif [ "${#created[@]}" -gt 1 ]; then
+    printf 'Staged repositories: %s\n' "${created[*]}"
+    fail_deterministic "The build created ${#created[@]} staging repositories; this flow publishes exactly one. Publish them manually or split the release."
+  fi
+  REPO_KEY="${created[0]}"
   echo "Compat staging repository: $REPO_KEY"
+  echo "RELEASE_PUBLISH_COMPAT_KEY=$REPO_KEY"
 
   # The search key is prefixed ("<user>/<ip>/<repo-id>"), so match by suffix.
+  # Without a namespace the search is unfiltered — the key-suffix match still pins it.
+  search_url="$HOST/manual/search/repositories?ip=any"
+  [ -n "$STAGING_PROFILE_ID" ] && search_url="${search_url}&profile_id=${STAGING_PROFILE_ID}"
   sf="$TMP/portal-search.json"
   deadline=$(( $(now) + SEARCH_DEADLINE ))
   while :; do
-    code=$(http GET "$HOST/manual/search/repositories?ip=any&profile_id=${STAGING_PROFILE_ID}" "$sf")
+    code=$(http GET "$search_url" "$sf")
     if [ "$code" = "200" ]; then
       DID=$(jq -r --arg k "$REPO_KEY" '.repositories[]? | select(.key | endswith($k)) | .portal_deployment_id // empty' "$sf" 2>/dev/null | head -1)
       [ -n "$DID" ] && [ "$DID" != "null" ] && break
@@ -104,23 +125,23 @@ else
     fi
     if [ "$(now)" -ge "$deadline" ]; then
       echo "  (last search body):"; head -c 2000 "$sf" 2>/dev/null; echo
-      REPO_KEY="$REPO_KEY" fail_resumable "The staging repository was created but never appeared as a Portal deployment within ${SEARCH_DEADLINE}s."
+      fail_resumable "The staging repository was created but never appeared as a Portal deployment within ${SEARCH_DEADLINE}s."
     fi
     sleep 15
   done
 fi
 echo "Portal deployment id: $DID"
 echo "RELEASE_PUBLISH_DEPLOYMENT_ID=$DID"
-[ -n "$REPO_KEY" ] && echo "RELEASE_PUBLISH_COMPAT_KEY=$REPO_KEY"
 
 # ---------------------------------------------------------------------------
 # 2. Wait for VALIDATED (or notice it already moved on)
 # ---------------------------------------------------------------------------
 dump_errors() {
-  jq -r 'if (.errors|type)=="object" then (.errors|to_entries[]|"  - \(.key): \(.value|tostring)")
-         elif (.errors|type)=="array" then (.errors[]|"  - \(.|tostring)")
-         else empty end' "$STATUS_JSON" 2>/dev/null \
-    || { echo "  (raw status body):"; head -c 2000 "$STATUS_JSON"; echo; }
+  local out
+  out=$(jq -r 'if (.errors|type)=="object" then (.errors|to_entries[]|"  - \(.key): \(.value|tostring)")
+               elif (.errors|type)=="array" then (.errors[]|"  - \(.|tostring)")
+               else empty end' "$STATUS_JSON" 2>/dev/null)
+  if [ -n "$out" ]; then echo "$out"; else echo "  (no .errors field; raw status body):"; head -c 2000 "$STATUS_JSON"; echo; fi
 }
 
 poll_state() { jq -r '.deploymentState // empty' "$STATUS_JSON" 2>/dev/null; }
@@ -136,7 +157,7 @@ while :; do
     401|403) fail_deterministic "POST /status -> HTTP $code (credentials/permissions)." ;;
     404)
       # Right after the hand-off the deployment may not be queryable yet.
-      echo "  status 404 — treating as propagation delay, still waiting..."
+      echo "  status 404 — treating as propagation delay, still waiting (verify the id if this persists)..."
       ;;
     *) echo "  transient HTTP $code, retrying..." ;;
   esac
@@ -160,7 +181,7 @@ done
 #    (protects against a wrong resume-deployment-id publishing someone else's work)
 # ---------------------------------------------------------------------------
 mapfile -t PURLS < <(jq -r '.purls[]? // empty' "$STATUS_JSON" 2>/dev/null | sed 's/?.*$//')
-MAVEN_COORDS=()
+declare -a MAVEN_COORDS=()
 for p in "${PURLS[@]:-}"; do
   [ -n "$p" ] || continue
   case "$p" in pkg:maven/*) : ;; *) continue ;; esac
@@ -170,6 +191,11 @@ for p in "${PURLS[@]:-}"; do
   [ -n "$grp" ] && [ -n "$art" ] && [ -n "$ver" ] || continue
   MAVEN_COORDS+=("$grp:$art:$ver")
 done
+
+# Classifier-stripped purls (sources/javadoc) collapse into duplicates.
+if [ "${#MAVEN_COORDS[@]}" -gt 0 ]; then
+  mapfile -t MAVEN_COORDS < <(printf '%s\n' "${MAVEN_COORDS[@]}" | sort -u)
+fi
 
 if [ "${#MAVEN_COORDS[@]}" -eq 0 ]; then
   echo "  (raw status body):"; head -c 2000 "$STATUS_JSON"; echo
@@ -184,11 +210,15 @@ for c in "${MAVEN_COORDS[@]}"; do
   grp="${c%%:*}"; ver="${c##*:}"
   [ "$ver" = "$BUILD_VERSION" ] \
     || fail_deterministic "Deployment $DID contains version '$ver' but this release is '$BUILD_VERSION' — refusing to publish (wrong resume-deployment-id?)."
-  case "$grp" in
-    "$STAGING_PROFILE_ID"|"$STAGING_PROFILE_ID".*) : ;;
-    *) fail_deterministic "Deployment $DID contains group '$grp' outside namespace '$STAGING_PROFILE_ID' — refusing to publish." ;;
-  esac
+  if [ -n "$STAGING_PROFILE_ID" ]; then
+    case "$grp" in
+      "$STAGING_PROFILE_ID"|"$STAGING_PROFILE_ID".*) : ;;
+      *) fail_deterministic "Deployment $DID contains group '$grp' outside namespace '$STAGING_PROFILE_ID' — refusing to publish." ;;
+    esac
+  fi
 done
+[ -n "$STAGING_PROFILE_ID" ] || echo "::warning::No staging-profile-id configured — namespace check skipped (the version was still verified)."
+
 
 for want in $REQUIRE_COORDS; do
   found=false
@@ -201,6 +231,26 @@ done
 # ---------------------------------------------------------------------------
 # 4. Publish (irreversible)
 # ---------------------------------------------------------------------------
+# Any inconclusive response is reconciled against the deployment state rather than
+# re-POSTed or declared fatal: the publish may have been accepted, and a late
+# 400/409 usually means "no longer VALIDATED", i.e. it already went through.
+reconcile_after_publish() { # $1 = context for the log
+  echo "  $1 — settling, then re-reading the deployment state..."
+  sleep "$SETTLE_SECONDS"
+  http POST "$PORTAL/status?id=$DID" "$STATUS_JSON" >/dev/null
+  state=$(poll_state)
+  echo "  post-settle state=${state:-unknown}"
+  case "$state" in
+    PUBLISHING|PUBLISHED) return 0 ;;
+    VALIDATED)            return 1 ;;
+    FAILED)
+      echo "::group::Deployment errors"; dump_errors; echo "::endgroup::"
+      fail_deterministic "Deployment $DID became FAILED during publish."
+      ;;
+    *) fail_resumable "Deployment $DID is in state '${state:-unknown}' after an inconclusive publish call." ;;
+  esac
+}
+
 if [ "$state" = "VALIDATED" ]; then
   resp="$TMP/portal-publish-resp"
   attempt=0
@@ -210,29 +260,23 @@ if [ "$state" = "VALIDATED" ]; then
     echo "POST /deployment/$DID (attempt $attempt) -> HTTP $code"
     case "$code" in
       204|200) echo "Publish accepted."; break ;;
-      401|403|400|404|409|422)
+      401|403)
         echo "  (response body):"; head -c 2000 "$resp" 2>/dev/null; echo
-        fail_deterministic "POST /deployment/$DID -> HTTP $code."
+        fail_deterministic "POST /deployment/$DID -> HTTP $code (credentials/permissions)."
+        ;;
+      400|404|409|422)
+        # May equally mean "already past VALIDATED" — check before condemning it.
+        echo "  (response body):"; head -c 2000 "$resp" 2>/dev/null; echo
+        if reconcile_after_publish "HTTP $code"; then break; fi
+        fail_deterministic "POST /deployment/$DID -> HTTP $code and the deployment is still VALIDATED."
         ;;
       429)
-        ra=$(awk 'tolower($0) ~ /^retry-after:/ {print $2}' "$resp" 2>/dev/null | tr -d '\r')
+        ra=$(awk 'BEGIN{IGNORECASE=1} /^retry-after:/ {gsub(/\r/,""); print $2}' "${resp}.headers" 2>/dev/null | head -1)
+        echo "  rate limited; sleeping ${ra:-30}s"
         sleep "${ra:-30}"
         ;;
       *)
-        # Ambiguous: the publish may have been accepted. Never blindly re-POST —
-        # settle, then decide from the deployment state.
-        echo "  ambiguous response ($code); settling before re-checking status..."
-        sleep 45
-        http POST "$PORTAL/status?id=$DID" "$STATUS_JSON" >/dev/null
-        state=$(poll_state)
-        echo "  post-settle state=${state:-unknown}"
-        case "$state" in
-          PUBLISHING|PUBLISHED) break ;;
-          VALIDATED)            : ;;  # genuinely not accepted -> retry the POST
-          FAILED) echo "::group::Errors"; dump_errors; echo "::endgroup::"
-                  fail_deterministic "Deployment $DID became FAILED during publish." ;;
-          *) fail_resumable "Deployment $DID is in state '${state:-unknown}' after an ambiguous publish call." ;;
-        esac
+        if reconcile_after_publish "inconclusive response ($code)"; then break; fi
         ;;
     esac
     [ "$attempt" -ge 5 ] && fail_resumable "Publish call for $DID did not succeed after $attempt attempts."
@@ -247,6 +291,10 @@ while :; do
   code=$(http POST "$PORTAL/status?id=$DID" "$STATUS_JSON")
   state=$(poll_state)
   echo "POST /status?id=$DID -> HTTP $code state=${state:-?}"
+  case "$code" in
+    401|403) fail_deterministic "POST /status -> HTTP $code while waiting for PUBLISHED (credentials/permissions)." ;;
+    *) : ;;
+  esac
   case "$state" in
     PUBLISHED) echo "Deployment $DID is PUBLISHED."; break ;;
     FAILED)

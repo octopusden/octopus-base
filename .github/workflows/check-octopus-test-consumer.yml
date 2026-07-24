@@ -106,7 +106,7 @@ jobs:
               -ignore "shellcheck reported issue in this script: SC2034:" \
               -ignore "shellcheck reported issue in this script: SC2046:" \
               -ignore "shellcheck reported issue in this script: SC2086:" \
-              -ignore "property \"workflow_sha\" is not defined" \
+              -ignore "property \"workflow_sha\" is not defined in object type \{check_run_id" \
               $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
           '
       - name: Validate helper scripts
