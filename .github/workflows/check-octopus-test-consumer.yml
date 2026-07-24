@@ -87,6 +87,11 @@ jobs:
       ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.7' }}
     steps:
       - uses: actions/checkout@v4
+      # Note on the last -ignore: `github.job_workflow_sha` is a real, documented
+      # context property (the commit SHA of the reusable-workflow file), used by
+      # common-java-gradle-release.yml to fetch its helper script at exactly its own
+      # version. actionlint 1.7.7 still ships an older context type list and reports
+      # it as undefined, so that one message is filtered out.
       - name: actionlint
         shell: bash
         run: |
@@ -98,6 +103,7 @@ jobs:
               -ignore "shellcheck reported issue in this script: SC2034:" \
               -ignore "shellcheck reported issue in this script: SC2046:" \
               -ignore "shellcheck reported issue in this script: SC2086:" \
+              -ignore "property \"job_workflow_sha\" is not defined" \
               $(find .github/workflows -type f \( -name "*.yml" -o -name "*.yaml" \) | sort)
           '
       - name: Validate helper scripts
