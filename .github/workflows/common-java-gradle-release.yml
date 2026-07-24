@@ -267,14 +267,112 @@ jobs:
 
       # publish to nexus
       - name: Publish to Sonatype Nexus
+        id: publish-sonatype
         if: ${{ !inputs.dry-run }}
-        run: ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: |
+          set -o pipefail
+          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+
+      # On a Sonatype publish failure, surface WHY (and whether a retry can help):
+      #  (1) HTTP status + body of the account's staging profiles;
+      #  (2) the deployment's validation errors via the SUPPORTED path
+      #      (/manual/search/repositories -> portal_deployment_id -> Portal
+      #      /api/v1/publisher/status .errors); the compat /activity endpoint is
+      #      unsupported (HTTP 400) so it is not used;
+      #  (3) an evidence-based classification emitted as log markers
+      #      RELEASE_PUBLISH_CLASS / RELEASE_PUBLISH_RETRYABLE for the caller /
+      #      TeamCity to scrape (reusable-workflow step outputs are unreliable on
+      #      failed runs). retryable=true is asserted ONLY on unambiguous infra
+      #      signals (5xx / timeout / reset); Portal validation errors are
+      #      deterministic; everything else stays 'unknown'. Reads only the Gradle
+      #      failure section to avoid false matches from --info chatter.
+      - name: Diagnose & classify Sonatype publish failure
+        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' && !inputs.dry-run }}
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+        run: |
+          set +e
+          host="https://ossrh-staging-api.central.sonatype.com"
+          compat="$host/service/local"
+          portal="https://central.sonatype.com/api/v1/publisher"
+          log="$RUNNER_TEMP/publish.log"
+          net=(--connect-timeout 15 --max-time 60)
+          auth=("${net[@]}" -u "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" -H 'Accept: application/json')
+          bearer="Authorization: Bearer $(printf '%s:%s' "${MAVEN_USERNAME}" "${MAVEN_PASSWORD}" | base64 | tr -d '\n')"
+
+          # GET (basic auth) into a file, print HTTP status, jq; raw body on parse-fail.
+          dump() { # label url jq-filter
+            local f; f="$RUNNER_TEMP/diag-$(echo "$1" | tr -c 'a-zA-Z0-9' _).json"
+            local code; code=$(curl -sS -o "$f" -w '%{http_code}' "${auth[@]}" "$2" 2>/dev/null)
+            echo "GET $2 -> HTTP ${code:-?}"
+            local out; out=$(jq -r "$3" "$f" 2>/dev/null)
+            if [ -n "$out" ]; then echo "$out"; else echo "  (unparsed body):"; head -c 2000 "$f"; echo; fi
+          }
+
+          echo "::group::Staging profiles visible to this account"
+          dump "profiles" "$compat/staging/profiles" '.data[]? | "  name=\(.name)  id=\(.id)"'
+          echo "::endgroup::"
+
+          # Validation reason: the compat /activity endpoint is unsupported (HTTP 400),
+          # so map the staging repo -> Portal deployment and read its .errors.
+          portal_errors=""
+          repo=$(grep -oE "Created staging repository '[^']+'" "$log" 2>/dev/null | head -1 | sed -E "s/^.*'([^']+)'.*$/\1/")
+          if [ -n "$repo" ]; then
+            echo "::group::Deployment status & validation errors for $repo"
+            sf="$RUNNER_TEMP/diag-search.json"
+            scode=$(curl -sS -o "$sf" -w '%{http_code}' "${net[@]}" -H "$bearer" -H 'Accept: application/json' "$host/manual/search/repositories" 2>/dev/null)
+            echo "GET /manual/search/repositories -> HTTP ${scode:-?}"
+            # The search 'key' is prefixed (e.g. "<user>/any/org.octopusden--<uuid>"),
+            # so match on the repo id as a suffix rather than exact equality.
+            did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key | endswith($k)) | .portal_deployment_id' "$sf" 2>/dev/null | head -1)
+            if [ -n "$did" ] && [ "$did" != "null" ]; then
+              stf="$RUNNER_TEMP/diag-status.json"
+              # Poll while the deployment is still validating; .errors appear only once FAILED.
+              for i in 1 2 3 4 5; do
+                pcode=$(curl -sS -o "$stf" -w '%{http_code}' "${net[@]}" -X POST -H "$bearer" -H 'Accept: application/json' "$portal/status?id=$did" 2>/dev/null)
+                dstate=$(jq -r '.deploymentState // "?"' "$stf" 2>/dev/null)
+                echo "POST /api/v1/publisher/status?id=$did (try $i) -> HTTP ${pcode:-?}  deploymentState=${dstate}"
+                case "$dstate" in PENDING|VALIDATING|PUBLISHING) sleep 5 ;; *) break ;; esac
+              done
+              errs=$(jq -r 'if (.errors|type)=="object" then (.errors|to_entries[]|"  - \(.key): \(.value|tostring)") elif (.errors|type)=="array" then (.errors[]|"  - \(.|tostring)") else empty end' "$stf" 2>/dev/null)
+              if [ -n "$errs" ]; then
+                echo "  errors:"; echo "$errs"; portal_errors="$errs"
+              else
+                echo "  (no errors parsed; raw status body):"; head -c 2000 "$stf"; echo
+              fi
+            else
+              echo "  No Portal deployment mapped for $repo — the close/release step did not hand the repository off to the Portal (typical for compat close/release failures), so there are no Portal validation errors to inspect."
+            fi
+            echo "::endgroup::"
+          else
+            echo "No staging repository was created (failure before repo creation)."
+          fi
+
+          # Classify. Deterministic = Portal reported validation errors, or an explicit
+          # auth failure. Transient = ONLY unambiguous infra signals. Everything else is
+          # unknown (do NOT assert a retry will help). Reads only the Gradle failure section.
+          sec=$(awk '/FAILURE: Build failed/{f=1} f{print}' "$log" 2>/dev/null)
+          [ -z "$sec" ] && sec=$(tail -n 400 "$log" 2>/dev/null)
+          cls="unknown"; retryable="unknown"
+          if [ -n "$portal_errors" ] || printf '%s' "$sec" | grep -qiE 'responded with status code 40[13]|401 Unauthorized|403 Forbidden'; then
+            cls="deterministic"; retryable="false"
+          elif printf '%s' "$sec" | grep -qiE 'responded with status code 5[0-9][0-9]|status code 5[0-9][0-9]|timed out|Read timed out|Connection reset|Connection refused'; then
+            cls="transient"; retryable="true"
+          fi
+          echo "RELEASE_PUBLISH_CLASS=${cls}"
+          echo "RELEASE_PUBLISH_RETRYABLE=${retryable}"
+          case "$cls" in
+            deterministic) echo "::error title=Deterministic publish failure::Validation / auth error (see deployment errors above) — retrying will NOT help. Fix the artifact/credentials; do not re-dispatch." ;;
+            transient)     echo "::warning title=Transient publish failure::Infrastructure instability (5xx/timeout) — a re-dispatch may succeed." ;;
+            *)             echo "::warning title=Unclassified publish failure::Could not classify — inspect the deployment errors and log above; there is no evidence a retry will help." ;;
+          esac
 
       # github release
       - name: Create release
