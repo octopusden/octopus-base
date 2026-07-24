@@ -164,3 +164,30 @@ jobs:
       flow-type: hybrid
       java-version: '21'
 ```
+
+## Skipping Maven Central publishing (`publish-to-nexus`)
+
+`common-java-gradle-release` publishes the module's Maven artifacts to Sonatype
+Central by default (`publish-to-nexus: true`). Set it to `false` for
+**deployable-only** repositories — an application or UI that ships as a docker
+image and is never consumed by anyone as a Maven dependency. Skipping the
+upload keeps the org under Maven Central's monthly publishing limits (a Spring
+Boot fat-jar can be tens of MB per release).
+
+When `publish-to-nexus: false`, the release still builds, pushes the docker
+image, and creates the GitHub release — only the Sonatype publish (and its
+secret check) are skipped. Pair it with `register-release-immediately: true`
+so the release is logged directly instead of waiting for a Maven Central
+artifact that will never appear.
+
+```yaml
+jobs:
+  build:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@<tag>
+    with:
+      flow-type: hybrid
+      java-version: '21'
+      docker-image: my-app
+      publish-to-nexus: false
+      register-release-immediately: true
+```

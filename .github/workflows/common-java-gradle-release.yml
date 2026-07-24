@@ -50,6 +50,11 @@ on:
         required: false
         type: string
         default: 'org.octopusden'
+      publish-to-nexus:
+        description: 'Publish Maven artifacts to Sonatype Central. Set false for deployable-only repos (app/UI) that nobody consumes as a Maven dependency.'
+        required: false
+        type: boolean
+        default: true
     secrets:
       OSSRH_USERNAME:
         required: false
@@ -137,7 +142,7 @@ jobs:
           echo "- Release log registration will be skipped"
 
       - name: Fail if release secrets are not set for non-dry-run
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
         env:
           OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
@@ -250,7 +255,7 @@ jobs:
       # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
       # when staging-profile-id is blank (falls back to auto-lookup).
       - name: Prepare staging-profile init script
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
         run: |
           cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
           allprojects { proj ->
@@ -268,7 +273,7 @@ jobs:
       # publish to nexus
       - name: Publish to Sonatype Nexus
         id: publish-sonatype
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
         run: |
           set -o pipefail
           ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
