@@ -2,8 +2,15 @@
 
 import khttp.get
 import khttp.post
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
+
+// Triggers a GitHub release (repository_dispatch) and watches the resulting
+// workflow run. Fails FAST with an actionable TeamCity build problem when the
+// run concludes in failure — instead of blindly polling the release tag until a
+// bare timeout — and links to the run, where the reusable workflow's
+// "Diagnose & classify" step reports the cause and RELEASE_PUBLISH_RETRYABLE.
+// Arguments are unchanged for backward compatibility.
 
 if (args.size != 6) {
     System.err.println("Arguments: octopusModule githubToken currentCommit versionToRelease timeoutInMinutes eventType")
@@ -14,27 +21,154 @@ val octopusModule = args[0]
 val githubToken = args[1]
 val currentCommit = args[2]
 val versionToRelease = args[3]
-val timeoutMinutes = args[4]
+val timeoutMinutes = args[4].toIntOrNull() ?: -1
+if (timeoutMinutes < 0) {
+    System.err.println("timeoutInMinutes must be a non-negative integer, got: ${args[4]}")
+    System.exit(-1)
+}
 val eventType = args[5]
 
-val respCreate = post("https://api.github.com/repos/octopusden/$octopusModule/dispatches", mapOf("Authorization" to "Bearer $githubToken"), emptyMap(), """{
-        "event_type": "$eventType",
-        "client_payload": {
-        "commit": "$currentCommit",
-        "project_version": "$versionToRelease"
-    }""")
-if (respCreate.statusCode / 100 != 2) {
-    throw Exception(respCreate.text)
+val repo = "octopusden/$octopusModule"
+val api = "https://api.github.com/repos/$repo"
+val ghHeaders = mapOf(
+    "Authorization" to "Bearer $githubToken",
+    "Accept" to "application/vnd.github+json"
+)
+
+// Emit a TeamCity build problem (escaped per TeamCity service-message rules).
+fun buildProblem(description: String) {
+    val escaped = description
+        .replace("|", "||").replace("'", "|'")
+        .replace("\n", "|n").replace("\r", "|r")
+        .replace("[", "|[").replace("]", "|]")
+    println("##teamcity[buildProblem description='$escaped' identity='github-release-$octopusModule']")
 }
-println("Waiting for release to complete...")
-var attempt = 1
-var limit = Integer.valueOf(timeoutMinutes)
-do {
-    println("Attempt: " + attempt)
-    if (attempt > limit) {
-        throw TimeoutException("Number of attempts exceeded($attempt)")
+
+fun fail(description: String): Nothing {
+    buildProblem(description)
+    System.err.println(description)
+    System.exit(3)
+    throw IllegalStateException() // unreachable; satisfies Nothing
+}
+
+// List current repository_dispatch run IDs. Returns (ok, ids): ok=false means the
+// listing call itself failed (so the snapshot is unreliable).
+fun listDispatchRunIds(): Pair<Boolean, Set<Long>> {
+    val resp = get("$api/actions/runs?event=repository_dispatch&per_page=50", headers = ghHeaders)
+    if (resp.statusCode / 100 != 2) return Pair(false, emptySet())
+    val arr = resp.jsonObject.optJSONArray("workflow_runs") ?: return Pair(true, emptySet())
+    val ids = HashSet<Long>()
+    for (i in 0 until arr.length()) ids.add(arr.getJSONObject(i).getLong("id"))
+    return Pair(true, ids)
+}
+
+// Snapshot existing runs BEFORE dispatching so we only ever lock onto a NEW run
+// afterwards — never a prior release's (possibly failed) run. A reliable baseline is
+// mandatory: retry, and ABORT BEFORE dispatch if it can't be obtained (dispatching
+// blind could make us mistake a historical run for this release).
+var preExistingTmp: Set<Long>? = null
+for (i in 1..3) {
+    val (ok, ids) = listDispatchRunIds()
+    if (ok) { preExistingTmp = ids; break }
+    println("Could not snapshot existing runs (attempt $i/3); retrying...")
+    TimeUnit.SECONDS.sleep(5L)
+}
+val preExisting: Set<Long> = preExistingTmp
+    ?: fail("Could not snapshot existing workflow runs before dispatching (GitHub API unavailable). Aborting before dispatch to avoid mis-tracking a prior run; please retry the release.")
+
+// 1) Trigger the release. Build the body with org.json so special characters in
+//    the arguments can't break the JSON.
+val dispatchBody = JSONObject()
+    .put("event_type", eventType)
+    .put("client_payload", JSONObject().put("commit", currentCommit).put("project_version", versionToRelease))
+    .toString()
+val respCreate = post(
+    "$api/dispatches",
+    headers = ghHeaders + ("Content-Type" to "application/json"),
+    data = dispatchBody
+)
+if (respCreate.statusCode / 100 != 2) {
+    fail("Failed to trigger release dispatch for $repo (HTTP ${respCreate.statusCode}): ${respCreate.text}")
+}
+println("Release dispatched for $repo version $versionToRelease. Watching for the new workflow run...")
+
+// 2) Watch the run triggered by THIS dispatch: pick the newest repository_dispatch
+//    run whose id was not present before the dispatch, then poll its conclusion and
+//    fail fast on failure. (repository_dispatch client_payload is not exposed in the
+//    runs API, so a "new id not seen before" match is used; concurrent dispatches of
+//    the same repo are not disambiguated — releases are expected to be serial.)
+var runId: Long? = null
+var runUrl: String? = null
+var attempt = 0
+while (true) {
+    attempt++
+    if (attempt > timeoutMinutes) {
+        val seen = runUrl?.let { " Last observed run: $it" } ?: " No new workflow run appeared."
+        fail("Release for $repo $versionToRelease did not complete within $timeoutMinutes minute(s).$seen")
     }
     TimeUnit.MINUTES.sleep(1L)
-    val respCheck = get(url = "https://api.github.com/repos/octopusden/$octopusModule/releases/tags/v$versionToRelease")
-    attempt++
-} while (respCheck.statusCode / 100 != 2)
+
+    if (runId == null) {
+        val runs = get("$api/actions/runs?event=repository_dispatch&per_page=50", headers = ghHeaders)
+        if (runs.statusCode / 100 != 2) {
+            println("Attempt $attempt: could not list runs (HTTP ${runs.statusCode}); retrying...")
+            continue
+        }
+        val arr = runs.jsonObject.optJSONArray("workflow_runs")
+        var chosen: JSONObject? = null
+        if (arr != null) {
+            for (i in 0 until arr.length()) { // newest first
+                val r = arr.getJSONObject(i)
+                if (!preExisting.contains(r.getLong("id"))) { chosen = r; break }
+            }
+        }
+        if (chosen == null) {
+            println("Attempt $attempt: new release run not visible yet...")
+            continue
+        }
+        // !! is safe: the null-check above `continue`s when chosen is null. A plain
+        // smart-cast doesn't compile here — in a .main.kts the script body is a
+        // closure, so the captured `var chosen` cannot be smart-cast.
+        runId = chosen!!.getLong("id")
+        runUrl = chosen!!.optString("html_url")
+        println("Watching new run: $runUrl")
+        continue
+    }
+
+    val runResp = get("$api/actions/runs/$runId", headers = ghHeaders)
+    if (runResp.statusCode / 100 != 2) {
+        println("Attempt $attempt: could not read run $runId (HTTP ${runResp.statusCode}); retrying...")
+        continue
+    }
+    val run: JSONObject = runResp.jsonObject
+    val status = run.optString("status")
+    val conclusion = run.optString("conclusion")
+    println("Attempt $attempt: run status=$status conclusion=$conclusion")
+    if (status == "completed") {
+        if (conclusion == "success") {
+            println("Release run succeeded: $runUrl")
+            // Belt-and-braces: confirm the release tag exists, retrying within the
+            // remaining time budget so one transient tag GET (404 propagation delay /
+            // 5xx) doesn't turn a real success into a false failure.
+            while (true) {
+                val tag = get("$api/releases/tags/v$versionToRelease", headers = ghHeaders)
+                if (tag.statusCode / 100 == 2) {
+                    println("Release tag v$versionToRelease is present.")
+                    System.exit(0)
+                }
+                attempt++
+                if (attempt > timeoutMinutes) {
+                    fail("Release run for $repo succeeded but release tag v$versionToRelease was not confirmed within the timeout (last HTTP ${tag.statusCode}). See $runUrl")
+                }
+                println("Tag v$versionToRelease not confirmed yet (HTTP ${tag.statusCode}); retrying...")
+                TimeUnit.MINUTES.sleep(1L)
+            }
+        } else {
+            fail(
+                "Release run for $repo $versionToRelease concluded '$conclusion'. See $runUrl " +
+                "(open the 'Diagnose & classify Sonatype publish failure' step for the cause and " +
+                "RELEASE_PUBLISH_RETRYABLE: deterministic => do not re-dispatch; transient => a re-dispatch may help)."
+            )
+        }
+    }
+}
