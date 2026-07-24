@@ -348,7 +348,7 @@ jobs:
                 echo "  (no errors parsed; raw status body):"; head -c 2000 "$stf"; echo
               fi
             else
-              echo "  (no portal_deployment_id for $repo; raw search body):"; head -c 2000 "$sf"; echo
+              echo "  No Portal deployment mapped for $repo — the close/release step did not hand the repository off to the Portal (typical for compat close/release failures), so there are no Portal validation errors to inspect."
             fi
             echo "::endgroup::"
           else
