@@ -74,12 +74,17 @@ jobs:
   prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
-    # Two overlapping releases of the same repository would compute the same next
-    # version and upload it twice (one deployment then fails validation as a
-    # duplicate). Serialize per repository instead of cancelling: a cancelled run
-    # could leave an unpublished deployment behind.
+    # Serialize REAL releases per repository: two overlapping ones would compute the
+    # same next version and upload it twice. Dry runs must NOT share that group —
+    # a repository can run several release variants at once (octopus-test's
+    # release-smoke matrix), and since GitHub keeps only one pending member per
+    # group, the extra variants would be cancelled. So dry runs get a key that is
+    # unique per run and variant, real publishes get the shared per-repository one.
     concurrency:
-      group: release-${{ github.repository }}
+      group: >-
+        release-${{ github.repository }}-${{ inputs.dry-run
+          && format('dry-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image)
+          || 'publish' }}
       cancel-in-progress: false
     env:
       SKIP_TESTS: ''
@@ -440,6 +445,12 @@ jobs:
           cls="unknown"; retryable="unknown"
           if [ -n "$portal_errors" ] || printf '%s' "$sec" | grep -qiE 'responded with status code 40[13]|401 Unauthorized|403 Forbidden'; then
             cls="deterministic"; retryable="false"
+          elif [ -n "$repo" ]; then
+            # Artifacts are already staged (and possibly handed off to the Portal):
+            # a plain re-dispatch would upload this version a second time.
+            cls="resumable"; retryable="false"
+            echo "RELEASE_PUBLISH_COMPAT_KEY=$repo"
+            [ -n "${did:-}" ] && [ "${did:-}" != "null" ] && echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$did"
           elif printf '%s' "$sec" | grep -qiE 'responded with status code 5[0-9][0-9]|status code 5[0-9][0-9]|timed out|Read timed out|Connection reset|Connection refused'; then
             cls="transient"; retryable="true"
           fi
@@ -453,7 +464,8 @@ jobs:
             echo "RELEASE_PUBLISH_RETRYABLE=${retryable}"
             case "$cls" in
               deterministic) echo "::error title=Deterministic publish failure::Validation / auth error (see deployment errors above) — retrying will NOT help. Fix the artifact/credentials; do not re-dispatch." ;;
-              transient)     echo "::warning title=Transient publish failure::Infrastructure instability (5xx/timeout) — a re-dispatch may succeed." ;;
+              transient)     echo "::warning title=Transient publish failure::Infrastructure instability (5xx/timeout) before anything was staged — a re-dispatch may succeed." ;;
+              resumable)     echo "::error title=Resumable publish failure::The version is already staged, so a plain re-dispatch would upload it twice. Finish it with resume-deployment-id (see the id/compat key above), or drop that staging repository first." ;;
               *)             echo "::warning title=Unclassified publish failure::Could not classify — inspect the deployment errors and log above; there is no evidence a retry will help." ;;
             esac
           fi

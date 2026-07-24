@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Fake curl for portal-publish.sh tests. Canned responses driven by env:
+#   SEARCH_CODE, SEARCH_DID, STATUS_STATES (space-separated, consumed per call),
+#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, PUBLISH_CODES, REPO1_CODES
+set -u
+out=/dev/null; url=""; method="GET"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -X) method="$2"; shift 2 ;;
+    -w|-H|--connect-timeout|--max-time) shift 2 ;;
+    -sS|-s|-S) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+S="${STATE_DIR:?}"
+next() { # counter-file list default
+  local f="$S/$1" list="$2" def="$3" i v
+  i=$(cat "$f" 2>/dev/null || echo 0); i=$((i+1)); echo "$i" > "$f"
+  v=$(echo "$list" | awk -v n="$i" '{ if (NF>=n) print $n; else print $NF }')
+  [ -n "$v" ] && echo "$v" || echo "$def"
+}
+echo "$method $url" >> "$S/calls.log"
+case "$url" in
+  *manual/search/repositories*)
+    code="${SEARCH_CODE:-200}"
+    did="$(next search_i "${SEARCH_DID:-dep-1}" dep-1)"
+    if [ "$did" = "-" ]; then did=null; else did="\"$did\""; fi
+    cat > "$out" <<EOF
+{"repositories":[{"key":"user/any/org.octopusden--abc","state":"closed","portal_deployment_id":$did}]}
+EOF
+    echo "$code" ;;
+  *publisher/status*)
+    st="$(next status_i "${STATUS_STATES:-VALIDATED}" VALIDATED)"
+    ver="${STATUS_VERSION:-2.5.0}"; grp="${STATUS_GROUP:-org.octopusden.octopus}"
+    err="${STATUS_ERRORS:-}"
+    if [ -n "$err" ]; then errj=",\"errors\":{\"pom\":\"$err\"}"; else errj=""; fi
+    cat > "$out" <<EOF
+{"deploymentId":"dep-1","deploymentState":"$st","purls":["pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar","pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver"]$errj}
+EOF
+    echo 200 ;;
+  *publisher/deployment/*)
+    echo "" > "$out"
+    next publish_i "${PUBLISH_CODES:-204}" 204 ;;
+  *repo1.maven.org*)
+    echo "" > "$out"
+    next repo1_i "${REPO1_CODES:-200}" 200 ;;
+  *) echo 000 ;;
+esac

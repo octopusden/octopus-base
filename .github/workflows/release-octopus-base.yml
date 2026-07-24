@@ -269,6 +269,29 @@ jobs:
           REQUIRE_COORDS: 'org.octopusden.octopus-quality:org.octopusden.octopus-quality.gradle.plugin'
         run: bash .github/scripts/portal-publish.sh
 
+      # If the Gradle upload/close failed after the staging repository was created,
+      # the artifacts already exist and a plain re-run would upload this version
+      # twice. The Portal helper classifies its own failures; this covers the
+      # Gradle stage, which has no diagnose step here.
+      - name: Report resumable publish failure
+        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' }}
+        env:
+          RELEASE_VERSION: ${{ needs.calculate-version.outputs.release_version }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/publish.log"
+          repo=$(grep -oE "Created staging repository '[^']+'" "$log" 2>/dev/null | head -1 | sed -E "s/^.*'([^']+)'.*$/\1/")
+          if [ -n "$repo" ]; then
+            echo "RELEASE_PUBLISH_CLASS=resumable"
+            echo "RELEASE_PUBLISH_RETRYABLE=false"
+            echo "RELEASE_PUBLISH_COMPAT_KEY=$repo"
+            echo "::error title=Resumable publish failure::${RELEASE_VERSION} is already staged as ${repo}. Do NOT plainly re-run (that uploads the version twice): look the deployment up via GET https://ossrh-staging-api.central.sonatype.com/manual/search/repositories?ip=any (Bearer auth) and re-dispatch with resume-deployment-id, or drop that staging repository first."
+          else
+            echo "RELEASE_PUBLISH_CLASS=unknown"
+            echo "RELEASE_PUBLISH_RETRYABLE=unknown"
+            echo "::warning title=Publish failed before staging::Nothing was staged, so a plain re-dispatch is safe."
+          fi
+
   create-release:
     name: Create GitHub release
     needs:
