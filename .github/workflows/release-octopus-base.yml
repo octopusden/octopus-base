@@ -27,9 +27,21 @@ on:
         required: true
         type: boolean
         default: false
+      resume-deployment-id:
+        description: 'Emergency re-run knob: Portal deployment id of a release whose artifacts were already uploaded (printed by the failed run as RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID). When set, the Gradle upload is SKIPPED and that deployment is published instead — prevents uploading the same version twice.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
+
+# Never let two self-releases overlap: both would compute the same version and
+# upload it twice. Queue instead of cancelling — a cancelled run can leave an
+# unpublished deployment behind.
+concurrency:
+  group: release-octopus-base
+  cancel-in-progress: false
 
 jobs:
   resolve-target:
@@ -205,6 +217,7 @@ jobs:
       # bypasses the flaky OSSRH-compat staging-profile auto-lookup (same fix as the
       # reusable release workflow). Consumer build needs no change.
       - name: Prepare staging-profile init script
+        if: ${{ inputs.resume-deployment-id == '' }}
         run: |
           cat > "$RUNNER_TEMP/staging-profile.init.gradle" <<'GRADLE'
           allprojects { proj ->
@@ -219,7 +232,12 @@ jobs:
           GRADLE
           echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
 
+      # Upload + close only. The Nexus2-compat `release` transition leaves the
+      # deployment `closed` (nothing reaches Central), so the publish is driven
+      # explicitly through the Central Portal API in the next step.
       - name: Build and publish plugin
+        id: publish-sonatype
+        if: ${{ inputs.resume-deployment-id == '' }}
         working-directory: gradle-quality-plugin
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
@@ -227,12 +245,29 @@ jobs:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
         run: |
-          ./gradlew build publishToSonatype closeAndReleaseSonatypeStagingRepository \
+          set -o pipefail
+          ./gradlew build publishToSonatype closeSonatypeStagingRepository \
             -Pversion=${{ needs.calculate-version.outputs.release_version }} \
             -Pnexus=true \
             -PstagingProfileId=org.octopusden \
             --init-script "$RUNNER_TEMP/staging-profile.init.gradle" \
-            --no-daemon --info -s
+            --no-daemon --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
+
+      # Explicit Central Portal publish + verification that the plugin is really
+      # resolvable on Maven Central. REQUIRE_COORDS pins the plugin marker POM —
+      # that is what every consumer's plugin resolution hits first, so the release
+      # must not be tagged unless the marker is live (see #158).
+      - name: Publish deployment via Central Portal
+        id: portal-publish
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          BUILD_VERSION: ${{ needs.calculate-version.outputs.release_version }}
+          STAGING_PROFILE_ID: org.octopusden
+          PUBLISH_LOG: ${{ runner.temp }}/publish.log
+          RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          REQUIRE_COORDS: 'org.octopusden.octopus-quality:org.octopusden.octopus-quality.gradle.plugin'
+        run: bash .github/scripts/portal-publish.sh
 
   create-release:
     name: Create GitHub release
