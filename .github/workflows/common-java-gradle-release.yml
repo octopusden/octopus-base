@@ -46,7 +46,7 @@ on:
         type: string
         default: ''
       staging-profile-id:
-        description: 'Sonatype staging profile id (Central Portal namespace, e.g. org.octopusden). Passed as -PstagingProfileId; consumers must read it in their nexusPublishing.sonatype block. Bypasses the OSSRH-compat auto-lookup that fails for new/uncached package groups.'
+        description: 'Sonatype staging profile id (Central Portal namespace, e.g. org.octopusden). Bound to the gradle-nexus sonatype repository automatically via an injected init script — consumers need NO build-script change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. Blank = keep auto-lookup.'
         required: false
         type: string
         default: 'org.octopusden'
@@ -258,7 +258,7 @@ jobs:
                   def spid = proj.findProperty('stagingProfileId')?.toString()?.trim()
                   if (spid) {
                       proj.extensions.getByName('nexusPublishing')
-                          .repositories.all { repo -> repo.stagingProfileId.set(spid) }
+                          .repositories.all { repo -> if (repo.name == 'sonatype') repo.stagingProfileId.set(spid) }
                   }
               }
           }
@@ -267,9 +267,11 @@ jobs:
 
       # publish to nexus
       - name: Publish to Sonatype Nexus
+        id: publish-sonatype
         if: ${{ !inputs.dry-run }}
-        run: ./gradlew -Pnexus=true -PstagingProfileId=${{ inputs.staging-profile-id }} --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
+          STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -281,7 +283,7 @@ jobs:
       # credentials (401 => bad token; list without org.octopusden => the
       # server-side profile regression; present but unmatched => prefix issue).
       - name: Diagnose Sonatype staging (on failure)
-        if: ${{ failure() && !inputs.dry-run }}
+        if: ${{ failure() && steps.publish-sonatype.outcome == 'failure' && !inputs.dry-run }}
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
@@ -306,8 +308,8 @@ jobs:
           echo "  - HTTP 401                    -> credentials/token problem (OSSRH_USERNAME/OSSRH_TOKEN)."
           echo "  - 200 but org.octopusden absent -> server-side staging-profile regression (Sonatype)."
           echo "  - 200 with org.octopusden but group unmatched -> pass -PstagingProfileId explicitly."
-          echo "Workaround: set the reusable-workflow input staging-profile-id (default 'org.octopusden')"
-          echo "and read -PstagingProfileId in your nexusPublishing.sonatype block."
+          echo "This workflow already sets staging-profile-id (default 'org.octopusden') and binds it via the"
+          echo "injected init script, so a present-but-unmatched profile should not occur with the default."
 
       # github release
       - name: Create release
