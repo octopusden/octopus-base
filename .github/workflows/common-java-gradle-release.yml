@@ -45,6 +45,11 @@ on:
         required: false
         type: string
         default: ''
+      staging-profile-id:
+        description: 'Sonatype staging profile id (Central Portal namespace, e.g. org.octopusden). Passed as -PstagingProfileId; consumers must read it in their nexusPublishing.sonatype block. Bypasses the OSSRH-compat auto-lookup that fails for new/uncached package groups.'
+        required: false
+        type: string
+        default: 'org.octopusden'
     secrets:
       OSSRH_USERNAME:
         required: false
@@ -243,7 +248,7 @@ jobs:
       # publish to nexus
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
-        run: ./gradlew -Pnexus=true publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        run: ./gradlew -Pnexus=true -PstagingProfileId=${{ inputs.staging-profile-id }} publishToSonatype closeAndReleaseSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
