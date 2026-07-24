@@ -63,9 +63,18 @@ fun listDispatchRunIds(): Pair<Boolean, Set<Long>> {
 }
 
 // Snapshot existing runs BEFORE dispatching so we only ever lock onto a NEW run
-// afterwards — never a prior release's (possibly failed) run.
-val (preOk, preExisting) = listDispatchRunIds()
-if (!preOk) println("Warning: could not snapshot existing runs before dispatch; new-run detection is best-effort.")
+// afterwards — never a prior release's (possibly failed) run. A reliable baseline is
+// mandatory: retry, and ABORT BEFORE dispatch if it can't be obtained (dispatching
+// blind could make us mistake a historical run for this release).
+var preExistingTmp: Set<Long>? = null
+for (i in 1..3) {
+    val (ok, ids) = listDispatchRunIds()
+    if (ok) { preExistingTmp = ids; break }
+    println("Could not snapshot existing runs (attempt $i/3); retrying...")
+    TimeUnit.SECONDS.sleep(5L)
+}
+val preExisting: Set<Long> = preExistingTmp
+    ?: fail("Could not snapshot existing workflow runs before dispatching (GitHub API unavailable). Aborting before dispatch to avoid mis-tracking a prior run; please retry the release.")
 
 // 1) Trigger the release. Build the body with org.json so special characters in
 //    the arguments can't break the JSON.
@@ -135,13 +144,22 @@ while (true) {
     if (status == "completed") {
         if (conclusion == "success") {
             println("Release run succeeded: $runUrl")
-            // Belt-and-braces: confirm the expected release tag actually exists.
-            val tag = get("$api/releases/tags/v$versionToRelease", headers = ghHeaders)
-            if (tag.statusCode / 100 == 2) {
-                println("Release tag v$versionToRelease is present.")
-                System.exit(0)
+            // Belt-and-braces: confirm the release tag exists, retrying within the
+            // remaining time budget so one transient tag GET (404 propagation delay /
+            // 5xx) doesn't turn a real success into a false failure.
+            while (true) {
+                val tag = get("$api/releases/tags/v$versionToRelease", headers = ghHeaders)
+                if (tag.statusCode / 100 == 2) {
+                    println("Release tag v$versionToRelease is present.")
+                    System.exit(0)
+                }
+                attempt++
+                if (attempt > timeoutMinutes) {
+                    fail("Release run for $repo succeeded but release tag v$versionToRelease was not confirmed within the timeout (last HTTP ${tag.statusCode}). See $runUrl")
+                }
+                println("Tag v$versionToRelease not confirmed yet (HTTP ${tag.statusCode}); retrying...")
+                TimeUnit.MINUTES.sleep(1L)
             }
-            fail("Release run for $repo succeeded but release tag v$versionToRelease was not found (HTTP ${tag.statusCode}). See $runUrl")
         } else {
             fail(
                 "Release run for $repo $versionToRelease concluded '$conclusion'. See $runUrl " +
