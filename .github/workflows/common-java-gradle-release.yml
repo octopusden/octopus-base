@@ -299,7 +299,8 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
         run: |
           set +e
-          compat="https://ossrh-staging-api.central.sonatype.com/service/local"
+          host="https://ossrh-staging-api.central.sonatype.com"
+          compat="$host/service/local"
           portal="https://central.sonatype.com/api/v1/publisher"
           log="$RUNNER_TEMP/publish.log"
           net=(--connect-timeout 15 --max-time 60)
@@ -326,7 +327,7 @@ jobs:
           if [ -n "$repo" ]; then
             echo "::group::Deployment status & validation errors for $repo"
             sf="$RUNNER_TEMP/diag-search.json"
-            scode=$(curl -sS -o "$sf" -w '%{http_code}' "${auth[@]}" "$compat/manual/search/repositories" 2>/dev/null)
+            scode=$(curl -sS -o "$sf" -w '%{http_code}' "${auth[@]}" "$host/manual/search/repositories" 2>/dev/null)
             echo "GET /manual/search/repositories -> HTTP ${scode:-?}"
             did=$(jq -r --arg k "$repo" '.repositories[]? | select(.key==$k) | .portal_deployment_id' "$sf" 2>/dev/null | head -1)
             if [ -n "$did" ] && [ "$did" != "null" ]; then
