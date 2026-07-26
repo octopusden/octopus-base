@@ -28,7 +28,7 @@ on:
         description: 'Docker image (with tag) used for actionlint workflow linting'
         required: false
         type: string
-        default: rhysd/actionlint:1.7.7
+        default: rhysd/actionlint:1.7.12
 
 permissions:
   contents: read
@@ -84,17 +84,17 @@ jobs:
     runs-on: ubuntu-latest
     # `pull_request` triggers cannot supply inputs, so default explicitly.
     env:
-      ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.7' }}
+      ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.12' }}
     steps:
       - uses: actions/checkout@v4
       # Note on the last -ignore: `job.workflow_sha` is a documented job-context
       # property (the commit SHA of the workflow file defining the current job).
       # common-java-gradle-release.yml uses it to pin its helper script to its own
-      # version. actionlint — including the newest 1.7.12 — still ships an older
-      # job-context type list and
-      # reports it as undefined, so that one message is filtered out. The workflow
-      # additionally fails loudly if the value is ever empty, so the filter cannot
-      # hide a real breakage.
+      # version. Every actionlint release up to the pinned 1.7.12 still ships an
+      # older job-context type list and reports the property as undefined, so that
+      # one message is filtered out. The workflow additionally refuses to run unless
+      # the value is a full commit SHA, so the filter cannot hide a real breakage;
+      # drop the -ignore once actionlint knows the property.
       - name: actionlint
         shell: bash
         run: |
