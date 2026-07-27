@@ -52,6 +52,11 @@ jobs:
   prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
+    # The version is an input only for the hybrid flow; the public flow computes it
+    # here. Publishing it as an output is what lets registration receive the version
+    # that was actually released instead of an empty string.
+    outputs:
+      build-version: ${{ inputs.build-version || steps.new-version.outputs.version }}
     env:
       BUILD_VERSION: ''
 
@@ -238,5 +243,5 @@ jobs:
       name: Register release
       with:
         octopus-repository: ${{ github.repository }}
-        release-version:  ${{ inputs.build-version }}
+        release-version: ${{ needs.prepare-build-publish-release.outputs.build-version }}
       secrets: inherit
