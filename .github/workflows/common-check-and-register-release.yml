@@ -62,6 +62,9 @@ jobs:
         id: released-version
         env:
           EXPLICIT_VERSION: ${{ inputs.release-version }}
+          # The id of the run that triggered this one: the release workflow stamps the
+          # release it creates with it, which is the only identity that cannot drift.
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
           # For a repository_dispatch run this is the default branch tip at dispatch
           # time, not necessarily the commit the release built — the helper knows that
           # and falls back accordingly.

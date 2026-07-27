@@ -36,8 +36,9 @@ run() { # name expected_status expected_stdout_or_stderr_regex [stderr_regex] en
   # GitHub Actions sets GITHUB_REPOSITORY, which silently defeated the scenario that
   # checks behaviour when the repository is unknown — it passed locally and failed in CI.
   PATH="$here:$PATH" env \
-    EXPLICIT_VERSION= RELEASE_RUN_SHA= GITHUB_REPOSITORY= GH_TOKEN= \
+    EXPLICIT_VERSION= RELEASE_RUN_ID= RELEASE_RUN_SHA= GITHUB_REPOSITORY= GH_TOKEN= \
     TAGS_AT_SHA= TAGS_FOR_SHA= LATEST_RELEASE_TAG= LATEST_RELEASE_FAILS= \
+    STAMPED_RELEASE_TAG= STAMPED_FOR_RUN= \
     "$@" bash "$script" >"$outfile" 2>"$errfile"
   status=$?
   out="$(cat "$outfile")"
@@ -79,7 +80,17 @@ run 'explicit version' 0 '2.5.2' EXPLICIT_VERSION=2.5.2 TAGS_AT_SHA='v1.0.0' "${
 run 'explicit version with v prefix' 0 '2.5.2' EXPLICIT_VERSION=v2.5.2 TAGS_AT_SHA='' "${common[@]}"
 run 'explicit garbage is rejected' 1 'not a version number' EXPLICIT_VERSION=latest "${common[@]}"
 
-# Source 2 — exactly one version tag on the commit the run reported.
+# Source 2 — the release stamped with this run's id: exact, and it wins over both
+# fallbacks even when they would answer differently.
+run 'release stamped with this run' 0 '2.2.38' 'stamped with run 555' \
+  RELEASE_RUN_ID=555 STAMPED_FOR_RUN=555 STAMPED_RELEASE_TAG=v2.2.38 \
+  RELEASE_RUN_SHA=cdfdd24d TAGS_FOR_SHA=cdfdd24d TAGS_AT_SHA='v2.2.37' \
+  LATEST_RELEASE_TAG=v9.9.9 "${common[@]}"
+run 'a stamp for another run is ignored' 0 '2.2.37' 'predates the stamping step' \
+  RELEASE_RUN_ID=777 STAMPED_FOR_RUN=555 STAMPED_RELEASE_TAG=v2.2.38 \
+  RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' "${common[@]}"
+
+# Source 3 — exactly one version tag on the commit the run reported.
 run 'single tag on the reported commit' 0 '2.2.37' 'only version tag' \
   RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' "${common[@]}"
 run 'non-semver tags are not candidates' 0 '2.2.37' \
@@ -92,7 +103,8 @@ run 'non-semver tags are not candidates' 0 '2.2.37' \
 run 'higher unrelated tag never wins' 0 '2.2.37' \
   RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' LATEST_RELEASE_TAG=v9.9.9 "${common[@]}"
 
-# Source 3 — the reported commit cannot answer, so fall back to the newest release. This
+# Source 4 — the reported commit cannot answer either, so fall back to the newest
+# release. This
 # is the hybrid-flow case: the run reports the default branch tip while the release was
 # cut from, and tagged on, a different commit.
 run 'no tag on the reported commit falls back' 0 '2.2.37' \

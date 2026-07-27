@@ -484,6 +484,25 @@ jobs:
           prerelease: false
           automatic_release_tag: v${{ env.BUILD_VERSION }}
 
+      # Bind the release to the run that produced it. Registration happens afterwards
+      # in a workflow_run context whose only trustworthy identity is this run's id:
+      # a tag cannot say which release a run made when several releases share a commit,
+      # and "the newest release" can move on while that job is still queued.
+      - name: Stamp the release with this run
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ env.BUILD_VERSION }}
+          MARKER: "octopus-release-run: ${{ github.run_id }}"
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id')"
+          body="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --jq '.body // ""')"
+          printf '%s\n\n%s\n' "$body" "$MARKER" > "$RUNNER_TEMP/release-body.md"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -F body=@"$RUNNER_TEMP/release-body.md" --jq '.tag_name' > /dev/null
+          echo "Release ${TAG} stamped with '${MARKER}'"
+
   register-release-in-log:
       # register release in octopus-release-log
       if: inputs.register-release-immediately && !inputs.dry-run
