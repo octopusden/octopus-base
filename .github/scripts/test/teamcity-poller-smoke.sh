@@ -46,7 +46,13 @@ fail() { echo "SMOKE FAIL: $1" >&2; status=1; }
 
 # The script must have reached and completed real HTTP requests, then given up.
 grep -q 'Could not snapshot existing runs (attempt 1/3)' <<<"$out" \
-  || fail "the first HTTP request never completed — the client did not run"
+  || fail "the request path was never exercised — the client did not run"
+# A sandbox without egress reports a transport error rather than an HTTP status. That
+# still proves what this test is for (the client ran on this JDK), so it passes, but
+# say so plainly instead of claiming a request reached GitHub.
+if grep -q 'transport error' <<<"$out"; then
+  echo "note: no HTTP status was obtained (network unavailable); the JDK-runtime check still applies"
+fi
 grep -q 'Could not snapshot existing workflow runs before dispatching' <<<"$out" \
   || fail "did not abort with the expected pre-dispatch message"
 [ "$rc" -eq 3 ] || fail "expected exit code 3 (TeamCity build problem), got $rc"
@@ -60,6 +66,6 @@ if grep -qE 'InaccessibleObjectException|Exception in thread|^error:' <<<"$out";
 fi
 
 if [ "$status" -eq 0 ]; then
-  echo "SMOKE OK: HTTP client ran on this JDK, failure handled, nothing dispatched"
+  echo "SMOKE OK: request path exercised on this JDK, failure handled, nothing dispatched"
 fi
 exit "$status"

@@ -3,6 +3,7 @@
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.util.concurrent.TimeUnit
@@ -30,16 +31,24 @@ if (timeoutMinutes < 0) {
 }
 val eventType = args[5]
 
+// Both values are interpolated into request URLs. Rejecting anything that would
+// need escaping here means URI building cannot fail later, so the request path has
+// to handle transport errors only.
+for ((name, value) in listOf("octopusModule" to octopusModule, "versionToRelease" to versionToRelease)) {
+    if (!Regex("^[A-Za-z0-9][A-Za-z0-9._+-]*$").matches(value)) {
+        System.err.println("$name contains characters that cannot appear in a request URL: '$value'")
+        System.exit(-1)
+    }
+}
+
 val repo = "octopusden/$octopusModule"
 val api = "https://api.github.com/repos/$repo"
 
 class Response(val statusCode: Int, val text: String) {
-    // Returns null when the body is empty or not JSON. A 2xx is no guarantee of a
-    // JSON body — a proxy or WAF interstitial can answer 200 with HTML — and an
-    // uncaught JSONException would kill the script with a stack trace instead of
-    // the actionable build problem it exists to emit. Callers treat null as a
-    // failed read and retry, which for the pre-dispatch snapshot also means an
-    // unreadable body can never be mistaken for "this repository has no runs".
+    // Null when the body is empty or not JSON: a 2xx is no guarantee of JSON (a proxy
+    // or WAF interstitial can answer 200 with HTML), and an uncaught JSONException
+    // would replace the actionable build problem with a stack trace. Callers treat
+    // null as a failed read and retry.
     fun json(): JSONObject? = try {
         if (text.isBlank()) null else JSONObject(text)
     } catch (e: Exception) {
@@ -47,13 +56,10 @@ class Response(val statusCode: Int, val text: String) {
     }
 }
 
-// Minimal GitHub client on java.net.HttpURLConnection, available on every JDK.
-// The previous khttp-based client reflected into a private field of java.net.URL,
-// which JDK 17+ refuses (InaccessibleObjectException: module java.base does not
-// "opens java.net"). That pinned this script to JDK 8 and made it fail within
-// seconds on any build configuration whose Kotlin step runs a newer JDK.
-// A transport error is reported as status 0 so callers retry through their normal
-// non-2xx path instead of the script dying with a stack trace.
+// Minimal GitHub client on java.net.HttpURLConnection, which every JDK supports.
+// A transport failure is reported as status 0 so callers retry through their normal
+// non-2xx path instead of the script dying with a stack trace. Only IOException is
+// caught: anything else is a defect in this script and should surface as one.
 fun request(method: String, url: String, body: String? = null): Response {
     var connection: HttpURLConnection? = null
     return try {
@@ -77,7 +83,7 @@ fun request(method: String, url: String, body: String? = null): Response {
         val stream = if (code >= 400) opened.errorStream else opened.inputStream
         val text = stream?.use { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() } ?: ""
         Response(code, text)
-    } catch (e: Exception) {
+    } catch (e: IOException) {
         Response(0, "transport error: ${e.javaClass.simpleName}: ${e.message}")
     } finally {
         connection?.disconnect()
@@ -117,7 +123,11 @@ fun listDispatchRunIds(): Triple<Boolean, Set<Long>, String> {
     if (resp.statusCode / 100 != 2) return Triple(false, emptySet(), "HTTP ${resp.statusCode}${resp.why()}")
     val body = resp.json()
         ?: return Triple(false, emptySet(), "HTTP ${resp.statusCode} with an empty or non-JSON body")
-    val arr = body.optJSONArray("workflow_runs") ?: return Triple(true, emptySet(), "")
+    // An empty workflow_runs array is legitimate (no dispatch has ever run here); a
+    // missing one is not, and treating it as "no previous runs" is exactly what lets
+    // a historical run later be mistaken for the one this script triggered.
+    val arr = body.optJSONArray("workflow_runs")
+        ?: return Triple(false, emptySet(), "HTTP ${resp.statusCode} with no workflow_runs array")
     val ids = HashSet<Long>()
     for (i in 0 until arr.length()) ids.add(arr.getJSONObject(i).getLong("id"))
     return Triple(true, ids, "")
