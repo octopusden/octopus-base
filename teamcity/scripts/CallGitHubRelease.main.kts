@@ -79,6 +79,11 @@ fun get(url: String): Response = request("GET", url)
 
 fun post(url: String, body: String): Response = request("POST", url, body)
 
+// Status 0 means the request never got an HTTP answer, so the status alone says
+// nothing. Without this an agent with broken DNS or a blocked proxy would print
+// "HTTP 0" once a minute for the whole timeout with no hint of the cause.
+fun Response.why(): String = if (statusCode == 0) " — $text" else ""
+
 // Emit a TeamCity build problem (escaped per TeamCity service-message rules).
 fun buildProblem(description: String) {
     val escaped = description
@@ -95,15 +100,16 @@ fun fail(description: String): Nothing {
     throw IllegalStateException() // unreachable; satisfies Nothing
 }
 
-// List current repository_dispatch run IDs. Returns (ok, ids): ok=false means the
-// listing call itself failed (so the snapshot is unreliable).
-fun listDispatchRunIds(): Pair<Boolean, Set<Long>> {
+// List current repository_dispatch run IDs. Returns (ok, ids, reason): ok=false
+// means the listing call itself failed (so the snapshot is unreliable), and reason
+// carries what went wrong for the log.
+fun listDispatchRunIds(): Triple<Boolean, Set<Long>, String> {
     val resp = get("$api/actions/runs?event=repository_dispatch&per_page=50")
-    if (resp.statusCode / 100 != 2) return Pair(false, emptySet())
-    val arr = resp.jsonObject.optJSONArray("workflow_runs") ?: return Pair(true, emptySet())
+    if (resp.statusCode / 100 != 2) return Triple(false, emptySet(), "HTTP ${resp.statusCode}${resp.why()}")
+    val arr = resp.jsonObject.optJSONArray("workflow_runs") ?: return Triple(true, emptySet(), "")
     val ids = HashSet<Long>()
     for (i in 0 until arr.length()) ids.add(arr.getJSONObject(i).getLong("id"))
-    return Pair(true, ids)
+    return Triple(true, ids, "")
 }
 
 // Snapshot existing runs BEFORE dispatching so we only ever lock onto a NEW run
@@ -112,9 +118,9 @@ fun listDispatchRunIds(): Pair<Boolean, Set<Long>> {
 // blind could make us mistake a historical run for this release).
 var preExistingTmp: Set<Long>? = null
 for (i in 1..3) {
-    val (ok, ids) = listDispatchRunIds()
+    val (ok, ids, reason) = listDispatchRunIds()
     if (ok) { preExistingTmp = ids; break }
-    println("Could not snapshot existing runs (attempt $i/3); retrying...")
+    println("Could not snapshot existing runs (attempt $i/3): $reason; retrying...")
     TimeUnit.SECONDS.sleep(5L)
 }
 val preExisting: Set<Long> = preExistingTmp
@@ -151,7 +157,7 @@ while (true) {
     if (runId == null) {
         val runs = get("$api/actions/runs?event=repository_dispatch&per_page=50")
         if (runs.statusCode / 100 != 2) {
-            println("Attempt $attempt: could not list runs (HTTP ${runs.statusCode}); retrying...")
+            println("Attempt $attempt: could not list runs (HTTP ${runs.statusCode}${runs.why()}); retrying...")
             continue
         }
         val arr = runs.jsonObject.optJSONArray("workflow_runs")
@@ -177,7 +183,7 @@ while (true) {
 
     val runResp = get("$api/actions/runs/$runId")
     if (runResp.statusCode / 100 != 2) {
-        println("Attempt $attempt: could not read run $runId (HTTP ${runResp.statusCode}); retrying...")
+        println("Attempt $attempt: could not read run $runId (HTTP ${runResp.statusCode}${runResp.why()}); retrying...")
         continue
     }
     val run: JSONObject = runResp.jsonObject
@@ -200,7 +206,7 @@ while (true) {
                 if (attempt > timeoutMinutes) {
                     fail("Release run for $repo succeeded but release tag v$versionToRelease was not confirmed within the timeout (last HTTP ${tag.statusCode}). See $runUrl")
                 }
-                println("Tag v$versionToRelease not confirmed yet (HTTP ${tag.statusCode}); retrying...")
+                println("Tag v$versionToRelease not confirmed yet (HTTP ${tag.statusCode}${tag.why()}); retrying...")
                 TimeUnit.MINUTES.sleep(1L)
             }
         } else {
