@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fake git for resolve-released-version.sh tests. Only the one command the script
+# uses is answered; anything else is a test bug and fails loudly.
+#
+#   TAGS_AT_SHA   tags reported for the requested commit (space-separated)
+#   ALL_TAGS      every tag in the "repository" — present only to prove the script
+#                 never consults it (that habit is what caused the bug)
+set -u
+
+if [ "${1:-}" = "tag" ] && [ "${2:-}" = "--points-at" ]; then
+  for tag in ${TAGS_AT_SHA:-}; do
+    printf '%s\n' "$tag"
+  done
+  exit 0
+fi
+
+echo "stub git: unexpected invocation: $*" >&2
+exit 99
