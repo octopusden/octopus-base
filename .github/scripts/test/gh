@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fake gh for resolve-released-version.sh tests. Only the one call the script makes is
+# answered; anything else is a test bug and fails loudly.
+#
+#   LATEST_RELEASE_TAG   tag_name to report for repos/<repo>/releases/latest
+#   LATEST_RELEASE_FAILS  when non-empty, behave like a failed API call
+set -u
+
+if [ "${1:-}" = "api" ] && [[ "${2:-}" == repos/*/releases/latest ]]; then
+  if [ -n "${LATEST_RELEASE_FAILS:-}" ]; then
+    echo "gh: could not read the latest release" >&2
+    exit 1
+  fi
+  printf '%s\n' "${LATEST_RELEASE_TAG:-null}"
+  exit 0
+fi
+
+echo "stub gh: unexpected invocation: $*" >&2
+exit 99

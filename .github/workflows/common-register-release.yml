@@ -54,8 +54,16 @@ jobs:
         run: |
           set -uo pipefail
           registered=false
-          log="$(gh api "repos/${RELEASE_LOG_REPOSITORY}/contents/${OCTOPUS_MODULE_NAME}.txt" \
-            --jq '.content' 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null)"
+          encoded="$(gh api "repos/${RELEASE_LOG_REPOSITORY}/contents/${OCTOPUS_MODULE_NAME}.txt" \
+            --jq '.content' 2>/dev/null | tr -d '\n')"
+          # The contents API returns an empty payload for files it will not inline (over
+          # ~1 MB), which decodes to garbage rather than failing; treat it as unreadable.
+          log=""
+          if [ -n "$encoded" ] && [ "$encoded" != "null" ]; then
+            # Strip CR so the whole-line match still works if the log ever gains CRLF
+            # endings; without it the guard would silently never match.
+            log="$(base64 -d <<<"$encoded" 2>/dev/null | tr -d '\r')"
+          fi
           if [ -n "$log" ]; then
             if grep -qxF "$RELEASE_VERSION" <<<"$log"; then
               registered=true
@@ -67,7 +75,9 @@ jobs:
           echo "registered=${registered}" >> "$GITHUB_OUTPUT"
 
       - name: Launch action using REST
-        if: ${{ steps.already-registered.outputs.registered != 'true' }}
+        # success() is explicit because a custom condition replaces the implicit
+        # success gate rather than being added to it.
+        if: ${{ success() && steps.already-registered.outputs.registered != 'true' }}
         env:
           OCTOPUS_GITHUB_TOKEN: ${{ secrets.OCTOPUS_GITHUB_TOKEN }}
           RELEASE_LOG_REPOSITORY: ${{ inputs.release-log-repository }}

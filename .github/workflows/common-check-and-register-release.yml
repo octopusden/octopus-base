@@ -62,7 +62,11 @@ jobs:
         id: released-version
         env:
           EXPLICIT_VERSION: ${{ inputs.release-version }}
+          # For a repository_dispatch run this is the default branch tip at dispatch
+          # time, not necessarily the commit the release built — the helper knows that
+          # and falls back accordingly.
           RELEASE_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$(bash .octopus-base-helper/.github/scripts/resolve-released-version.sh)"
@@ -74,8 +78,10 @@ jobs:
         id: check-artifact
         env:
           VER: ${{ steps.released-version.outputs.version }}
+          # Through env rather than inline interpolation: a pattern containing shell
+          # metacharacters would otherwise be executed.
+          PATTERN: ${{ inputs.artifact-pattern }}
         run: |
-          PATTERN=${{ inputs.artifact-pattern }}
           ART_PATH=${PATTERN//_VER_/$VER}
           
           ART_URL=${BASE_URL}/${ART_PATH}
