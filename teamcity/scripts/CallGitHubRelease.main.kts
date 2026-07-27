@@ -34,8 +34,17 @@ val repo = "octopusden/$octopusModule"
 val api = "https://api.github.com/repos/$repo"
 
 class Response(val statusCode: Int, val text: String) {
-    val jsonObject: JSONObject
-        get() = if (text.isBlank()) JSONObject() else JSONObject(text)
+    // Returns null when the body is empty or not JSON. A 2xx is no guarantee of a
+    // JSON body — a proxy or WAF interstitial can answer 200 with HTML — and an
+    // uncaught JSONException would kill the script with a stack trace instead of
+    // the actionable build problem it exists to emit. Callers treat null as a
+    // failed read and retry, which for the pre-dispatch snapshot also means an
+    // unreadable body can never be mistaken for "this repository has no runs".
+    fun json(): JSONObject? = try {
+        if (text.isBlank()) null else JSONObject(text)
+    } catch (e: Exception) {
+        null
+    }
 }
 
 // Minimal GitHub client on java.net.HttpURLConnection, available on every JDK.
@@ -106,7 +115,9 @@ fun fail(description: String): Nothing {
 fun listDispatchRunIds(): Triple<Boolean, Set<Long>, String> {
     val resp = get("$api/actions/runs?event=repository_dispatch&per_page=50")
     if (resp.statusCode / 100 != 2) return Triple(false, emptySet(), "HTTP ${resp.statusCode}${resp.why()}")
-    val arr = resp.jsonObject.optJSONArray("workflow_runs") ?: return Triple(true, emptySet(), "")
+    val body = resp.json()
+        ?: return Triple(false, emptySet(), "HTTP ${resp.statusCode} with an empty or non-JSON body")
+    val arr = body.optJSONArray("workflow_runs") ?: return Triple(true, emptySet(), "")
     val ids = HashSet<Long>()
     for (i in 0 until arr.length()) ids.add(arr.getJSONObject(i).getLong("id"))
     return Triple(true, ids, "")
@@ -160,7 +171,12 @@ while (true) {
             println("Attempt $attempt: could not list runs (HTTP ${runs.statusCode}${runs.why()}); retrying...")
             continue
         }
-        val arr = runs.jsonObject.optJSONArray("workflow_runs")
+        val runsBody = runs.json()
+        if (runsBody == null) {
+            println("Attempt $attempt: run listing returned an empty or non-JSON body; retrying...")
+            continue
+        }
+        val arr = runsBody.optJSONArray("workflow_runs")
         var chosen: JSONObject? = null
         if (arr != null) {
             for (i in 0 until arr.length()) { // newest first
@@ -186,7 +202,11 @@ while (true) {
         println("Attempt $attempt: could not read run $runId (HTTP ${runResp.statusCode}${runResp.why()}); retrying...")
         continue
     }
-    val run: JSONObject = runResp.jsonObject
+    val run = runResp.json()
+    if (run == null) {
+        println("Attempt $attempt: run $runId returned an empty or non-JSON body; retrying...")
+        continue
+    }
     val status = run.optString("status")
     val conclusion = run.optString("conclusion")
     println("Attempt $attempt: run status=$status conclusion=$conclusion")
