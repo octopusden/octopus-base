@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake git for resolve-released-version.sh tests. Only the one command the script
+# uses is answered; anything else is a test bug and fails loudly.
+#
+#   TAGS_AT_SHA   tags to report (space-separated)
+#   TAGS_FOR_SHA  the commit those tags belong to; querying any other commit is a
+#                 failure, so a script that asks about HEAD instead of the commit the
+#                 release run reported cannot pass
+set -u
+
+if [ "${1:-}" = "tag" ] && [ "${2:-}" = "--points-at" ]; then
+  queried="${3:-}"
+  expected="${TAGS_FOR_SHA:-}"
+  if [ -n "$expected" ] && [ "$queried" != "$expected" ]; then
+    echo "stub git: asked about '$queried' but the tags belong to '$expected'" >&2
+    exit 98
+  fi
+  for tag in ${TAGS_AT_SHA:-}; do
+    printf '%s\n' "$tag"
+  done
+  exit 0
+fi
+
+echo "stub git: unexpected invocation: $*" >&2
+exit 99

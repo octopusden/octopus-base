@@ -38,7 +38,66 @@ jobs:
           set -euo pipefail
           echo "OCTOPUS_MODULE_NAME=${OCTOPUS_REPOSITORY##*/}" >> "$GITHUB_ENV"
 
+      # Both registration paths can be wired at the same time — the release workflow's
+      # immediate registration and the separate artifact-check workflow — and each
+      # release-log entry is a commit that triggers downstream post-processing, so
+      # registering twice runs that twice.
+      #
+      # This is an optimisation, NOT a guarantee: registration is an asynchronous
+      # dispatch, so two callers can both read the log before either dispatch lands.
+      # Removing duplicates for good has to happen where the log is written; see #174.
+      #
+      # Deliberately fail-open: if the log cannot be read, register anyway, because a
+      # missing entry stalls the release pipeline while a duplicate one only repeats
+      # bookkeeping.
+      - name: Skip if already registered
+        id: already-registered
+        env:
+          GH_TOKEN: ${{ secrets.OCTOPUS_GITHUB_TOKEN }}
+          RELEASE_LOG_REPOSITORY: ${{ inputs.release-log-repository }}
+          RELEASE_VERSION: ${{ inputs.release-version }}
+        run: |
+          set -uo pipefail
+          # An empty version would match any blank line in the log and read as "already
+          # registered", so a caller that failed to resolve its version would silently
+          # register nothing at all.
+          if [ -z "$RELEASE_VERSION" ]; then
+            echo "::error title=No version to register::The caller passed an empty release version."
+            exit 1
+          fi
+          registered=false
+          encoded="$(gh api "repos/${RELEASE_LOG_REPOSITORY}/contents/${OCTOPUS_MODULE_NAME}.txt" \
+            --jq '.content' 2>/dev/null | tr -d '\n')"
+          # The contents API returns an empty payload for files it will not inline (over
+          # ~1 MB), which decodes to garbage rather than failing; treat it as unreadable.
+          log=""
+          if [ -n "$encoded" ] && [ "$encoded" != "null" ]; then
+            # Keep the decoded text only if decoding actually succeeded: base64 can emit
+            # valid bytes before reporting malformed input, and since this step omits
+            # set -e, that partial text would otherwise be searched — a match in it would
+            # skip registration, the opposite of the intended fail-open.
+            if decoded="$(base64 -d <<<"$encoded" 2>/dev/null)"; then
+              # Strip CR so the whole-line match still works if the log ever gains CRLF
+              # endings; without it the guard would silently never match.
+              log="$(tr -d '\r' <<<"$decoded")"
+            else
+              echo "Release log could not be decoded; registering."
+            fi
+          fi
+          if [ -n "$log" ]; then
+            if grep -qxF "$RELEASE_VERSION" <<<"$log"; then
+              registered=true
+              echo "::notice title=Already registered::${OCTOPUS_MODULE_NAME} ${RELEASE_VERSION} is already in the release log; skipping."
+            fi
+          else
+            echo "Release log for ${OCTOPUS_MODULE_NAME} could not be read (new module, or a read failure); registering."
+          fi
+          echo "registered=${registered}" >> "$GITHUB_OUTPUT"
+
       - name: Launch action using REST
+        # success() is explicit because a custom condition replaces the implicit
+        # success gate rather than being added to it.
+        if: ${{ success() && steps.already-registered.outputs.registered != 'true' }}
         env:
           OCTOPUS_GITHUB_TOKEN: ${{ secrets.OCTOPUS_GITHUB_TOKEN }}
           RELEASE_LOG_REPOSITORY: ${{ inputs.release-log-repository }}

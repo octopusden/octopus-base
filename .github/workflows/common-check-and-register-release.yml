@@ -6,6 +6,13 @@ on:
       artifact-pattern:
         required: true
         type: string
+      release-version:
+        description: >-
+          Version that was released. Leave empty to resolve it from the version tag
+          on the commit the triggering release run built.
+        required: false
+        type: string
+        default: ''
 
 jobs:
   check-http-artifact:
@@ -15,29 +22,78 @@ jobs:
       ATTEMPTS: 45
       BASE_URL: "https://repo1.maven.org/maven2/org/octopusden"
     outputs:
-      release-version: ${{ steps.check-artifact.outputs.RELEASE_VERSION }}
+      release-version: ${{ steps.released-version.outputs.version }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Get latest tag
-        id: tag_version
-        uses: oprypin/find-latest-tag@v1
         with:
-          repository: ${{ github.repository }}
-          # check for version like this v222.444.0 or v1.0.34
-          regex: '^v([0-9]|([1-9][0-9]*))\.([0-9]|([1-9][0-9]*))\.([0-9]|([1-9][0-9]*))$'
+          # Full history and tags: the released version is read from the tag on the
+          # commit the release run built.
+          fetch-depth: 0
+
+      # This workflow runs against the caller's checkout, which has no copy of the
+      # helper, so it is fetched from the pinned version of this workflow. A full
+      # commit SHA is required: an empty or non-SHA ref would make actions/checkout
+      # silently fall back to a default branch and run a different script version.
+      - name: Resolve helper ref
+        id: helper-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the version helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Refusing to run an unpinned helper."
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-helper
+          sparse-checkout: .github/scripts
+
+      # Replaces a "highest version tag in the repository" lookup, which registered
+      # whichever tag sorted highest whether this run released it or not.
+      - name: Resolve the released version
+        id: released-version
+        env:
+          EXPLICIT_VERSION: ${{ inputs.release-version }}
+          # The id of the run that triggered this one: the release workflow stamps the
+          # release it creates with it, which is the only identity that cannot drift.
+          RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+          # A rerun keeps the run id and increments the attempt, and the public flow
+          # recomputes the version on a rerun, so both are needed to name one release.
+          RELEASE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          # For a repository_dispatch run this is the default branch tip at dispatch
+          # time, not necessarily the commit the release built — the helper knows that
+          # and falls back accordingly.
+          RELEASE_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(bash .octopus-base-helper/.github/scripts/resolve-released-version.sh)"
+          # Validate before writing: a step output is a single line, so any extra
+          # output from the helper would be truncated into it silently.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Unusable version::The version helper printed \"${version}\", which is not a version number."
+            exit 1
+          fi
+          echo "Registering version $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # check artifact exists on nexus - synchronous implementation
       - name: Check Sonatype Nexus publish
         id: check-artifact
+        env:
+          VER: ${{ steps.released-version.outputs.version }}
+          # Through env rather than inline interpolation: a pattern containing shell
+          # metacharacters would otherwise be executed.
+          PATTERN: ${{ inputs.artifact-pattern }}
         run: |
-          VERSION_FROM_TAG=${{ steps.tag_version.outputs.tag }}      # v2.3.4
-          VER=${VERSION_FROM_TAG#v}                                  # 2.3.4
-          echo "RELEASE_VERSION=$VER" >> $GITHUB_OUTPUT
-
-          PATTERN=${{ inputs.artifact-pattern }}
           ART_PATH=${PATTERN//_VER_/$VER}
           
           ART_URL=${BASE_URL}/${ART_PATH}

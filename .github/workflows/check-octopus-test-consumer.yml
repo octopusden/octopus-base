@@ -125,6 +125,12 @@ jobs:
       - name: Portal publish helper scenarios
         shell: bash
         run: bash .github/scripts/test/portal-publish-scenarios.sh
+      # Covers tag layouts that would otherwise need a crafted repository: several
+      # version tags on one commit, and a higher unrelated tag elsewhere — the case
+      # that once made a release register a version it never published.
+      - name: Released-version resolution scenarios
+        shell: bash
+        run: bash .github/scripts/test/resolve-released-version-scenarios.sh
 
   security:
     name: security
