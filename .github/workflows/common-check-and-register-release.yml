@@ -70,6 +70,12 @@ jobs:
         run: |
           set -euo pipefail
           version="$(bash .octopus-base-helper/.github/scripts/resolve-released-version.sh)"
+          # Validate before writing: a step output is a single line, so any extra
+          # output from the helper would be truncated into it silently.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Unusable version::The version helper printed \"${version}\", which is not a version number."
+            exit 1
+          fi
           echo "Registering version $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 

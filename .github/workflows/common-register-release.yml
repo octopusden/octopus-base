@@ -53,6 +53,13 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release-version }}
         run: |
           set -uo pipefail
+          # An empty version would match any blank line in the log and read as "already
+          # registered", so a caller that failed to resolve its version would silently
+          # register nothing at all.
+          if [ -z "$RELEASE_VERSION" ]; then
+            echo "::error title=No version to register::The caller passed an empty release version."
+            exit 1
+          fi
           registered=false
           encoded="$(gh api "repos/${RELEASE_LOG_REPOSITORY}/contents/${OCTOPUS_MODULE_NAME}.txt" \
             --jq '.content' 2>/dev/null | tr -d '\n')"
