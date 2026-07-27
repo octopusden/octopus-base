@@ -65,6 +65,9 @@ jobs:
           # The id of the run that triggered this one: the release workflow stamps the
           # release it creates with it, which is the only identity that cannot drift.
           RELEASE_RUN_ID: ${{ github.event.workflow_run.id }}
+          # A rerun keeps the run id and increments the attempt, and the public flow
+          # recomputes the version on a rerun, so both are needed to name one release.
+          RELEASE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           # For a repository_dispatch run this is the default branch tip at dispatch
           # time, not necessarily the commit the release built — the helper knows that
           # and falls back accordingly.

@@ -3,8 +3,9 @@
 # answered; anything else is a test bug and fails loudly.
 #
 #   STAMPED_RELEASE_TAG  tag of the release that carries a run stamp
-#   STAMPED_FOR_RUN      run id that stamp belongs to; a query about any other run
-#                        gets nothing, so a script that ignores the run id cannot pass
+#   STAMPED_FOR_RUN      run id/attempt that stamp belongs to, e.g. 555/1; a query about
+#                        any other run or attempt gets nothing, so a script that ignores
+#                        either cannot pass
 #   LATEST_RELEASE_TAG   tag_name to report for repos/<repo>/releases/latest
 #   LATEST_RELEASE_FAILS when non-empty, behave like a failed API call
 set -u

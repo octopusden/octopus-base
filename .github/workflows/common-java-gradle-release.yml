@@ -485,15 +485,19 @@ jobs:
           automatic_release_tag: v${{ env.BUILD_VERSION }}
 
       # Bind the release to the run that produced it. Registration happens afterwards
-      # in a workflow_run context whose only trustworthy identity is this run's id:
-      # a tag cannot say which release a run made when several releases share a commit,
-      # and "the newest release" can move on while that job is still queued.
+      # in a workflow_run context whose only trustworthy identity is this run's id and
+      # attempt: a tag cannot say which release a run made when several releases share
+      # a commit, and "the newest release" can move on while that job is queued. The
+      # attempt is part of it because a rerun keeps the run id while the public flow
+      # recomputes the version, so two releases would otherwise carry the same mark.
+      # The marker is a delimited HTML comment: invisible in the rendered notes, and
+      # not a prefix of another run's marker (555/1 vs 555/10).
       - name: Stamp the release with this run
         if: ${{ !inputs.dry-run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v${{ env.BUILD_VERSION }}
-          MARKER: "octopus-release-run: ${{ github.run_id }}"
+          MARKER: "<!-- octopus-release-run: ${{ github.run_id }}/${{ github.run_attempt }} -->"
         run: |
           set -euo pipefail
           release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.id')"

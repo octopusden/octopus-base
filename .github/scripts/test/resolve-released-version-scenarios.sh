@@ -36,7 +36,8 @@ run() { # name expected_status expected_stdout_or_stderr_regex [stderr_regex] en
   # GitHub Actions sets GITHUB_REPOSITORY, which silently defeated the scenario that
   # checks behaviour when the repository is unknown — it passed locally and failed in CI.
   PATH="$here:$PATH" env \
-    EXPLICIT_VERSION= RELEASE_RUN_ID= RELEASE_RUN_SHA= GITHUB_REPOSITORY= GH_TOKEN= \
+    EXPLICIT_VERSION= RELEASE_RUN_ID= RELEASE_RUN_ATTEMPT= RELEASE_RUN_SHA= \
+    GITHUB_REPOSITORY= GH_TOKEN= \
     TAGS_AT_SHA= TAGS_FOR_SHA= LATEST_RELEASE_TAG= LATEST_RELEASE_FAILS= \
     STAMPED_RELEASE_TAG= STAMPED_FOR_RUN= \
     "$@" bash "$script" >"$outfile" 2>"$errfile"
@@ -82,12 +83,25 @@ run 'explicit garbage is rejected' 1 'not a version number' EXPLICIT_VERSION=lat
 
 # Source 2 — the release stamped with this run's id: exact, and it wins over both
 # fallbacks even when they would answer differently.
-run 'release stamped with this run' 0 '2.2.38' 'stamped with run 555' \
-  RELEASE_RUN_ID=555 STAMPED_FOR_RUN=555 STAMPED_RELEASE_TAG=v2.2.38 \
+run 'release stamped with this run' 0 '2.2.38' 'stamped with run 555, attempt 1' \
+  RELEASE_RUN_ID=555 RELEASE_RUN_ATTEMPT=1 STAMPED_FOR_RUN=555/1 STAMPED_RELEASE_TAG=v2.2.38 \
   RELEASE_RUN_SHA=cdfdd24d TAGS_FOR_SHA=cdfdd24d TAGS_AT_SHA='v2.2.37' \
   LATEST_RELEASE_TAG=v9.9.9 "${common[@]}"
 run 'a stamp for another run is ignored' 0 '2.2.37' 'predates the stamping step' \
-  RELEASE_RUN_ID=777 STAMPED_FOR_RUN=555 STAMPED_RELEASE_TAG=v2.2.38 \
+  RELEASE_RUN_ID=777 RELEASE_RUN_ATTEMPT=1 STAMPED_FOR_RUN=555/1 STAMPED_RELEASE_TAG=v2.2.38 \
+  RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' "${common[@]}"
+# A rerun keeps the run id and bumps the attempt, and the public flow recomputes the
+# version, so the first attempt's release must not answer for the second.
+run 'a stamp from an earlier attempt is ignored' 0 '2.2.37' 'predates the stamping step' \
+  RELEASE_RUN_ID=555 RELEASE_RUN_ATTEMPT=2 STAMPED_FOR_RUN=555/1 STAMPED_RELEASE_TAG=v2.2.38 \
+  RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' "${common[@]}"
+run 'the matching attempt answers' 0 '2.2.39' 'attempt 2' \
+  RELEASE_RUN_ID=555 RELEASE_RUN_ATTEMPT=2 STAMPED_FOR_RUN=555/2 STAMPED_RELEASE_TAG=v2.2.39 \
+  RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' "${common[@]}"
+# Without an attempt the stamp cannot be addressed at all, so it is skipped rather than
+# matched loosely.
+run 'no attempt means no stamp lookup' 0 '2.2.37' 'without an attempt number' \
+  RELEASE_RUN_ID=555 STAMPED_FOR_RUN=555/1 STAMPED_RELEASE_TAG=v2.2.38 \
   RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' "${common[@]}"
 
 # Source 3 — exactly one version tag on the commit the run reported.
