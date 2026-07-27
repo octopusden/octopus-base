@@ -148,9 +148,11 @@ jobs:
       - resolve-target
       - verify-octopus-test
     # always() is needed because the verification job is skipped when it was not asked
-    # for; requiring flags to have succeeded keeps an empty output from reading as "not
-    # requested".
-    if: ${{ always() && needs.flags.result == 'success' && (needs.flags.outputs.verify-octopus-test != 'true' || needs.verify-octopus-test.result == 'success') }}
+    # for — but it also lets this job run after a *failed* dependency, which is how a
+    # rejected target-ref still produced a computed version from an unintended checkout.
+    # So every dependency that must have succeeded is named explicitly, and an empty
+    # flags output can no longer read as "verification was not requested".
+    if: ${{ always() && needs.flags.result == 'success' && needs.resolve-target.result == 'success' && (needs.flags.outputs.verify-octopus-test != 'true' || needs.verify-octopus-test.result == 'success') }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
