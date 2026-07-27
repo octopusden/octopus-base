@@ -1,8 +1,10 @@
-@file:DependsOn("org.danilopianini:khttp:1.2.0")
+@file:DependsOn("org.json:json:20231013")
 
-import khttp.get
-import khttp.post
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 // Triggers a GitHub release (repository_dispatch) and watches the resulting
@@ -30,10 +32,52 @@ val eventType = args[5]
 
 val repo = "octopusden/$octopusModule"
 val api = "https://api.github.com/repos/$repo"
-val ghHeaders = mapOf(
-    "Authorization" to "Bearer $githubToken",
-    "Accept" to "application/vnd.github+json"
-)
+
+class Response(val statusCode: Int, val text: String) {
+    val jsonObject: JSONObject
+        get() = if (text.isBlank()) JSONObject() else JSONObject(text)
+}
+
+// Minimal GitHub client on java.net.HttpURLConnection, available on every JDK.
+// The previous khttp-based client reflected into a private field of java.net.URL,
+// which JDK 17+ refuses (InaccessibleObjectException: module java.base does not
+// "opens java.net"). That pinned this script to JDK 8 and made it fail within
+// seconds on any build configuration whose Kotlin step runs a newer JDK.
+// A transport error is reported as status 0 so callers retry through their normal
+// non-2xx path instead of the script dying with a stack trace.
+fun request(method: String, url: String, body: String? = null): Response {
+    var connection: HttpURLConnection? = null
+    return try {
+        // URI().toURL() rather than URL(String): the latter is deprecated on JDK 20+
+        // and would print a warning on every release build.
+        val opened = URI(url).toURL().openConnection() as HttpURLConnection
+        connection = opened
+        opened.requestMethod = method
+        opened.connectTimeout = 15000
+        opened.readTimeout = 30000
+        opened.setRequestProperty("Authorization", "Bearer $githubToken")
+        opened.setRequestProperty("Accept", "application/vnd.github+json")
+        opened.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+        opened.setRequestProperty("User-Agent", "octopus-teamcity-release-poller")
+        if (body != null) {
+            opened.setRequestProperty("Content-Type", "application/json")
+            opened.doOutput = true
+            opened.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        }
+        val code = opened.responseCode
+        val stream = if (code >= 400) opened.errorStream else opened.inputStream
+        val text = stream?.use { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() } ?: ""
+        Response(code, text)
+    } catch (e: Exception) {
+        Response(0, "transport error: ${e.javaClass.simpleName}: ${e.message}")
+    } finally {
+        connection?.disconnect()
+    }
+}
+
+fun get(url: String): Response = request("GET", url)
+
+fun post(url: String, body: String): Response = request("POST", url, body)
 
 // Emit a TeamCity build problem (escaped per TeamCity service-message rules).
 fun buildProblem(description: String) {
@@ -54,7 +98,7 @@ fun fail(description: String): Nothing {
 // List current repository_dispatch run IDs. Returns (ok, ids): ok=false means the
 // listing call itself failed (so the snapshot is unreliable).
 fun listDispatchRunIds(): Pair<Boolean, Set<Long>> {
-    val resp = get("$api/actions/runs?event=repository_dispatch&per_page=50", headers = ghHeaders)
+    val resp = get("$api/actions/runs?event=repository_dispatch&per_page=50")
     if (resp.statusCode / 100 != 2) return Pair(false, emptySet())
     val arr = resp.jsonObject.optJSONArray("workflow_runs") ?: return Pair(true, emptySet())
     val ids = HashSet<Long>()
@@ -82,11 +126,7 @@ val dispatchBody = JSONObject()
     .put("event_type", eventType)
     .put("client_payload", JSONObject().put("commit", currentCommit).put("project_version", versionToRelease))
     .toString()
-val respCreate = post(
-    "$api/dispatches",
-    headers = ghHeaders + ("Content-Type" to "application/json"),
-    data = dispatchBody
-)
+val respCreate = post("$api/dispatches", dispatchBody)
 if (respCreate.statusCode / 100 != 2) {
     fail("Failed to trigger release dispatch for $repo (HTTP ${respCreate.statusCode}): ${respCreate.text}")
 }
@@ -109,7 +149,7 @@ while (true) {
     TimeUnit.MINUTES.sleep(1L)
 
     if (runId == null) {
-        val runs = get("$api/actions/runs?event=repository_dispatch&per_page=50", headers = ghHeaders)
+        val runs = get("$api/actions/runs?event=repository_dispatch&per_page=50")
         if (runs.statusCode / 100 != 2) {
             println("Attempt $attempt: could not list runs (HTTP ${runs.statusCode}); retrying...")
             continue
@@ -135,7 +175,7 @@ while (true) {
         continue
     }
 
-    val runResp = get("$api/actions/runs/$runId", headers = ghHeaders)
+    val runResp = get("$api/actions/runs/$runId")
     if (runResp.statusCode / 100 != 2) {
         println("Attempt $attempt: could not read run $runId (HTTP ${runResp.statusCode}); retrying...")
         continue
@@ -151,7 +191,7 @@ while (true) {
             // remaining time budget so one transient tag GET (404 propagation delay /
             // 5xx) doesn't turn a real success into a false failure.
             while (true) {
-                val tag = get("$api/releases/tags/v$versionToRelease", headers = ghHeaders)
+                val tag = get("$api/releases/tags/v$versionToRelease")
                 if (tag.statusCode / 100 == 2) {
                     println("Release tag v$versionToRelease is present.")
                     System.exit(0)

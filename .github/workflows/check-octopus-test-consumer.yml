@@ -125,6 +125,11 @@ jobs:
       - name: Portal publish helper scenarios
         shell: bash
         run: bash .github/scripts/test/portal-publish-scenarios.sh
+      # The TeamCity release poller is a .main.kts that no Gradle build compiles,
+      # so without this step a broken one only surfaces as a failed release.
+      - name: Compile TeamCity Kotlin scripts
+        shell: bash
+        run: bash .github/scripts/test/compile-teamcity-scripts.sh .
 
   security:
     name: security
