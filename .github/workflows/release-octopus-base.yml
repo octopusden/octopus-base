@@ -44,8 +44,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  flags:
+    name: Normalise inputs
+    runs-on: ubuntu-latest
+    outputs:
+      dry-run: ${{ steps.normalise.outputs.dry-run }}
+      verify-octopus-test: ${{ steps.normalise.outputs.verify-octopus-test }}
+    steps:
+      # A workflow_dispatch boolean arrives as a real boolean from the UI but as a
+      # string from the API, and the two behave differently in an if: expression: the
+      # string "false" is non-empty and therefore truthy, so `!inputs.dry-run` was false
+      # and a real release triggered with `gh workflow run -f dry-run=false` skipped its
+      # publish without a word. Comparing against 'true' instead is not a fix either —
+      # a UI dry-run passes the boolean true, and `true != 'true'` is true, which would
+      # publish during a dry run.
+      #
+      # Both representations stringify identically in env, so the decision is made once,
+      # here, and every job compares a plain string. An unexpected value stops the run
+      # rather than being guessed at.
+      - name: Normalise boolean inputs
+        id: normalise
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          VERIFY_OCTOPUS_TEST: ${{ inputs.verify_octopus_test }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          normalise() { # name value
+            case "$2" in
+              true|false) echo "$1=$2" >> "$GITHUB_OUTPUT" ;;
+              *)
+                echo "::error title=Unusable input::${1} arrived as '${2}', which is neither true nor false."
+                exit 1
+                ;;
+            esac
+          }
+          normalise dry-run "$DRY_RUN"
+          normalise verify-octopus-test "$VERIFY_OCTOPUS_TEST"
+          {
+            echo "### Normalised inputs"
+            echo "- dry-run: \`${DRY_RUN}\` -> \`$(grep '^dry-run=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2)\`"
+            echo "- verify-octopus-test: \`${VERIFY_OCTOPUS_TEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   resolve-target:
     name: Resolve target ref
+    needs: flags
     runs-on: ubuntu-latest
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
@@ -61,7 +105,7 @@ jobs:
         id: resolve
         env:
           INPUT_TARGET_REF: ${{ inputs.target-ref }}
-          INPUT_DRY_RUN: ${{ inputs.dry-run }}
+          INPUT_DRY_RUN: ${{ needs.flags.outputs.dry-run }}
         shell: bash
         run: |
           set -euo pipefail
@@ -86,8 +130,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   verify-octopus-test:
-    needs: resolve-target
-    if: ${{ inputs.verify_octopus_test }}
+    needs:
+      - flags
+      - resolve-target
+    if: ${{ needs.flags.outputs.verify-octopus-test == 'true' }}
     name: Verify octopus-test consumer
     uses: ./.github/workflows/verify-octopus-test-consumer.yml
     with:
@@ -98,9 +144,13 @@ jobs:
   calculate-version:
     name: Calculate release version
     needs:
+      - flags
       - resolve-target
       - verify-octopus-test
-    if: ${{ always() && (!inputs.verify_octopus_test || needs.verify-octopus-test.result == 'success') }}
+    # always() is needed because the verification job is skipped when it was not asked
+    # for; requiring flags to have succeeded keeps an empty output from reading as "not
+    # requested".
+    if: ${{ always() && needs.flags.result == 'success' && (needs.flags.outputs.verify-octopus-test != 'true' || needs.verify-octopus-test.result == 'success') }}
     runs-on: ubuntu-latest
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
@@ -180,7 +230,7 @@ jobs:
           fi
 
       - name: Dry run summary
-        if: ${{ inputs.dry-run }}
+        if: ${{ needs.flags.outputs.dry-run == 'true' }}
         shell: bash
         run: |
           echo "Dry run enabled: no GitHub Release will be created."
@@ -188,8 +238,10 @@ jobs:
 
   publish-quality-plugin:
     name: Publish quality convention plugin
-    needs: calculate-version
-    if: ${{ !inputs.dry-run }}
+    needs:
+      - flags
+      - calculate-version
+    if: ${{ needs.flags.outputs.dry-run != 'true' }}
     runs-on: ubuntu-latest
     environment: Prod
 
@@ -311,9 +363,10 @@ jobs:
   create-release:
     name: Create GitHub release
     needs:
+      - flags
       - calculate-version
       - publish-quality-plugin
-    if: ${{ !inputs.dry-run }}
+    if: ${{ needs.flags.outputs.dry-run != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -341,8 +394,9 @@ jobs:
           echo "- Target SHA: ${{ needs.calculate-version.outputs.target_sha }}"
 
   register-release-in-log:
-    if: ${{ !inputs.dry-run }}
+    if: ${{ needs.flags.outputs.dry-run != 'true' }}
     needs:
+      - flags
       - calculate-version
       - create-release
     uses: ./.github/workflows/common-register-release.yml
