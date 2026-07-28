@@ -345,13 +345,17 @@ jobs:
           }
           GRADLE
 
+          # -Pnexus=true must match the real upload below: some consumers shape their plugins
+          # and publications on that property, so without it this dry publication could inspect
+          # a different artifact set than the one publishToSonatype actually uploads.
           ./gradlew publishToMavenLocal \
+            -Pnexus=true \
             -Dmaven.repo.local="$GUARD_REPO" \
             --init-script "$RUNNER_TEMP/no-signing.init.gradle" \
             -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} -s
 
           python3 - "$GUARD_REPO" <<'PY'
-          import os, sys, zipfile
+          import os, re, sys, zipfile
           from pathlib import Path
 
           repo = Path(sys.argv[1])
@@ -361,14 +365,15 @@ jobs:
           published, offenders = [], []
           # .zip is included because automation modules can publish shadow distributions and
           # TeamCity plugin bundles, which cost the same quota as a jar.
-          for path in sorted(p for ext in ("*.jar", "*.zip") for p in repo.rglob(ext)):
+          for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in repo.rglob(ext)):
               # <group path>/<artifactId>/<version>/<file>
               artifact_id = path.parent.parent.name
               size_mb = path.stat().st_size / 1048576
               published.append((artifact_id, path.name, size_mb))
               reasons = []
-              if path.name.endswith("-all.jar"):
-                  reasons.append("shadow/uber jar (-all classifier)")
+              # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
+              if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
+                  reasons.append("shadow/uber artifact (-all classifier)")
               else:
                   try:
                       with zipfile.ZipFile(path) as z:
