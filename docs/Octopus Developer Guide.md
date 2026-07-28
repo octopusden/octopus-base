@@ -191,3 +191,81 @@ jobs:
       publish-to-nexus: false
       register-release-immediately: true
 ```
+
+## What belongs on Maven Central
+
+Maven Central is an exchange for artifacts **other projects consume as a Maven
+dependency**. Deployables and internal tooling do not belong there:
+
+- a service or app ships as a **docker image** on ghcr;
+- a CLI ships as a **GitHub Release asset** (or is built locally);
+- test harnesses and compat suites are internal and have no consumers at all.
+
+This is not a style preference. Sonatype's limits are **monthly and org-wide**
+(80 MB release size, 1000 files, 7 releases), so one repository publishing a
+60 MB Spring Boot fat jar can consume the whole organisation's quota in a single
+release — and Central versions are **immutable**, so a mistake cannot be undone.
+
+Two ways to keep an artifact off Central, depending on the repository:
+
+- **Nothing in the repository is consumed as a dependency** (an app, a UI):
+  set `publish-to-nexus: false` (see the section above) *and* remove the
+  `MavenPublication` from the build script. The workflow input guards the
+  pipeline; without the build-script change a manual `./gradlew publishToSonatype`
+  can still upload.
+- **Some modules are consumed, some are not** (a service plus its client
+  libraries): declare **no publication** for the deployable modules and keep it
+  for the libraries. Note that `tasks.named('publish') { enabled = false }` does
+  *not* work — `publishToSonatype` depends on the `PublishToMavenRepository`
+  tasks, not on the `publish` lifecycle task.
+
+If a repository stops publishing the artifact its `check-and-register.yml` polls,
+re-point that workflow's `artifact-pattern` at a module that is still published,
+or drop the workflow and use `register-release-immediately: true` instead —
+otherwise the release-log gate waits ~90 minutes for an artifact that will never
+appear, then fails.
+
+## The publication guard (`fat-jar-publication-allowlist`)
+
+Before uploading, the release publishes to a throwaway local repository and
+inspects what would reach Central. The release **fails** if an artifact is unfit
+for it:
+
+- a shadow/uber jar (`-all` classifier);
+- a Spring Boot executable jar, detected by a `BOOT-INF/` entry inside the
+  archive — its file name is indistinguishable from a library's;
+- anything larger than `max-central-artifact-mb` (default 8), which catches a
+  shadow jar published with the classifier stripped.
+
+A fat jar often appears without anyone asking for it: the shadow plugin exposes
+`shadowRuntimeElements` as a variant of the `java` component, so `from(components.java)`
+publishes the fat jar alongside the thin one.
+
+If the guard fails your release, pick one:
+
+| Situation | Fix |
+|---|---|
+| The module is a deployable nobody depends on | Stop publishing it (see the section above) |
+| The whole repository is a deployable | `publish-to-nexus: false` |
+| A consumer really resolves this fat jar from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner | Add its artifactId to `fat-jar-publication-allowlist` |
+| A genuinely consumed library is legitimately large | Raise `max-central-artifact-mb` |
+
+The allowlist exists so that a legitimate exception is explicit and reviewed
+instead of silent:
+
+```yaml
+jobs:
+  build:
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@<tag>
+    with:
+      flow-type: hybrid
+      java-version: '21'
+      # The automation module's fat jar is resolved by its TeamCity metarunner
+      # (-Dartifact=<group>:<name>:<version>:jar:all), so it must stay on Central.
+      fat-jar-publication-allowlist: automation
+```
+
+The guard runs in dry-run too, so a `dry-run: true` release rehearses it before a
+real one. Because callers pin `octopus-base` by tag, the guard starts applying to
+a repository only when it bumps that ref — **check what the repository publishes
+today and add the exception in the same PR as the bump**.
