@@ -38,7 +38,7 @@ run() { # name expected_status expected_stdout_or_stderr_regex [stderr_regex] en
   PATH="$here:$PATH" env \
     EXPLICIT_VERSION= RELEASE_RUN_ID= RELEASE_RUN_ATTEMPT= RELEASE_RUN_SHA= \
     GITHUB_REPOSITORY= GH_TOKEN= \
-    TAGS_AT_SHA= TAGS_FOR_SHA= LATEST_RELEASE_TAG= LATEST_RELEASE_FAILS= \
+    TAGS_AT_SHA= TAGS_FOR_SHA= LATEST_RELEASE_TAG= LATEST_RELEASE_FAILS= STAMP_LOOKUP_FAILS= \
     STAMPED_RELEASE_TAG= STAMPED_FOR_RUN= \
     "$@" bash "$script" >"$outfile" 2>"$errfile"
   status=$?
@@ -126,6 +126,17 @@ run 'no tag on the reported commit falls back' 0 '2.2.37' \
 run 'several tags on one commit fall back' 0 '2.2.36' 'several version tags' \
   RELEASE_RUN_SHA=cdfdd24d TAGS_FOR_SHA=cdfdd24d TAGS_AT_SHA='v2.2.35 v2.2.36' LATEST_RELEASE_TAG=v2.2.36 "${common[@]}"
 run 'fallback explains itself' 0 '2.2.37' 'most recently created release' \
+  RELEASE_RUN_SHA=deadbeef TAGS_FOR_SHA=deadbeef TAGS_AT_SHA='' LATEST_RELEASE_TAG=v2.2.37 "${common[@]}"
+
+# A failed stamp lookup is not an unstamped release. Falling through would let the tag an
+# EARLIER release left on the commit this run reports answer for this one — silently, and
+# with every job green, because the release log's dedup step then skips the version that
+# really shipped. Both scenarios below pass trivially if that distinction is dropped.
+run 'failed stamp lookup does not read as unstamped' 1 'Refusing to fall back to tag topology' \
+  RELEASE_RUN_ID=555 RELEASE_RUN_ATTEMPT=1 STAMP_LOOKUP_FAILS=1 \
+  RELEASE_RUN_SHA=tipsha TAGS_FOR_SHA=tipsha TAGS_AT_SHA='v2.2.36' LATEST_RELEASE_TAG=v2.2.37 "${common[@]}"
+run 'failed stamp lookup does not fall through to the latest release either' 1 'Re-run when the API is reachable' \
+  RELEASE_RUN_ID=555 RELEASE_RUN_ATTEMPT=1 STAMP_LOOKUP_FAILS=1 \
   RELEASE_RUN_SHA=deadbeef TAGS_FOR_SHA=deadbeef TAGS_AT_SHA='' LATEST_RELEASE_TAG=v2.2.37 "${common[@]}"
 
 # Nothing can answer: fail with something actionable rather than registering a guess.

@@ -110,3 +110,46 @@ After testing the updated configuration, add the new key and passphrase to the V
 
 1. Find all repositories with the label ['sonatype-nexus'](https://github.com/octopusden?tab=repositories&q=sonatype-nexus&type=&language=&sort=).
 2. Update the configuration by changing `GPG_PASSPHRASE` and `GPG_PRIVATE_KEY` in the same way as for `octopus-test` in the [Key testing](#test-the-key) section.
+
+# Release refused with "Built commit cannot be tagged"
+
+## Symptoms
+
+A release fails early, before the build, with `Built commit cannot be tagged` and a list of
+workflow file names. Nothing was published.
+
+On repositories still using the older `OctopusCallGitHubAction` metarunner the symptom looks
+completely different: that metarunner only polls for the release tag to appear, so a refused
+release shows up as a wait of `OCTOPUS_RELEASE_TIMEOUT` minutes ending in
+`Number of attempts exceeded`, with no hint of the real cause. The newer
+`CallGitHubRelease.main.kts` reports the failing run and its reason directly. If you see the
+timeout, open the GitHub Actions run for that release and read the failed step.
+
+## Cause
+
+The release tags the commit it builds. GitHub refuses to point a tag at a commit carrying a
+workflow file that exists on no branch head, unless the token may modify workflows — which the
+Actions `GITHUB_TOKEN` never may. **This is not about the code being released:** it is usually
+triggered by someone editing `.github/workflows/` on the default branch after the commit being
+released, including the routine bumps of reusable-workflow pins.
+
+The release checks this before building precisely so the alternative does not happen: publishing
+an immutable version to Maven Central and only then failing with no tag.
+
+## What to do
+
+1. Release from a branch tip instead — any branch head is taggable, including a maintenance
+   branch whose workflow files legitimately differ from the default branch.
+2. Or release a commit whose `.github/workflows` are unchanged relative to some branch head.
+3. If this specific historical commit must be released, an operator can create the tag manually
+   with credentials authorized to modify workflows, then re-run so the release is attached.
+
+For the standing options (a `workflow`-scoped PAT or a GitHub App), see the `octopus-base` issue
+linked from the failing step's error message.
+
+## The rarer variant, after publishing
+
+If instead the release fails at `Tag creation refused` *after* publishing, a workflow change
+landed on a branch while the release was building, withdrawing what the pre-build check had
+confirmed. The artifacts are published and immutable: create the tag manually on the built
+commit, then re-run to attach the release. The error message states this.

@@ -222,31 +222,44 @@ jobs:
             exit 0
           fi
 
-          # Any branch head will do, so try the rest, stopping at the first that covers
-          # the built tree. This is the path a maintenance-branch release takes.
-          branch_heads="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches" --jq '.[].commit.sha' | sort -u)"
+          # Any branch head will do. Fetch them once, failing closed: an unreadable branch
+          # list must stop the release, not read as "no branch covers this commit".
+          branch_lookup=0
+          branch_heads_raw="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches" --jq '.[].commit.sha' 2>&1)" || branch_lookup=$?
+          if [ "$branch_lookup" -ne 0 ]; then
+            printf '%s\n' "$branch_heads_raw" >&2
+            echo "::error title=Branch lookup failed::Could not list branches, so whether ${built_sha} can be tagged is unknown. Refusing to start a release on unverified state; re-run when the API is reachable." >&2
+            exit 1
+          fi
+          branch_heads="$(sort -u <<<"$branch_heads_raw")"
+
+          # A commit that IS a branch head has workflow files trivially identical to that
+          # head's, so it is taggable. Checked before the scan below because it costs no
+          # further API calls and is the ordinary maintenance-branch-tip release.
+          if grep -qxF -- "$built_sha" <<<"$branch_heads"; then
+            echo "Built commit is a branch head: the tag can be created."
+            exit 0
+          fi
+
+          # The remaining question — does some OTHER branch head carry these same workflow
+          # files — costs one call per branch, and only a real release needs the answer: a
+          # dry run neither publishes nor tags, so it stops here rather than scanning. This
+          # matters because the dry-run canary builds a pull-request merge commit, which
+          # heads no branch, and would otherwise scan every branch on every run.
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "::warning title=Built commit may not be taggable::${built_sha} carries workflow files (${blocking}) that are not on ${default_branch}, and it heads no branch. A REAL release would now scan the other branch heads for a match and refuse the release if none covered it. Skipped here because this is a dry run."
+            exit 0
+          fi
+
           while IFS= read -r branch_head; do
             [ -n "$branch_head" ] || continue
             [ "$branch_head" = "$default_head" ] && continue
-            if [ "$branch_head" = "$built_sha" ]; then
-              echo "Built commit is a branch head: the tag can be created."
-              exit 0
-            fi
             candidate_list="$(list_workflows "$branch_head")"
             if [ -z "$(missing_against "$candidate_list")" ]; then
               echo "Workflow files at ${built_sha} are present unchanged on branch head ${branch_head}: the tag can be created."
               exit 0
             fi
           done <<<"$branch_heads"
-
-          # A dry run publishes nothing and creates no tag, so there is nothing to
-          # protect: report and pass. This keeps the check exercised by the dry-run
-          # canary — whose commit is a pull-request merge commit, and therefore the head
-          # of no branch — without letting branch topology fail a rehearsal.
-          if [ "${DRY_RUN}" = "true" ]; then
-            echo "::warning title=Built commit would not be taggable::${built_sha} carries workflow files (${blocking}) that exist on no branch head, so a REAL release of this commit would be refused a tag. Ignored because this is a dry run."
-            exit 0
-          fi
 
           echo "::error title=Built commit cannot be tagged::This release builds ${built_sha}, which carries workflow files (${blocking}) that exist on no branch head. GitHub refuses to point a tag at such a commit with the Actions GITHUB_TOKEN, so the release would publish and then fail untagged. Release a commit whose .github/workflows match a branch head, or give the release a token authorized to modify workflows." >&2
           exit 1
@@ -364,8 +377,8 @@ jobs:
               # with the asset missing forever. Upload only when it is actually absent:
               # --clobber deletes before uploading, so a flaky upload here would destroy a
               # good asset.
-              assets="$(gh release view "$TAG" --json assets --jq '[.assets[].name] | join(" ")')"
-              if grep -qw "pom.xml" <<<"$assets"; then
+              assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+              if grep -qxF "pom.xml" <<<"$assets"; then
                 echo "Release $TAG already exists at $built_sha with pom.xml attached — nothing to do."
               else
                 gh release upload "$TAG" pom.xml
@@ -390,12 +403,13 @@ jobs:
             exit 1
           fi
 
-          # The tag is ours to create. Create the ref directly at the built commit instead of
-          # `release create --target`: the Create Release endpoint rejects GITHUB_TOKEN when the
-          # target commit differs from the default branch under .github/workflows — exactly the
-          # backport case this fix exists for — and it would fail here, after the artifacts are
-          # already published. Creating a plain ref to an existing commit has no such
-          # restriction; --verify-tag then pins the release to that tag.
+          # The tag is ours to create. The ref is created directly rather than through
+          # `release create --target` because --target is ignored once a tag exists (see
+          # above), and because creating the ref makes the ONE operation that can be
+          # refused explicit and separately reportable. It carries no lesser restriction
+          # than the release endpoint: the workflow-file rule measured in the pre-build
+          # check applies to any ref update, this one included. --verify-tag then pins the
+          # release to the tag that was just created.
           # The pre-build check said this commit was taggable, but branches move: a
           # workflow change merged while the build ran can withdraw that, and by now the
           # artifacts are published and immutable. Say so explicitly rather than leaving a
