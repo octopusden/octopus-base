@@ -202,16 +202,48 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      # github release
+      # github release — create the tag ourselves, at the commit that was actually built.
+      # marvinpinto/action-automatic-releases has no target-commit input: it tags
+      # `context.sha`, which for the repository_dispatch runs every release uses is the
+      # default-branch head at dispatch time, frozen for the run, regardless of what was
+      # checked out. A hybrid release of anything other than the current tip therefore
+      # tagged code that was never built. HEAD here is the build's own checkout, so the
+      # tag is correct by construction and the release's target_commitish follows it.
       - name: Create release
         if: ${{ !inputs.dry-run }}
-        uses: marvinpinto/action-automatic-releases@v1.2.1
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          prerelease: false
-          automatic_release_tag: v${{ env.BUILD_VERSION }}
-          files: |
-            pom.xml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ env.BUILD_VERSION }}
+        run: |
+          set -euo pipefail
+
+          built_sha="$(git rev-parse HEAD)"
+
+          # The TAG is the authority, not the release: `gh release create --target` is IGNORED
+          # when the tag already exists (REST: target_commitish is "unused if the Git tag already
+          # exists"). A tag that outlived its release — deleting a release leaves the tag behind
+          # unless it is removed separately — would otherwise silently re-point a new release at
+          # stale code, which is the very bug this step exists to prevent. Ask the API rather than
+          # the local clone: checkout is shallow and never fetches other tags.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' >/dev/null 2>&1; then
+            # Resolve through /commits so an annotated tag yields its commit, not the tag object.
+            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha')"
+            if [[ "$tag_sha" != "$built_sha" ]]; then
+              echo "::error title=Release tag conflict::Tag ${TAG} already exists at ${tag_sha}, but this run built ${built_sha}. Not moving it. Delete the tag and its release (release immutability may prevent this once published), or release a new version." >&2
+              exit 1
+            fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG already exists at $built_sha — nothing to do."
+              exit 0
+            fi
+            # Tag is correct but has no release: adopt it instead of creating a second one.
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes pom.xml
+            echo "Created release $TAG on the existing, correct tag $built_sha"
+            exit 0
+          fi
+
+          gh release create "$TAG" --target "$built_sha" --title "$TAG" --generate-notes pom.xml
+          echo "Created release $TAG at $built_sha"
       # Bind the release to the run that produced it. Registration happens afterwards
       # in a workflow_run context whose only trustworthy identity is this run's id and
       # attempt: a tag cannot say which release a run made when several releases share
