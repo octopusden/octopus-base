@@ -218,30 +218,35 @@ jobs:
         with:
           ref: ${{ inputs.commit-hash }}
 
-      # A release must be able to tag the commit it builds — but for some commits
-      # GITHUB_TOKEN cannot. GitHub refuses ANY ref update, via REST or git push, that
-      # points a ref at a commit whose `.github/workflows/` files differ from the default
-      # branch, unless the token is authorized to modify workflows — which the
-      # GITHUB_TOKEN of Actions can never be. Verified empirically against a real
-      # repository: the identical request succeeds at the default-branch head and is
-      # refused for an older commit whose workflow files differ, and the REST refusal is
-      # masked as HTTP 404 (`git push` says so plainly: "refusing to allow ... to create
-      # or update workflow ... without `workflow` scope").
+      # A release must be able to tag the commit it builds — and for some commits the
+      # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
+      # that points a ref at a commit carrying a workflow file that exists on no branch
+      # head, unless the token is authorized to modify workflows, which GITHUB_TOKEN can
+      # never be. Measured against a real repository with a token lacking `workflow`
+      # scope, which is the same authorization GITHUB_TOKEN lacks:
       #
-      # This is checked here, before the build and the publish, because the tagging step
-      # runs after artifacts are already on Maven Central. Failing there would leave a
-      # version published, immutable, and untagged; failing here costs nothing.
+      #   default-branch head                                          -> allowed
+      #   head of another branch, workflows differing from the default  -> allowed
+      #   non-head commit whose workflows equal another branch head's   -> allowed
+      #   commit merely missing a workflow file a branch head has       -> allowed
+      #   non-head commit whose workflows match no branch head          -> REFUSED
       #
-      # Deliberately skipped under dry-run, and NOT only to mirror the tagging step: the
-      # octopus-test canary dispatches its smoke releases with `commit-hash: github.sha`
-      # on a `verify/*` branch whose whole purpose is to repoint `uses:` at the octopus-base
-      # commit under test, so its workflow files always differ from the default branch.
-      # Running this check under dry-run would therefore fail every canary run, while
-      # protecting nothing — a dry run creates no tag.
+      # So the operative rule is "every workflow file this commit carries exists
+      # byte-identical on some branch head"; deleting one does not count as modifying it.
+      # Comparing against the default branch alone would be wrong — it would refuse the
+      # ordinary release of a maintenance-branch tip, which GitHub allows. REST disguises
+      # the refusal as HTTP 404; git push states it outright ("refusing to allow ... to
+      # create or update workflow ... without `workflow` scope").
+      #
+      # Checked before the build and the publish, because the tagging step runs after the
+      # artifacts are on Maven Central: failing there leaves a version published,
+      # immutable and untagged, while failing here costs nothing. It runs under dry-run
+      # too — it is read-only, and dry runs skip the tagging step itself, so this is the
+      # only coverage the logic gets.
       - name: Fail early if the built commit cannot be tagged
-        if: ${{ !inputs.dry-run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
 
@@ -250,38 +255,82 @@ jobs:
           default_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${default_branch}" --jq '.sha')"
 
           if [ "$built_sha" = "$default_head" ]; then
-            echo "Built commit is the ${default_branch} head: tagging is unrestricted."
+            echo "Built commit is the ${default_branch} head: the tag can be created."
             exit 0
           fi
 
-          # Compare blob shas of the workflow directory rather than the commit diff: the
-          # compare API caps `files` at 300 entries, which a wide backport could exceed,
-          # hiding the very file that triggers the refusal. Only files present in the
-          # BUILT tree matter — the refusal is about the tagged commit creating or
-          # updating a workflow, so a workflow that exists only on the default branch is
-          # not a problem. A missing directory (404) yields an empty list.
+          # One "name blob-sha" line per workflow file. Fail closed: only a confirmed 404
+          # (no such directory at that ref) may be read as "no workflow files". Treating a
+          # rate limit, 5xx or auth error as an empty list would wave through exactly the
+          # release this step exists to stop. The directory listing is used rather than a
+          # commit diff because the compare API caps `files` at 300 entries, which a wide
+          # backport can exceed, hiding the one file that triggers the refusal.
           list_workflows() {
-            gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows?ref=$1" \
-              --jq '[.[] | select(.type == "file") | .name + " " + .sha] | sort | .[]' 2>/dev/null || true
+            local out rc=0
+            out="$(gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows?ref=$1" \
+              --jq '[.[] | select(.type == "file") | .name + " " + .sha] | sort | .[]' 2>&1)" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              printf '%s\n' "$out"
+              return 0
+            fi
+            if grep -qE 'HTTP 404|"status": ?"404"' <<<"$out"; then
+              return 0
+            fi
+            printf '%s\n' "$out" >&2
+            echo "::error title=Workflow listing failed::Could not list .github/workflows at $1, so whether ${built_sha} can be tagged is unknown. Refusing to start a release on unverified state; re-run when the API is reachable." >&2
+            return 1
           }
 
+          # Names of workflow files the built commit carries that the candidate does not
+          # carry identically. Empty means the candidate covers the built commit.
+          missing_against() {
+            local candidate_list="$1" missing="" entry
+            while IFS= read -r entry; do
+              [ -n "$entry" ] || continue
+              grep -qxF -- "$entry" <<<"$candidate_list" || missing="${missing}${missing:+, }${entry%% *}"
+            done <<<"$built_list"
+            printf '%s' "$missing"
+          }
+
+          # Assign every lookup to a variable: a command substitution that fails inside an
+          # argument list would not trip `set -e`, quietly restoring the fail-open bug.
           built_list="$(list_workflows "$built_sha")"
           default_list="$(list_workflows "$default_head")"
+          blocking="$(missing_against "$default_list")"
 
-          blocking=""
-          while IFS= read -r entry; do
-            [ -n "$entry" ] || continue
-            if ! grep -qxF -- "$entry" <<<"$default_list"; then
-              blocking="${blocking}${blocking:+, }${entry%% *}"
-            fi
-          done <<<"$built_list"
-
-          if [ -n "$blocking" ]; then
-            echo "::error title=Built commit cannot be tagged::This release builds ${built_sha}, whose workflow files differ from ${default_branch} (${blocking}). GitHub refuses to point a tag at such a commit with the Actions GITHUB_TOKEN, so the release could be published and never tagged. Release from a commit whose .github/workflows match ${default_branch}, or give the release a token authorized to modify workflows." >&2
-            exit 1
+          if [ -z "$blocking" ]; then
+            echo "Workflow files at ${built_sha} are present unchanged on ${default_branch}: the tag can be created."
+            exit 0
           fi
 
-          echo "Workflow files at ${built_sha} match ${default_branch}: the tag can be created."
+          # Any branch head will do, so try the rest, stopping at the first that covers
+          # the built tree. This is the path a maintenance-branch release takes.
+          branch_heads="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches" --jq '.[].commit.sha' | sort -u)"
+          while IFS= read -r branch_head; do
+            [ -n "$branch_head" ] || continue
+            [ "$branch_head" = "$default_head" ] && continue
+            if [ "$branch_head" = "$built_sha" ]; then
+              echo "Built commit is a branch head: the tag can be created."
+              exit 0
+            fi
+            candidate_list="$(list_workflows "$branch_head")"
+            if [ -z "$(missing_against "$candidate_list")" ]; then
+              echo "Workflow files at ${built_sha} are present unchanged on branch head ${branch_head}: the tag can be created."
+              exit 0
+            fi
+          done <<<"$branch_heads"
+
+          # A dry run publishes nothing and creates no tag, so there is nothing to
+          # protect: report and pass. This keeps the check exercised by the dry-run
+          # canary — whose commit is a pull-request merge commit, and therefore the head
+          # of no branch — without letting branch topology fail a rehearsal.
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "::warning title=Built commit would not be taggable::${built_sha} carries workflow files (${blocking}) that exist on no branch head, so a REAL release of this commit would be refused a tag. Ignored because this is a dry run."
+            exit 0
+          fi
+
+          echo "::error title=Built commit cannot be tagged::This release builds ${built_sha}, which carries workflow files (${blocking}) that exist on no branch head. GitHub refuses to point a tag at such a commit with the Actions GITHUB_TOKEN, so the release would publish and then fail untagged. Release a commit whose .github/workflows match a branch head, or give the release a token authorized to modify workflows." >&2
+          exit 1
 
       # determine release version (for public flow)
       - name: Get latest tag
@@ -735,8 +784,18 @@ jobs:
           # backport case this fix exists for — and it would fail here, after the artifacts are
           # already published. Creating a plain ref to an existing commit has no such
           # restriction; --verify-tag then pins the release to that tag.
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="refs/tags/${TAG}" -f sha="${built_sha}" --jq '.ref' >/dev/null
+          # The pre-build check said this commit was taggable, but branches move: a
+          # workflow change merged while the build ran can withdraw that, and by now the
+          # artifacts are published and immutable. Say so explicitly rather than leaving a
+          # bare masked 404 in the log.
+          ref_create=0
+          ref_create_out="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" -f sha="${built_sha}" --jq '.ref' 2>&1)" || ref_create=$?
+          if [ "$ref_create" -ne 0 ]; then
+            printf '%s\n' "$ref_create_out" >&2
+            echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again: create the tag manually with a token authorized to modify workflows, then re-run to attach the release." >&2
+            exit 1
+          fi
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           echo "Created tag and release $TAG at $built_sha"
 
