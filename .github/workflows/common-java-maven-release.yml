@@ -150,6 +150,13 @@ jobs:
       # This is checked here, before the build and the publish, because the tagging step
       # runs after artifacts are already on Maven Central. Failing there would leave a
       # version published, immutable, and untagged; failing here costs nothing.
+      #
+      # Deliberately skipped under dry-run, and NOT only to mirror the tagging step: the
+      # octopus-test canary dispatches its smoke releases with `commit-hash: github.sha`
+      # on a `verify/*` branch whose whole purpose is to repoint `uses:` at the octopus-base
+      # commit under test, so its workflow files always differ from the default branch.
+      # Running this check under dry-run would therefore fail every canary run, while
+      # protecting nothing — a dry run creates no tag.
       - name: Fail early if the built commit cannot be tagged
         if: ${{ !inputs.dry-run }}
         env:
