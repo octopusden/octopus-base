@@ -607,7 +607,7 @@ jobs:
       # default-branch head at dispatch time, frozen for the run, regardless of what was
       # checked out. A hybrid release of anything other than the current tip therefore
       # tagged code that was never built. HEAD here is the build's own checkout, so the
-      # tag is correct by construction and the release's target_commitish follows it.
+      # tag is correct by construction and the release is created from that tag.
       - name: Create release
         if: ${{ !inputs.dry-run }}
         env:
@@ -624,7 +624,14 @@ jobs:
           # unless it is removed separately — would otherwise silently re-point a new release at
           # stale code, which is the very bug this step exists to prevent. Ask the API rather than
           # the local clone: checkout is shallow and never fetches other tags.
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' >/dev/null 2>&1; then
+          #
+          # Fail closed: only a confirmed 404 means the tag does not exist. gh exits non-zero
+          # for auth failures, rate limits, 5xx and network errors alike, and treating any of
+          # those as "no tag" would fall through to creation on unverified state.
+          ref_lookup=0
+          ref_out="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" 2>&1)" || ref_lookup=$?
+
+          if [ "$ref_lookup" -eq 0 ]; then
             # Resolve through /commits so an annotated tag yields its commit, not the tag object.
             tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha')"
             if [[ "$tag_sha" != "$built_sha" ]]; then
@@ -641,8 +648,22 @@ jobs:
             exit 0
           fi
 
-          gh release create "$TAG" --target "$built_sha" --title "$TAG" --generate-notes
-          echo "Created release $TAG at $built_sha"
+          if ! grep -q "HTTP 404" <<<"$ref_out"; then
+            echo "$ref_out" >&2
+            echo "::error title=Tag lookup failed::Could not determine whether ${TAG} exists (the lookup failed with something other than 404). Refusing to create a release on unverified state; re-run when the API is reachable." >&2
+            exit 1
+          fi
+
+          # The tag is ours to create. Create the ref directly at the built commit instead of
+          # `release create --target`: the Create Release endpoint rejects GITHUB_TOKEN when the
+          # target commit differs from the default branch under .github/workflows — exactly the
+          # backport case this fix exists for — and it would fail here, after the artifacts are
+          # already published. Creating a plain ref to an existing commit has no such
+          # restriction; --verify-tag then pins the release to that tag.
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" -f sha="${built_sha}" --jq '.ref' >/dev/null
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          echo "Created tag and release $TAG at $built_sha"
 
       # Bind the release to the run that produced it. Registration happens afterwards
       # in a workflow_run context whose only trustworthy identity is this run's id and
