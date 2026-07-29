@@ -1339,7 +1339,7 @@ class OctopusQualityPluginFunctionalTest {
                 fun mul(a: Int, b: Int): Int = a * b
                 fun div(a: Int, b: Int): Int = a / b
             }
-            """.trimIndent(),
+            """.trimIndent().withTrailingNewline(),
         )
         writeKotlinFile(
             "src/test/kotlin/com/example/CalcTest.kt",
@@ -1350,7 +1350,7 @@ class OctopusQualityPluginFunctionalTest {
             class CalcTest {
                 @Test fun t() { assertEquals(3, Calc().add(1, 2)) }
             }
-            """.trimIndent(),
+            """.trimIndent().withTrailingNewline(),
         )
     }
 
@@ -1366,7 +1366,7 @@ class OctopusQualityPluginFunctionalTest {
                 public int mul(int a, int b) { return a * b; }
                 public int div(int a, int b) { return a / b; }
             }
-            """.trimIndent(),
+            """.trimIndent().withTrailingNewline(),
         )
         subDir("src/test/java/com/example")
         File(projectDir, "src/test/java/com/example/CalcTest.java").writeText(
@@ -1377,7 +1377,7 @@ class OctopusQualityPluginFunctionalTest {
             class CalcTest {
                 @Test void t() { assertEquals(3, new Calc().add(1, 2)); }
             }
-            """.trimIndent(),
+            """.trimIndent().withTrailingNewline(),
         )
     }
 
