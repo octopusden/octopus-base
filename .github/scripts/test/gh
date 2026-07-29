@@ -6,13 +6,16 @@
 #   STAMPED_FOR_RUN      run id/attempt that stamp belongs to, e.g. 555/1; a query about
 #                        any other run or attempt gets nothing, so a script that ignores
 #                        either cannot pass
+#   STAMP_LOOKUP_FAILS   when non-empty, the release LIST call fails like a rate limit or
+#                        5xx would; kept separate from LATEST_RELEASE_FAILS so a failed
+#                        stamp lookup can be told apart from an unreadable latest release
 #   LATEST_RELEASE_TAG   tag_name to report for repos/<repo>/releases/latest
-#   LATEST_RELEASE_FAILS when non-empty, behave like a failed API call
+#   LATEST_RELEASE_FAILS when non-empty, repos/<repo>/releases/latest fails
 set -u
 
 if [ "${1:-}" = "api" ] && [[ "${2:-}" == repos/*/releases\?per_page=* ]]; then
-  if [ -n "${LATEST_RELEASE_FAILS:-}" ]; then
-    echo "gh: could not list releases" >&2
+  if [ -n "${STAMP_LOOKUP_FAILS:-}" ]; then
+    echo "gh: could not list releases (HTTP 502)" >&2
     exit 1
   fi
   # The script embeds the marker it is looking for in the jq filter; only answer when

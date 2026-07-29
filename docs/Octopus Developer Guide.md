@@ -165,6 +165,21 @@ jobs:
       java-version: '21'
 ```
 
+### Which commit a hybrid release can be cut from
+
+A release tags the commit it builds, so it can only release a commit GitHub lets it tag.
+GitHub refuses to point a tag at a commit carrying a workflow file that exists on **no branch
+head**, unless the token may modify workflows — which the Actions `GITHUB_TOKEN` never may. The
+release therefore checks this before building and stops with the offending file names rather
+than publishing a version it cannot tag.
+
+In practice this is unrestrictive. Releasing the default-branch head, the tip of any branch
+(including a maintenance branch whose workflows legitimately differ), or any commit whose
+`.github/workflows` are unchanged relative to some branch head all work. What is refused is a
+release of an older commit that heads no branch and whose workflow files have since changed —
+re-releasing a historical commit after a workflow change landed. Cut it from a branch tip
+instead, or see the token options in the `octopus-base` issue this check links to in its error.
+
 ## Maven Central publishing
 
 Publish to Central only what other projects consume as a **Maven dependency**. Deployables

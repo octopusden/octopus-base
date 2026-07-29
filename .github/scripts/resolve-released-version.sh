@@ -20,8 +20,16 @@
 #      it is the only identity that cannot drift. The attempt matters because a rerun
 #      keeps the run id while the public flow recomputes the version, so id alone would
 #      match two different releases.
-#   3. The single version tag on the commit the run reports. Correct only when that
-#      commit carries exactly one version tag.
+#      Its lookup must succeed: see the fail-closed note at the call site for why a failed
+#      one cannot be treated as "unstamped".
+#   3. The single version tag on the commit the run reports. Correct only when that commit
+#      carries exactly one version tag. RELEASE_RUN_SHA is the run's REPORTED commit — for
+#      a repository_dispatch run, the default-branch head at dispatch time — while the
+#      release workflow tags the commit it actually BUILT, so for a hybrid release of
+#      anything else the two differ by design. That is sound rather than lucky: source 3
+#      is only reached once source 2 has looked and found nothing, which means the release
+#      predates stamping — and releases from that era were tagged on the reported commit,
+#      which is exactly what this source reads.
 #   4. The most recently created release. Last resort, for a release made before the
 #      stamp existed.
 #
@@ -71,8 +79,17 @@ fi
 if [ -n "$RELEASE_RUN_ID" ] && [ -n "$RELEASE_RUN_ATTEMPT" ] && [ -n "$GITHUB_REPOSITORY" ]; then
   # Delimited so one run's marker cannot be a prefix of another's (555/1 vs 555/10).
   marker="<!-- octopus-release-run: ${RELEASE_RUN_ID}/${RELEASE_RUN_ATTEMPT} -->"
+  # Fail closed. An unreadable release list is NOT the same as "no release carries this
+  # stamp", and conflating them is how a transient blip turns into a wrongly registered
+  # version: the run falls through to source 3, finds the one tag an EARLIER release left
+  # on the commit this run reports, and registers that version with every job green.
+  stamp_lookup=0
   stamped="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=50" \
-    --jq "map(select((.body // \"\") | contains(\"${marker}\"))) | first | .tag_name // empty" 2>/dev/null || true)"
+    --jq "map(select((.body // \"\") | contains(\"${marker}\"))) | first | .tag_name // empty" 2>&1)" || stamp_lookup=$?
+  if [ "$stamp_lookup" -ne 0 ]; then
+    printf '%s\n' "$stamped" >&2
+    die "Could not read this repository's releases, so the release stamped by run ${RELEASE_RUN_ID}/${RELEASE_RUN_ATTEMPT} cannot be identified. Refusing to fall back to tag topology, which can name a version an earlier run released. Re-run when the API is reachable, or pass release-version explicitly."
+  fi
   if [ -n "$stamped" ] && [ "$stamped" != "null" ]; then
     version="${stamped#v}"
     if grep -qE "$SEMVER" <<<"$version"; then
