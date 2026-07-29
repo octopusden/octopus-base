@@ -55,6 +55,16 @@ on:
         required: false
         type: boolean
         default: true
+      fat-jar-publication-allowlist:
+        description: 'Comma-separated artifactIds exempt from the Maven Central publication guard (fat jar or oversized artifact). Any other artifact that trips the guard fails the release before upload. Use only for artifacts a consumer genuinely resolves from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner.'
+        required: false
+        type: string
+        default: ''
+      max-central-artifact-mb:
+        description: 'Size above which a published artifact fails the Maven Central publication guard, in MB. Catches fat jars that carry no marker in their name — e.g. a shadow jar published with the classifier stripped.'
+        required: false
+        type: number
+        default: 8
       resume-deployment-id:
         description: 'Emergency re-run knob: Portal deployment id printed as RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID by a failed run OF THIS SAME REPOSITORY. When set, the Gradle upload is SKIPPED and that existing deployment is published instead — use it after a run died past the upload, so the version is not uploaded twice. Callers must expose it in their own workflow_dispatch inputs to use it.'
         required: false
@@ -99,8 +109,10 @@ jobs:
       # check input parameters
       - name: Unknown flow
         if: inputs.flow-type != 'public' && inputs.flow-type != 'hybrid'
+        env:
+          FLOW_TYPE: ${{ inputs.flow-type }}
         run: |
-          echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
+          echo "Unknown flow specified, should be one of {public, hybrid}: $FLOW_TYPE"
           exit 1
 
       - name: Fail if commit-hash is not set for hybrid flow
@@ -122,14 +134,24 @@ jobs:
 
       - name: Hybrid flow
         if: inputs.flow-type == 'hybrid'
+        env:
+          COMMIT_HASH: ${{ inputs.commit-hash }}
+          INPUT_BUILD_VERSION: ${{ inputs.build-version }}
         run: |
+          set -euo pipefail
           echo "Hybrid flow:"
           echo "- Skipping tests"
-          echo "- Commit hash: ${{ inputs.commit-hash }}"
-          echo "- Version: ${{ inputs.build-version }}"
+          echo "- Commit hash: $COMMIT_HASH"
+          echo "- Version: $INPUT_BUILD_VERSION"
+          # A version is a coordinate that ends up in shell commands and file paths, so reject
+          # anything that is not a plain version string before it reaches either.
+          if [[ ! "$INPUT_BUILD_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+            echo "build-version contains unexpected characters: $INPUT_BUILD_VERSION" >&2
+            exit 1
+          fi
           # set hybrid flow variables
-          echo "SKIP_TESTS=-x test" >> $GITHUB_ENV
-          echo "BUILD_VERSION=${{ inputs.build-version }}" >> $GITHUB_ENV
+          echo "SKIP_TESTS=-x test" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=$INPUT_BUILD_VERSION" >> "$GITHUB_ENV"
 
       - name: Apply extra skipped tasks
         if: inputs.skip-extra-tasks != ''
@@ -236,8 +258,10 @@ jobs:
 
       - name: Save new version to env
         if: inputs.flow-type == 'public'
+        env:
+          NEW_VERSION: ${{ steps.new-version.outputs.version }}
         run: |
-          echo "BUILD_VERSION=${{ steps.new-version.outputs.version }}" >> $GITHUB_ENV
+          echo "BUILD_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
 
       # setup env
       - name: Set up Java
@@ -253,11 +277,15 @@ jobs:
       # gradle build
       - name: Gradle build
         if: inputs.docker-image == ''
-        run: ./gradlew build ${{ env.SKIP_TESTS }} -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        # shellcheck disable=SC2086 # SKIP_TESTS intentionally word-splits into `-x <task>` pairs
+        run: ./gradlew build $SKIP_TESTS -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
 
       - name: Gradle build docker image
         if: inputs.docker-image
-        run: ./gradlew build dockerBuildImage ${{ env.SKIP_TESTS }} -Pdocker.image=${{ inputs.docker-image }} -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        # shellcheck disable=SC2086 # SKIP_TESTS intentionally word-splits into `-x <task>` pairs
+        run: ./gradlew build dockerBuildImage $SKIP_TESTS -Pdocker.image="$DOCKER_IMAGE" -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
 
       # push to docker
       - name: Log in to Docker Registry
@@ -270,7 +298,9 @@ jobs:
 
       - name: Push to docker registry
         if: inputs.docker-image && !inputs.dry-run
-        run: docker push ghcr.io/octopusden/${{ inputs.docker-image }}:${{ env.BUILD_VERSION }}
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
 
       # The publish helper lives in octopus-base, but this reusable workflow runs
       # against the CONSUMER's checkout — so fetch the script from the very commit
@@ -307,6 +337,102 @@ jobs:
           path: .octopus-base-helper
           sparse-checkout: .github/scripts
 
+      # Maven Central is for artifacts other projects consume as a DEPENDENCY. A Spring Boot
+      # executable jar or a shadow/uber jar there is usually unintended — Gradle module metadata
+      # can pull the shadow variant into `from(components.java)` without anyone asking — and a
+      # single such artifact can exceed the org's entire monthly Central size quota.
+      # Publish to a throwaway local repository first and inspect what would be uploaded, so an
+      # oversized artifact fails the release BEFORE it reaches Central, where versions are
+      # immutable. Runs in dry-run too: that is where the check is cheapest to act on.
+      # Signing is force-disabled for this invocation — the guard must not need the GPG key, and
+      # unsigned artifacts are enough to inspect names, sizes and archive contents.
+      - name: Guard against publishing fat jars to Maven Central
+        if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
+        env:
+          FAT_JAR_ALLOWLIST: ${{ inputs.fat-jar-publication-allowlist }}
+          MAX_ARTIFACT_MB: ${{ inputs.max-central-artifact-mb }}
+        run: |
+          set -euo pipefail
+
+          GUARD_REPO="$RUNNER_TEMP/m2-publication-guard"
+          rm -rf "$GUARD_REPO"
+
+          cat > "$RUNNER_TEMP/no-signing.init.gradle" <<'GRADLE'
+          allprojects { proj ->
+              proj.plugins.withId('signing') {
+                  proj.extensions.getByName('signing').required = false
+              }
+          }
+          GRADLE
+
+          # -Pnexus=true must match the real upload below: some consumers shape their plugins
+          # and publications on that property, so without it this dry publication could inspect
+          # a different artifact set than the one publishToSonatype actually uploads.
+          ./gradlew publishToMavenLocal \
+            -Pnexus=true \
+            -Dmaven.repo.local="$GUARD_REPO" \
+            --init-script "$RUNNER_TEMP/no-signing.init.gradle" \
+            -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
+
+          python3 - "$GUARD_REPO" <<'PY'
+          import os, re, sys, zipfile
+          from pathlib import Path
+
+          repo = Path(sys.argv[1])
+          allowed = {a.strip() for a in os.environ.get("FAT_JAR_ALLOWLIST", "").split(",") if a.strip()}
+          max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
+
+          published, offenders = [], []
+          # .zip is included because automation modules can publish shadow distributions and
+          # TeamCity plugin bundles, which cost the same quota as a jar.
+          for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in repo.rglob(ext)):
+              # <group path>/<artifactId>/<version>/<file>
+              artifact_id = path.parent.parent.name
+              size_mb = path.stat().st_size / 1048576
+              published.append((artifact_id, path.name, size_mb))
+              reasons = []
+              # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
+              if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
+                  reasons.append("shadow/uber artifact (-all classifier)")
+              else:
+                  try:
+                      with zipfile.ZipFile(path) as z:
+                          if any(n.startswith("BOOT-INF/") for n in z.namelist()):
+                              reasons.append("Spring Boot executable jar (BOOT-INF/)")
+                  except zipfile.BadZipFile:
+                      pass
+              # Size is the signal that catches what the markers miss — e.g. a shadow jar
+              # published with the classifier stripped, which is indistinguishable from a
+              # library jar by name and has no BOOT-INF/ either.
+              if size_mb > max_mb:
+                  reasons.append(f"exceeds {max_mb:g} MB")
+              if reasons and artifact_id not in allowed:
+                  offenders.append((artifact_id, path.name, size_mb, "; ".join(reasons)))
+
+          print(f"Inspected {len(published)} artifact(s) that would be published to Maven Central "
+                f"(size limit {max_mb:g} MB):")
+          for artifact_id, name, size_mb in published:
+              print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
+          if allowed:
+              print(f"Explicitly allowed: {', '.join(sorted(allowed))}")
+
+          if offenders:
+              print("\n::error::Artifact(s) unfit for Maven Central would be published", flush=True)
+              for artifact_id, name, size_mb, reason in offenders:
+                  print(f"  {artifact_id}: {name} ({size_mb:.2f} MB) — {reason}", file=sys.stderr)
+              print(
+                  "\nCentral is for artifacts consumed as a Maven dependency. Either stop publishing "
+                  "this module (declare no MavenPublication for it, or set publish-to-nexus: false for "
+                  "a repository nobody consumes), or — if a consumer really resolves this artifact from "
+                  "a Maven repository, e.g. a TeamCity metarunner — add its artifactId to the "
+                  "fat-jar-publication-allowlist input with that justification. Raise "
+                  "max-central-artifact-mb only if a genuinely consumed library is legitimately large.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print("\nPublication set is fit for Maven Central.")
+          PY
+
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
       # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
@@ -337,7 +463,7 @@ jobs:
         if: ${{ !inputs.dry-run && inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         run: |
           set -o pipefail
-          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion=${{ env.BUILD_VERSION }} -Pversion=${{ env.BUILD_VERSION }} --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
+          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}

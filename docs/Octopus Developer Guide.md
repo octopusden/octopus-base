@@ -165,20 +165,23 @@ jobs:
       java-version: '21'
 ```
 
-## Skipping Maven Central publishing (`publish-to-nexus`)
+## Maven Central publishing
 
-`common-java-gradle-release` publishes the module's Maven artifacts to Sonatype
-Central by default (`publish-to-nexus: true`). Set it to `false` for
-**deployable-only** repositories — an application or UI that ships as a docker
-image and is never consumed by anyone as a Maven dependency. Skipping the
-upload keeps the org under Maven Central's monthly publishing limits (a Spring
-Boot fat-jar can be tens of MB per release).
+Publish to Central only what other projects consume as a **Maven dependency**. Deployables
+and internal tooling do not belong there:
 
-When `publish-to-nexus: false`, the release still builds, pushes the docker
-image, and creates the GitHub release — only the Sonatype publish (and its
-secret check) are skipped. Pair it with `register-release-immediately: true`
-so the release is logged directly instead of waiting for a Maven Central
-artifact that will never appear.
+- a service or app ships as a docker image on ghcr;
+- a CLI ships as a GitHub Release asset, or is built locally;
+- test harnesses and compat suites have no consumers at all.
+
+### Keeping a repository off Central
+
+Set `publish-to-nexus: false` **and** remove the `MavenPublication` from the build script: the
+input guards the pipeline, the build-script change is what stops a manual
+`./gradlew publishToSonatype`. The release still builds, pushes the docker image and creates the
+GitHub release — only the Sonatype publish and its secret check are skipped. Pair it with
+`register-release-immediately: true`, or the release-log gate waits for an artifact that will
+never appear.
 
 ```yaml
 jobs:
@@ -191,3 +194,48 @@ jobs:
       publish-to-nexus: false
       register-release-immediately: true
 ```
+
+### Keeping single modules off Central
+
+When some modules are consumed and some are not (a service plus its client libraries), declare
+**no publication** for the deployable modules and keep it for the libraries. Note that
+`tasks.named('publish') { enabled = false }` does **not** work — `publishToSonatype` depends on
+the `PublishToMavenRepository` tasks, not on the `publish` lifecycle task.
+
+If the module you stop publishing is the one `check-and-register.yml` polls, re-point that
+workflow's `artifact-pattern` at a module that is still published.
+
+### The publication guard
+
+Before uploading, the release inspects what would reach Central and **fails** on:
+
+- a shadow/uber artifact (`-all` classifier);
+- a Spring Boot executable jar, detected by a `BOOT-INF/` entry inside the archive — its file
+  name is indistinguishable from a library's;
+- anything larger than `max-central-artifact-mb` (default 8), which catches a shadow jar
+  published with the classifier stripped.
+
+A fat jar often appears without anyone asking for it: the shadow plugin exposes
+`shadowRuntimeElements` as a variant of the `java` component, so `from(components.java)`
+publishes the fat jar alongside the thin one.
+
+If the guard fails your release, pick one:
+
+| Situation | Fix |
+|---|---|
+| The module is a deployable nobody depends on | Stop publishing it |
+| The whole repository is a deployable | `publish-to-nexus: false` |
+| A consumer really resolves this fat jar from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner | Add its artifactId to `fat-jar-publication-allowlist` |
+| A genuinely consumed library is legitimately large | Raise `max-central-artifact-mb` |
+
+The allowlist keeps a legitimate exception explicit and reviewed instead of silent:
+
+```yaml
+      # The automation module's fat jar is resolved by its TeamCity metarunner
+      # (-Dartifact=<group>:<name>:<version>:jar:all), so it must stay on Central.
+      fat-jar-publication-allowlist: automation
+```
+
+The guard runs in dry-run too, so `dry-run: true` rehearses it before a real release. Callers
+pin `octopus-base` by tag, so the guard starts applying to a repository only when it bumps that
+ref — check what the repository publishes today and add the exception in the same PR as the bump.
