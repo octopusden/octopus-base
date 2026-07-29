@@ -399,6 +399,11 @@ jobs:
       # A flaky artifact service should cost a retry, not the asset. This is what makes the
       # step above best-effort rather than lax: the common failure it tolerates is transient,
       # and transient failures are retried here instead of degrading the release.
+      #
+      # It also hedges the one thing that could not be verified: whether download-artifact
+      # sees an artifact uploaded by a job that did NOT re-run. This path asks
+      # `GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts`, which is scoped to the
+      # RUN, so if the action turns out to be attempt-scoped the retry still finds it.
       - name: Retry restoring the released pom.xml
         if: ${{ steps.restore-pom.outcome == 'failure' }}
         continue-on-error: true

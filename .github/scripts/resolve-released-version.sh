@@ -86,9 +86,12 @@ if [ -n "$RELEASE_RUN_ID" ] && [ -n "$RELEASE_RUN_ATTEMPT" ] && [ -n "$GITHUB_RE
   # Every page, not just the first: three consumer repositories already hold more than 50
   # releases (95, 59 and 54 at the time of writing), so a single page can miss a stamp that
   # exists and then be mistaken for "this release predates stamping" — the same silent
-  # wrong-version outcome the fail-closed handling below exists to prevent. With --paginate
-  # the jq filter runs per page, so output is one line per page plus empty lines for the
-  # pages with no match; take the first non-empty one.
+  # wrong-version outcome the fail-closed handling below exists to prevent.
+  #
+  # gh applies --jq per page (without --slurp each page is filtered separately), and this
+  # filter yields `empty` for a page with no match, so measured output is exactly one line
+  # or nothing at all — NOT a blank line per page. The loop below still takes the first
+  # non-empty line rather than the first line, so it holds if that ever changes.
   stamp_lookup=0
   stamped_pages="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
     --jq "map(select((.body // \"\") | contains(\"${marker}\"))) | first | .tag_name // empty" 2>&1)" || stamp_lookup=$?

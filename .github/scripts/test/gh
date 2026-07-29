@@ -6,10 +6,11 @@
 #   STAMPED_FOR_RUN      run id/attempt that stamp belongs to, e.g. 555/1; a query about
 #                        any other run or attempt gets nothing, so a script that ignores
 #                        either cannot pass
-#   STAMP_ON_LATER_PAGE  when non-empty, the stamped release is NOT on the first page: the
-#                        stub answers the way gh --paginate does, one filtered result per
-#                        page, so the first line is empty and the tag comes later. A lookup
-#                        that reads only the first line, or omits --paginate, cannot pass
+#   STAMP_ON_LATER_PAGE  when non-empty, feed the tolerated-but-not-observed shape: leading
+#                        empty lines before the tag. Real gh yields `empty` for a page with
+#                        no match, so it emits one line or nothing; this fixture exists to
+#                        pin the parser's tolerance, so a lookup that reads only the FIRST
+#                        line fails here even though today's gh would not expose that bug
 #   STAMP_LOOKUP_FAILS   when non-empty, the release LIST call fails like a rate limit or
 #                        5xx would; kept separate from LATEST_RELEASE_FAILS so a failed
 #                        stamp lookup can be told apart from an unreadable latest release
@@ -32,7 +33,7 @@ if [ "${1:-}" = "api" ] && [[ "$*" == *repos/*/releases\?per_page=* ]]; then
   # that marker names the run these fixtures belong to.
   if [ -n "${STAMPED_RELEASE_TAG:-}" ] && [ -n "${STAMPED_FOR_RUN:-}" ] \
      && [[ "$*" == *"octopus-release-run: ${STAMPED_FOR_RUN}"* ]]; then
-    # gh --paginate applies --jq per page, so a miss contributes an empty line.
+    # Not what gh emits for a miss (that is nothing at all) — see STAMP_ON_LATER_PAGE.
     if [ -n "${STAMP_ON_LATER_PAGE:-}" ]; then
       printf '\n\n%s\n' "$STAMPED_RELEASE_TAG"
     else

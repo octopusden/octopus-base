@@ -91,12 +91,15 @@ on:
 #
 # Dry runs must NOT share the group. A repository can run several release variants at once
 # (octopus-test's release-smoke matrix), and GitHub keeps only one PENDING member per
-# group, so a third variant would cancel a waiting one. Dry runs therefore get a key that
-# is unique per run and variant; real publishes get the shared per-repository one.
+# group, so a third variant sharing a key would be cancelled outright rather than queued.
+# The key must therefore separate every variant the caller actually varies: two smoke
+# variants differing only in publish-to-nexus were colliding and serializing needlessly,
+# one more such variant away from cancelling each other. Add any new distinguishing input
+# here as well. Real publishes get the shared per-repository key.
 concurrency:
   group: >-
     release-${{ github.repository }}-${{ inputs.dry-run
-      && format('dry-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image)
+      && format('dry-{0}-{1}-{2}-{3}-{4}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image, inputs.publish-to-nexus)
       || 'publish' }}
   cancel-in-progress: false
 
