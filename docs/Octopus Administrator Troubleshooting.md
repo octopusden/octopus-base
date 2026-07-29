@@ -141,15 +141,34 @@ an immutable version to Maven Central and only then failing with no tag.
 1. Release from a branch tip instead — any branch head is taggable, including a maintenance
    branch whose workflow files legitimately differ from the default branch.
 2. Or release a commit whose `.github/workflows` are unchanged relative to some branch head.
-3. If this specific historical commit must be released, an operator can create the tag manually
-   with credentials authorized to modify workflows, then re-run so the release is attached.
+3. Only if this specific historical commit must be released: create the tag manually — but read
+   the credential note below first, because this is not something an ordinary operator can do.
 
-For the standing options (a `workflow`-scoped PAT or a GitHub App), see the `octopus-base` issue
-linked from the failing step's error message.
+### The credential this needs, which the org does not currently provision
+
+Creating a tag on such a commit requires a credential **authorized to modify workflows**: a PAT
+with `workflow` scope, or a GitHub App with `Workflows: write`. The Actions `GITHUB_TOKEN` can
+never have it, and no personal token has it by default — a classic PAT with `repo` scope alone is
+refused exactly like the workflow is.
+
+At the time of writing the org has **not** decided to provision such a credential; that is the
+open question in the `octopus-base` issue linked from the failing step's error message. So treat
+"create the tag manually" as requiring an administrator to mint a suitable token first. Do not
+plan a release around this recovery — prefer options 1 and 2 above.
 
 ## The rarer variant, after publishing
 
-If instead the release fails at `Tag creation refused` *after* publishing, a workflow change
-landed on a branch while the release was building, withdrawing what the pre-build check had
-confirmed. The artifacts are published and immutable: create the tag manually on the built
-commit, then re-run to attach the release. The error message states this.
+If instead the release fails at `Tag creation refused` *after* publishing, the property that made
+the built commit taggable was withdrawn while the release was building. Two ordinary events do
+that:
+
+- a workflow change merged to a branch, so the built commit's workflow files no longer match any
+  branch head;
+- **the branch whose tip was being released was advanced or deleted** — GitHub deletes branches on
+  merge by default, so this is routine rather than a rare race. A commit that was legal *because*
+  it headed a branch stops being legal when that branch goes away.
+
+The artifacts are published and immutable, so the version cannot be republished. The tag has to
+be created on the built commit and the release attached by re-running — which needs the credential
+described above. The error message states the situation; this is the one failure that can leave a
+release stuck with no operator-side way forward, so escalate rather than retrying.
