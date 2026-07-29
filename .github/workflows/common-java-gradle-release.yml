@@ -80,22 +80,30 @@ on:
       GPG_PRIVATE_KEY:
         required: false
 
+# Serialize REAL releases per repository: two overlapping ones would compute the same next
+# version and upload it twice. This sits at WORKFLOW level, not on the publish job, so the
+# lease spans publish -> tag/release -> registration. On the job it ended when publishing
+# ended, which left a window in which the next public-flow release could read
+# `find-latest-tag` before the previous run's tag existed and compute a version that was
+# already released. Workflow level is also the only placement that works for a reusable
+# workflow: a group set by the caller on the job that calls it does not gate the called
+# workflow's own jobs.
+#
+# Dry runs must NOT share the group. A repository can run several release variants at once
+# (octopus-test's release-smoke matrix), and GitHub keeps only one PENDING member per
+# group, so a third variant would cancel a waiting one. Dry runs therefore get a key that
+# is unique per run and variant; real publishes get the shared per-repository one.
+concurrency:
+  group: >-
+    release-${{ github.repository }}-${{ inputs.dry-run
+      && format('dry-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image)
+      || 'publish' }}
+  cancel-in-progress: false
+
 jobs:
   prepare-build-publish-release:
     runs-on: ubuntu-latest
     environment: Prod
-    # Serialize REAL releases per repository: two overlapping ones would compute the
-    # same next version and upload it twice. Dry runs must NOT share that group —
-    # a repository can run several release variants at once (octopus-test's
-    # release-smoke matrix), and since GitHub keeps only one pending member per
-    # group, the extra variants would be cancelled. So dry runs get a key that is
-    # unique per run and variant, real publishes get the shared per-repository one.
-    concurrency:
-      group: >-
-        release-${{ github.repository }}-${{ inputs.dry-run
-          && format('dry-{0}-{1}-{2}-{3}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image)
-          || 'publish' }}
-      cancel-in-progress: false
     # The version is an input only for the hybrid flow; the public flow computes it
     # here. Publishing it as an output is what lets registration receive the version
     # that was actually released instead of an empty string.
@@ -223,7 +231,12 @@ jobs:
 
       - name: Record the built commit
         id: built-commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
+          # fails, writing an empty sha that is only caught after the publish.
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
@@ -760,6 +773,12 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, and `gh release …` resolves the repository from the
+          # git remote — GITHUB_REPOSITORY is not consulted, GH_REPO is the only documented
+          # override. Without it every release subcommand dies with "failed to run git:
+          # not a git repository", after the artifacts are published. The sibling `gh api`
+          # calls are unaffected because they name the repository in the path.
+          GH_REPO: ${{ github.repository }}
           TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           BUILT_SHA: ${{ needs.prepare-build-publish-release.outputs.built-sha }}
         run: |
@@ -850,6 +869,10 @@ jobs:
       - name: Stamp the release with this run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set for the same reason as above. This step only uses `gh api` with explicit
+          # repository paths, so it does not need it today — but a future `gh release` call
+          # added here would fail in a way that is hard to read.
+          GH_REPO: ${{ github.repository }}
           TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           MARKER: "<!-- octopus-release-run: ${{ github.run_id }}/${{ github.run_attempt }} -->"
         run: |

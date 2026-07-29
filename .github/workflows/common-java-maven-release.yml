@@ -142,7 +142,12 @@ jobs:
 
       - name: Record the built commit
         id: built-commit
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
+          # fails, writing an empty sha that is only caught after the publish.
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
@@ -341,7 +346,8 @@ jobs:
           # a full re-run — which does repeat this job — from colliding with itself.
           name: released-pom-${{ github.run_id }}
           path: pom.xml
-          retention-days: 1
+          # Long enough to cover a recovery days later, not just the same afternoon.
+          retention-days: 7
           if-no-files-found: error
           overwrite: true
 
@@ -385,6 +391,33 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: released-pom-${{ github.run_id }}
+          # Into its own directory: at the workspace root a `-f pom.xml` probe could not
+          # tell the released file from a checked-out one, and would silently attach the
+          # pre-release version if a checkout is ever added to this job.
+          path: released-pom
+
+      # A flaky artifact service should cost a retry, not the asset. This is what makes the
+      # step above best-effort rather than lax: the common failure it tolerates is transient,
+      # and transient failures are retried here instead of degrading the release.
+      - name: Retry restoring the released pom.xml
+        if: ${{ steps.restore-pom.outcome == 'failure' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if gh run download "${GITHUB_RUN_ID}" \
+                 --repo "${GITHUB_REPOSITORY}" \
+                 --name "released-pom-${GITHUB_RUN_ID}" \
+                 --dir released-pom; then
+              echo "Restored the released pom.xml on retry ${attempt}."
+              exit 0
+            fi
+            echo "Retry ${attempt} could not fetch the released pom.xml; waiting."
+            sleep $(( attempt * 10 ))
+          done
+          echo "Could not fetch the released pom.xml after 3 retries." >&2
 
       # The tag is created at the commit the build job actually built. The replaced
       # action, marvinpinto/action-automatic-releases, had no target-commit input: it
@@ -395,6 +428,12 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, and `gh release …` resolves the repository from the
+          # git remote — GITHUB_REPOSITORY is not consulted, GH_REPO is the only documented
+          # override. Without it every release subcommand dies with "failed to run git:
+          # not a git repository", after the artifacts are published. The sibling `gh api`
+          # calls are unaffected because they name the repository in the path.
+          GH_REPO: ${{ github.repository }}
           TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           BUILT_SHA: ${{ needs.prepare-build-publish-release.outputs.built-sha }}
         run: |
@@ -408,10 +447,23 @@ jobs:
 
           # Attach the released pom.xml when it was restored; never fail the release over it.
           asset=()
-          if [ -f pom.xml ]; then
-            asset=(pom.xml)
+          if [ -f released-pom/pom.xml ]; then
+            asset=(released-pom/pom.xml)
           else
             echo "::warning title=Release asset missing::The released pom.xml could not be restored, so the release is created without it. The tag, the release and its run stamp are unaffected; only the attached file is missing."
+            # Also on the run summary: an annotation is easy to scroll past, and a release
+            # that quietly lacks its promised asset is what a reviewer objected to here.
+            # Deliberately NOT a step failure: this step runs after an irreversible publish,
+            # so failing it would either strand a published version untagged (if it failed
+            # before tagging) or skip registration (if after) — both far worse outcomes than
+            # a missing convenience file. Attach it by hand, or re-run this job.
+            {
+              echo "### Release ${TAG}: pom.xml asset missing"
+              echo ""
+              echo "The published pom.xml could not be restored from the build job's artifact."
+              echo "The tag, the release and the run stamp are correct; only the attached file is absent."
+              echo "Attach it manually, or re-run this job while the artifact is still retained."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
           # The TAG is the authority, not the release: `gh release create --target` is IGNORED
@@ -449,7 +501,7 @@ jobs:
               if grep -qxF "pom.xml" <<<"$existing_assets"; then
                 echo "Release $TAG already exists at $built_sha with pom.xml attached — nothing to do."
               elif [ "${#asset[@]}" -gt 0 ]; then
-                gh release upload "$TAG" pom.xml
+                gh release upload "$TAG" released-pom/pom.xml
                 echo "Release $TAG already exists at $built_sha — attached the missing pom.xml."
               else
                 echo "Release $TAG already exists at $built_sha without pom.xml, and the released pom.xml is not available to attach."
@@ -505,6 +557,10 @@ jobs:
       - name: Stamp the release with this run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set for the same reason as above. This step only uses `gh api` with explicit
+          # repository paths, so it does not need it today — but a future `gh release` call
+          # added here would fail in a way that is hard to read.
+          GH_REPO: ${{ github.repository }}
           TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           MARKER: "<!-- octopus-release-run: ${{ github.run_id }}/${{ github.run_attempt }} -->"
         run: |
