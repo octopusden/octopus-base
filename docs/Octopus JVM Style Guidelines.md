@@ -262,14 +262,16 @@ Consequence: a component whose API boundary is not declared cannot have its vers
 
 ### What counts as API, per component type
 
-| Component type | Its public API is | Everything else | Applicable check |
-|----------------|-------------------|-----------------|------------------|
-| **Library** (consumed via `dependencies { }`) | Public types and members in non-internal packages | Implementation classes | API diff against the previous release (`japicmp`, or `binary-compatibility-validator` for Kotlin) |
-| **Gradle convention plugin** | Plugin ID, extension DSL (properties, nested blocks, `fun`s), **`convention(...)` default values**, registered task names, what is wired into `check` | All classes, including the extension's implementation | No bytecode tool covers this — DSL and defaults must be reviewed by hand or pinned by functional tests |
-| **Service / application** (no downstream library consumers) | REST contract (`/rest/api/{api-version}` + generated OpenAPI), configuration keys and their defaults, DB schema and migrations, message/event payloads, Docker contract (ports, volumes, healthcheck) | **All code — may be fully internal** | OpenAPI spec diff against the previous release (`oasdiff`, `openapi-diff`) |
-| **BOM / version catalog / parent POM** | Declared coordinates and version constraints | — | Removed or narrowed constraint is breaking |
+| Component type | Its public API is | Everything else | What must be compared against the previous release |
+|----------------|-------------------|-----------------|-----------------------------------------------------|
+| **Library** (consumed via `dependencies { }`) | Public types and members in non-internal packages | Implementation classes | The published bytecode API surface |
+| **Gradle convention plugin** | Plugin ID, extension DSL (properties, nested blocks, `fun`s), **`convention(...)` default values**, registered task names, what is wired into `check` | All classes, including the extension's implementation | The DSL and its defaults — not the bytecode |
+| **Service / application** (no downstream library consumers) | REST contract (`/rest/api/{api-version}` + generated OpenAPI), configuration keys and their defaults, DB schema and migrations, message/event payloads, Docker contract (ports, volumes, healthcheck) | **All code — may be fully internal** | The generated OpenAPI spec and the config key set |
+| **BOM / version catalog / parent POM** | Declared coordinates and version constraints | — | The declared constraints |
 
 A service having no downstream services does **not** mean it has no public API — it means the API is not in the bytecode. Marking all of its code internal is correct; judging its version by an API diff of that code is not.
+
+The last column states *what* must be compared, not *how*. No comparison is automated in any Octopus release workflow today, so all of it is currently a review responsibility. Tool selection per component type is a separate decision.
 
 ### Increment level, per API plane
 
@@ -285,14 +287,12 @@ Changing a `convention(...)` default or a config default alters consumer behavio
 
 ### Marking internals
 
-The only mechanism that works identically in Java, Kotlin and Groovy is the **package name**. Language modifiers reinforce it where the language has them.
+Octopus marks internals by **package name**, because it is the only mechanism that works identically in Java, Kotlin and Groovy. Where the language has a visibility modifier, it is required in addition.
 
 | Mechanism | Java | Kotlin | Groovy |
 |-----------|:----:|:------:|:------:|
-| `*.internal.*` package name (**required**) | yes | yes | yes |
-| `internal` modifier | not in the language | yes (**required** in `*.internal.*`) | not in the language |
-| `@ApiStatus.Internal` (`org.jetbrains:annotations`) | yes | yes | yes |
-| `module-info.java` `exports` (strongest, when JPMS is used) | yes | yes | — |
+| `*.internal.*` package name | required | required | required |
+| `internal` modifier | not in the language | required | not in the language |
 
 Rules:
 
@@ -301,7 +301,9 @@ Rules:
 - In Kotlin, declarations in `*.internal.*` must also carry the `internal` modifier. Note that Kotlin `internal` compiles to `public` in bytecode — the compiler mangles internal *member* names, but **public members of an internal class are not mangled** and stay callable from Java ([Calling Kotlin from Java](https://kotlinlang.org/docs/java-to-kotlin-interop.html)). The modifier documents intent; it does not hide anything from bytecode tooling.
 - Therefore any API-diff tool must be configured with the boundary explicitly, e.g. `japicmp -e 'org.octopusden.octopus.<module>.internal'`. Without it, japicmp's default access level treats every `public`/`protected` bytecode member as API and reports internal refactors as breaking changes.
 
-This convention follows established practice: the JDK identifies its own internals by namespace (`sun.*`, `jdk.internal.*`) in [JEP 260](https://openjdk.org/jeps/260), strongly encapsulated by default since [JEP 396](https://openjdk.org/jeps/396); `@ApiStatus.Internal` is documented for exactly this purpose, including package-level marking.
+Why by namespace: the JDK identifies its own internals the same way (`sun.*`, `jdk.internal.*`, [JEP 260](https://openjdk.org/jeps/260)), strongly encapsulated by default since [JEP 396](https://openjdk.org/jeps/396).
+
+Not part of this standard: `@ApiStatus.Internal` (would add an `org.jetbrains:annotations` dependency) and JPMS `module-info.java` `exports` (not used in any Octopus component today). Both are valid ways to declare the boundary and are cited here only so the choice is not re-argued — adopting either is a separate decision.
 
 ## Baseline Strategy
 
