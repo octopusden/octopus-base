@@ -83,13 +83,26 @@ if [ -n "$RELEASE_RUN_ID" ] && [ -n "$RELEASE_RUN_ATTEMPT" ] && [ -n "$GITHUB_RE
   # stamp", and conflating them is how a transient blip turns into a wrongly registered
   # version: the run falls through to source 3, finds the one tag an EARLIER release left
   # on the commit this run reports, and registers that version with every job green.
+  # Every page, not just the first: three consumer repositories already hold more than 50
+  # releases (95, 59 and 54 at the time of writing), so a single page can miss a stamp that
+  # exists and then be mistaken for "this release predates stamping" — the same silent
+  # wrong-version outcome the fail-closed handling below exists to prevent. With --paginate
+  # the jq filter runs per page, so output is one line per page plus empty lines for the
+  # pages with no match; take the first non-empty one.
   stamp_lookup=0
-  stamped="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=50" \
+  stamped_pages="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
     --jq "map(select((.body // \"\") | contains(\"${marker}\"))) | first | .tag_name // empty" 2>&1)" || stamp_lookup=$?
   if [ "$stamp_lookup" -ne 0 ]; then
-    printf '%s\n' "$stamped" >&2
+    printf '%s\n' "$stamped_pages" >&2
     die "Could not read this repository's releases, so the release stamped by run ${RELEASE_RUN_ID}/${RELEASE_RUN_ATTEMPT} cannot be identified. Refusing to fall back to tag topology, which can name a version an earlier run released. Re-run when the API is reachable, or pass release-version explicitly."
   fi
+  stamped=""
+  while IFS= read -r page_result; do
+    if [ -n "$page_result" ]; then
+      stamped="$page_result"
+      break
+    fi
+  done <<<"$stamped_pages"
   if [ -n "$stamped" ] && [ "$stamped" != "null" ]; then
     version="${stamped#v}"
     if grep -qE "$SEMVER" <<<"$version"; then

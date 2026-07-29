@@ -39,6 +39,7 @@ run() { # name expected_status expected_stdout_or_stderr_regex [stderr_regex] en
     EXPLICIT_VERSION= RELEASE_RUN_ID= RELEASE_RUN_ATTEMPT= RELEASE_RUN_SHA= \
     GITHUB_REPOSITORY= GH_TOKEN= \
     TAGS_AT_SHA= TAGS_FOR_SHA= LATEST_RELEASE_TAG= LATEST_RELEASE_FAILS= STAMP_LOOKUP_FAILS= \
+    STAMP_ON_LATER_PAGE= \
     STAMPED_RELEASE_TAG= STAMPED_FOR_RUN= \
     "$@" bash "$script" >"$outfile" 2>"$errfile"
   status=$?
@@ -127,6 +128,16 @@ run 'several tags on one commit fall back' 0 '2.2.36' 'several version tags' \
   RELEASE_RUN_SHA=cdfdd24d TAGS_FOR_SHA=cdfdd24d TAGS_AT_SHA='v2.2.35 v2.2.36' LATEST_RELEASE_TAG=v2.2.36 "${common[@]}"
 run 'fallback explains itself' 0 '2.2.37' 'most recently created release' \
   RELEASE_RUN_SHA=deadbeef TAGS_FOR_SHA=deadbeef TAGS_AT_SHA='' LATEST_RELEASE_TAG=v2.2.37 "${common[@]}"
+
+# A stamp that exists but sits past the first page must still be found: three consumer
+# repositories already hold more than 50 releases. Reading one page and calling the miss
+# "predates stamping" hands the answer to the tag/latest fallback, which can name a version
+# another run released. The stub rejects an unpaginated list call outright, and puts the
+# match behind two empty page results here.
+run 'stamp on a later page is still found' 0 '2.2.38' 'stamped with run 555' \
+  RELEASE_RUN_ID=555 RELEASE_RUN_ATTEMPT=1 STAMPED_FOR_RUN=555/1 STAMPED_RELEASE_TAG=v2.2.38 \
+  STAMP_ON_LATER_PAGE=1 \
+  RELEASE_RUN_SHA=178e83a0 TAGS_FOR_SHA=178e83a0 TAGS_AT_SHA='v2.2.37' LATEST_RELEASE_TAG=v2.2.37 "${common[@]}"
 
 # A failed stamp lookup is not an unstamped release. Falling through would let the tag an
 # EARLIER release left on the commit this run reports answer for this one — silently, and

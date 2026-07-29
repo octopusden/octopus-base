@@ -258,7 +258,9 @@ Real check names from `octopus-test`:
 If the repository uses a unified merge contract, require only:
 - `gate/merge`
 
-Do not mark disabled or intentionally skipped jobs as required in branch protection.
+Do not mark disabled or intentionally skipped jobs as required in branch protection. The release
+workflows' `Tag and release` job is one of these: it runs only for a real release, so in a
+consumer's dry-run smoke matrix it is always skipped and must never be a required check.
 
 This keeps branch protection independent from implementation details (Gradle, Maven, Python, etc.).
 

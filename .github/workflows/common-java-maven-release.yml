@@ -57,6 +57,9 @@ jobs:
     # that was actually released instead of an empty string.
     outputs:
       build-version: ${{ inputs.build-version || steps.new-version.outputs.version }}
+      # The commit this job actually built. Published so the tagging job tags exactly
+      # that, instead of re-resolving a ref that may have moved in the meantime.
+      built-sha: ${{ steps.built-commit.outputs.sha }}
     env:
       BUILD_VERSION: ''
 
@@ -136,6 +139,10 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: ${{ inputs.commit-hash }}
+
+      - name: Record the built commit
+        id: built-commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
@@ -321,6 +328,23 @@ jobs:
       - name: Set new version for maven
         run: mvn --batch-mode org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{ env.BUILD_VERSION }}
 
+      # The published pom.xml is the one `versions:set` rewrote, not the one in the tree,
+      # and it is attached to the GitHub release. Hand it to the tagging job rather than
+      # letting it re-checkout, which would attach the pre-release version.
+      - name: Keep the released pom.xml for the release asset
+        if: ${{ !inputs.dry-run }}
+        uses: actions/upload-artifact@v4
+        with:
+          # Deliberately NOT keyed by run attempt. Recovery from a failed tagging step is
+          # "re-run failed jobs", which does NOT re-run this publish job, so the tagging
+          # job on attempt 2 must find the artifact uploaded on attempt 1. overwrite keeps
+          # a full re-run — which does repeat this job — from colliding with itself.
+          name: released-pom-${{ github.run_id }}
+          path: pom.xml
+          retention-days: 1
+          if-no-files-found: error
+          overwrite: true
+
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
         run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
@@ -329,22 +353,47 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      # github release — create the tag ourselves, at the commit that was actually built.
-      # marvinpinto/action-automatic-releases has no target-commit input: it tags
-      # `context.sha`, which for the repository_dispatch runs every release uses is the
-      # default-branch head at dispatch time, frozen for the run, regardless of what was
-      # checked out. A hybrid release of anything other than the current tip therefore
-      # tagged code that was never built. HEAD here is the build's own checkout, so the
-      # tag is correct by construction and the release is created from that tag.
+  # Tagging and release creation are a separate job deliberately. They run after the
+  # artifacts are published, and publishing is irreversible: Maven Central refuses a
+  # version that already exists. Were these steps in the publish job, GitHub's "re-run
+  # failed jobs" would restart the publish and die there, so the recovery this job's own
+  # error message describes could never be reached. Split, a re-run repeats only this
+  # job — it finds the tag (created by hand if the refusal persists) and attaches the
+  # release to it, while the successful publish stays untouched.
+  #
+  # No `environment:` here on purpose: this job needs only GITHUB_TOKEN, and inheriting
+  # the publish job's environment would ask a protected environment to approve twice.
+  tag-and-release:
+    name: Tag and release
+    if: ${{ !inputs.dry-run }}
+    needs: prepare-build-publish-release
+    runs-on: ubuntu-latest
+    steps:
+      # The pom.xml the publish job actually released, restored as the release asset.
+      - name: Restore the released pom.xml
+        uses: actions/download-artifact@v4
+        with:
+          name: released-pom-${{ github.run_id }}
+
+      # The tag is created at the commit the build job actually built. The replaced
+      # action, marvinpinto/action-automatic-releases, had no target-commit input: it
+      # tagged `context.sha`, which for the repository_dispatch runs every release uses
+      # is the default-branch head at dispatch time, frozen for the run, regardless of
+      # what was checked out. A hybrid release of anything other than the current tip
+      # therefore tagged code that was never built.
       - name: Create release
-        if: ${{ !inputs.dry-run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ env.BUILD_VERSION }}
+          TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
+          BUILT_SHA: ${{ needs.prepare-build-publish-release.outputs.built-sha }}
         run: |
           set -euo pipefail
 
-          built_sha="$(git rev-parse HEAD)"
+          built_sha="${BUILT_SHA}"
+          if [ -z "$built_sha" ]; then
+            echo "::error title=Built commit unknown::The build job did not report the commit it built, so there is nothing safe to tag." >&2
+            exit 1
+          fi
 
           # The TAG is the authority, not the release: `gh release create --target` is IGNORED
           # when the tag already exists (REST: target_commitish is "unused if the Git tag already
@@ -419,7 +468,7 @@ jobs:
             -f ref="refs/tags/${TAG}" -f sha="${built_sha}" --jq '.ref' 2>&1)" || ref_create=$?
           if [ "$ref_create" -ne 0 ]; then
             printf '%s\n' "$ref_create_out" >&2
-            echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again: create the tag manually with a token authorized to modify workflows, then re-run to attach the release." >&2
+            echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again, so do NOT re-dispatch the release. Recovery: create ${TAG} manually on ${built_sha} with a credential authorized to modify workflows, then use GitHub's 're-run failed jobs' on this run — that repeats only this job, which will adopt the tag and attach the release, and leaves the publish untouched." >&2
             exit 1
           fi
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes pom.xml
@@ -433,10 +482,9 @@ jobs:
       # The marker is a delimited HTML comment: invisible in the rendered notes, and
       # not a prefix of another run's marker (555/1 vs 555/10).
       - name: Stamp the release with this run
-        if: ${{ !inputs.dry-run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ env.BUILD_VERSION }}
+          TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           MARKER: "<!-- octopus-release-run: ${{ github.run_id }}/${{ github.run_attempt }} -->"
         run: |
           set -euo pipefail
@@ -450,7 +498,8 @@ jobs:
   register-release-in-log:
       # register release in octopus-release-log
       if: inputs.register-release-immediately && !inputs.dry-run
-      needs: prepare-build-publish-release
+      # Both: the version comes from the build job, but the release must exist first.
+      needs: [prepare-build-publish-release, tag-and-release]
       uses: ./.github/workflows/common-register-release.yml
       name: Register release
       with:
