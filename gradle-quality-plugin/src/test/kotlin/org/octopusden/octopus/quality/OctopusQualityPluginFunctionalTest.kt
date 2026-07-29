@@ -54,12 +54,25 @@ class OctopusQualityPluginFunctionalTest {
 
     private val ansiEscape = Regex("\\u001B\\[[0-9;]*m")
 
+    /**
+     * Generated build scripts are ktlint-checked like any other source. Written without a
+     * trailing newline they violate `standard:final-newline`, so `ktlintKotlinScriptCheck`
+     * fails; in a test that runs the aggregate `ktlintCheck`, Gradle then aborts before
+     * `ktlintMainSourceSetCheck` and the source violation the test asserts on is never
+     * reported. Whether that happens depends on task ordering, which is what made
+     * `ktlint scans sources under a build package segment` flaky.
+     *
+     * Kotlin sources are deliberately NOT normalised this way — some tests omit the trailing
+     * newline on purpose to plant a `final-newline` violation.
+     */
+    private fun String.withTrailingNewline(): String = if (endsWith("\n")) this else this + "\n"
+
     private fun settingsFile(content: String) {
-        File(projectDir, "settings.gradle.kts").writeText(content)
+        File(projectDir, "settings.gradle.kts").writeText(content.withTrailingNewline())
     }
 
     private fun buildFile(content: String) {
-        File(projectDir, "build.gradle.kts").writeText(content)
+        File(projectDir, "build.gradle.kts").writeText(content.withTrailingNewline())
     }
 
     private fun subDir(path: String): File = File(projectDir, path).also { it.mkdirs() }
@@ -808,7 +821,7 @@ class OctopusQualityPluginFunctionalTest {
             "package com.example\nfun foo() = 1",
         )
 
-        val result = runner("clean", "ktlintCheck").buildAndFail()
+        val result = runner("clean", "ktlintCheck", "--continue").buildAndFail()
         assertKtlintReported(result, "Bad.kt")
     }
 
@@ -843,7 +856,7 @@ class OctopusQualityPluginFunctionalTest {
             """.trimIndent(),
         )
 
-        val result = runner("clean", "ktlintCheck").buildAndFail()
+        val result = runner("clean", "ktlintCheck", "--continue").buildAndFail()
         // "build.gradle.kts" proves the .kts file was scanned; the rule-message assertion guards
         // against a false positive where the filename appears in unrelated output (deprecation
         // warnings, stack traces). ktlint's PLAIN reporter prints the human message, not the rule id.
@@ -870,7 +883,7 @@ class OctopusQualityPluginFunctionalTest {
                 kotlin { failOnViolation.set(true) }
                 coverage { enabled.set(false) }
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
         // Long arithmetic expression — non-comment code so ktlint can't apply any
         // single-string-literal or comment-only exemption. Line length below works
@@ -881,7 +894,7 @@ class OctopusQualityPluginFunctionalTest {
             "package com.example\n\nfun a(): Int = $longExpr\n",
         )
 
-        val result = runner("ktlintCheck").buildAndFail()
+        val result = runner("ktlintCheck", "--continue").buildAndFail()
         assertKtlintReported(result, "Exceeded max line length (140)")
     }
 
@@ -917,7 +930,7 @@ class OctopusQualityPluginFunctionalTest {
             )
             // Reference the val so the Kotlin compiler doesn't strip it as unused.
             tasks.register("printTrigger") { doLast { println(triggerList) } }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
 
         val result = runner("ktlintCheck").build()
@@ -954,7 +967,7 @@ class OctopusQualityPluginFunctionalTest {
                 kotlin { failOnViolation.set(true) }
                 coverage { enabled.set(false) }
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
         // 100 chars: violates local 80, well within plugin's 140.
         val line100 = "// " + "x".repeat(97)
@@ -992,7 +1005,7 @@ class OctopusQualityPluginFunctionalTest {
             ktlint {
                 additionalEditorconfig.put("max_line_length", "100")
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
         // Long arithmetic expression — non-comment code so ktlint can't apply any
         // single-literal or comment-only exemption. 113 chars: passes plugin's
@@ -1003,7 +1016,7 @@ class OctopusQualityPluginFunctionalTest {
             "package com.example\n\nfun a(): Int = $longExpr\n",
         )
 
-        val result = runner("ktlintCheck").buildAndFail()
+        val result = runner("ktlintCheck", "--continue").buildAndFail()
         assertKtlintReported(result, "max line length")
     }
 
@@ -1070,7 +1083,7 @@ class OctopusQualityPluginFunctionalTest {
             "package org.octopusden.octopus.build.integration\n\nimport java.util.*\n\nval x: UUID? = null\n",
         )
 
-        val result = runner("ktlintCheck").buildAndFail()
+        val result = runner("ktlintCheck", "--continue").buildAndFail()
         assertKtlintReported(result, "Bad.kt", "Wildcard import")
     }
 
@@ -1326,7 +1339,7 @@ class OctopusQualityPluginFunctionalTest {
                 fun mul(a: Int, b: Int): Int = a * b
                 fun div(a: Int, b: Int): Int = a / b
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
         writeKotlinFile(
             "src/test/kotlin/com/example/CalcTest.kt",
@@ -1337,7 +1350,7 @@ class OctopusQualityPluginFunctionalTest {
             class CalcTest {
                 @Test fun t() { assertEquals(3, Calc().add(1, 2)) }
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
     }
 
@@ -1353,7 +1366,7 @@ class OctopusQualityPluginFunctionalTest {
                 public int mul(int a, int b) { return a * b; }
                 public int div(int a, int b) { return a / b; }
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
         subDir("src/test/java/com/example")
         File(projectDir, "src/test/java/com/example/CalcTest.java").writeText(
@@ -1364,7 +1377,7 @@ class OctopusQualityPluginFunctionalTest {
             class CalcTest {
                 @Test void t() { assertEquals(3, new Calc().add(1, 2)); }
             }
-            """.trimIndent() + "\n",
+            """.trimIndent(),
         )
     }
 
