@@ -819,6 +819,12 @@ jobs:
             rel_lookup=0
             rel_out="$(gh release view "$TAG" 2>&1)" || rel_lookup=$?
             if [ "$rel_lookup" -eq 0 ]; then
+              # A draft is invisible to the stamp step's `releases/tags/...` lookup, so
+              # finish it rather than reporting success and leaving registration blocked.
+              if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+                echo "Release ${TAG} exists as a draft — publishing it."
+                gh release edit "$TAG" --draft=false
+              fi
               echo "Release $TAG already exists at $built_sha — nothing to do."
               exit 0
             fi
