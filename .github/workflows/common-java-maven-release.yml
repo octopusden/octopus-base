@@ -57,6 +57,9 @@ jobs:
     # that was actually released instead of an empty string.
     outputs:
       build-version: ${{ inputs.build-version || steps.new-version.outputs.version }}
+      # The commit this job actually built. Published so the tagging job tags exactly
+      # that, instead of re-resolving a ref that may have moved in the meantime.
+      built-sha: ${{ steps.built-commit.outputs.sha }}
     env:
       BUILD_VERSION: ''
 
@@ -136,6 +139,15 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: ${{ inputs.commit-hash }}
+
+      - name: Record the built commit
+        id: built-commit
+        run: |
+          # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
+          # fails, writing an empty sha that is only caught after the publish.
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
@@ -321,6 +333,30 @@ jobs:
       - name: Set new version for maven
         run: mvn --batch-mode org.codehaus.mojo:versions-maven-plugin:2.13.0:set -DnewVersion=${{ env.BUILD_VERSION }}
 
+      # The published pom.xml is the one `versions:set` rewrote, not the one in the tree,
+      # and it is attached to the GitHub release. Hand it to the tagging job rather than
+      # letting it re-checkout, which would attach the pre-release version.
+      - name: Keep the released pom.xml for the release asset
+        if: ${{ !inputs.dry-run }}
+        uses: actions/upload-artifact@v4
+        with:
+          # Deliberately NOT keyed by run attempt. Recovery from a failed tagging step is
+          # "re-run failed jobs", which does NOT re-run this publish job, so the tagging
+          # job on attempt 2 must find the artifact uploaded on attempt 1. overwrite keeps
+          # a full re-run — which does repeat this job — from colliding with itself.
+          # Keyed by flow and version as well as run: one caller run can invoke this
+          # workflow several times (a public and a hybrid release), and every call would
+          # otherwise upload the same artifact name — with overwrite:true the later one
+          # replaces the earlier, and a tagging job could attach the other release's pom.
+          # Deliberately NOT keyed by run attempt: recovery re-runs only the tagging job,
+          # which must find what this job uploaded on the earlier attempt.
+          name: released-pom-${{ github.run_id }}-${{ inputs.flow-type }}-${{ env.BUILD_VERSION }}
+          path: pom.xml
+          # Long enough to cover a recovery days later, not just the same afternoon.
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
         run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
@@ -329,22 +365,142 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      # github release — create the tag ourselves, at the commit that was actually built.
-      # marvinpinto/action-automatic-releases has no target-commit input: it tags
-      # `context.sha`, which for the repository_dispatch runs every release uses is the
-      # default-branch head at dispatch time, frozen for the run, regardless of what was
-      # checked out. A hybrid release of anything other than the current tip therefore
-      # tagged code that was never built. HEAD here is the build's own checkout, so the
-      # tag is correct by construction and the release is created from that tag.
-      - name: Create release
-        if: ${{ !inputs.dry-run }}
+  # Tagging and release creation are a separate job deliberately. They run after the
+  # artifacts are published, and publishing is irreversible: Maven Central refuses a
+  # version that already exists. Were these steps in the publish job, GitHub's "re-run
+  # failed jobs" would restart the publish and die there, so the recovery this job's own
+  # error message describes could never be reached. Split, a re-run repeats only this
+  # job — it finds the tag (created by hand if the refusal persists) and attaches the
+  # release to it, while the successful publish stays untouched.
+  #
+  # No `environment:` here on purpose: this job needs only GITHUB_TOKEN, and inheriting
+  # the publish job's environment would ask a protected environment to approve twice.
+  tag-and-release:
+    name: Tag and release
+    if: ${{ !inputs.dry-run }}
+    needs: prepare-build-publish-release
+    runs-on: ubuntu-latest
+    steps:
+      # The pom.xml the publish job actually released, restored as the release asset.
+      #
+      # continue-on-error, and every use of the file below is guarded, because whether a
+      # previous attempt's artifact is visible to a re-run of only the FAILED jobs is not
+      # documented by either artifact action, and it could not be tested here: pushing a
+      # probe workflow needs the `workflow` token scope that this whole change is about.
+      # So the recovery path must not hinge on it. If the artifact is there the asset is
+      # attached exactly as before; if it is not, the release is still created, tagged and
+      # stamped — which is what registration depends on — and the missing asset is
+      # reported rather than silently dropped.
+      - name: Restore the released pom.xml
+        id: restore-pom
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: released-pom-${{ github.run_id }}-${{ inputs.flow-type }}-${{ needs.prepare-build-publish-release.outputs.build-version }}
+          # Into its own directory: at the workspace root a `-f pom.xml` probe could not
+          # tell the released file from a checked-out one, and would silently attach the
+          # pre-release version if a checkout is ever added to this job.
+          path: released-pom
+
+      # A flaky artifact service should cost a retry, not the asset. This is what makes the
+      # step above best-effort rather than lax: the common failure it tolerates is transient,
+      # and transient failures are retried here instead of degrading the release.
+      #
+      # It also hedges the one thing that could not be verified: whether download-artifact
+      # sees an artifact uploaded by a job that did NOT re-run. This path asks
+      # `GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts`, which is scoped to the
+      # RUN, so if the action turns out to be attempt-scoped the retry still finds it.
+      - name: Retry restoring the released pom.xml
+        if: ${{ steps.restore-pom.outcome == 'failure' }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ env.BUILD_VERSION }}
+          FLOW_TYPE: ${{ inputs.flow-type }}
+          BUILD_VERSION: ${{ needs.prepare-build-publish-release.outputs.build-version }}
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            if gh run download "${GITHUB_RUN_ID}" \
+                 --repo "${GITHUB_REPOSITORY}" \
+                 --name "released-pom-${GITHUB_RUN_ID}-${FLOW_TYPE}-${BUILD_VERSION}" \
+                 --dir released-pom; then
+              echo "Restored the released pom.xml on retry ${attempt}."
+              exit 0
+            fi
+            echo "Retry ${attempt} could not fetch the released pom.xml; waiting."
+            sleep $(( attempt * 10 ))
+          done
+          echo "Could not fetch the released pom.xml after 3 retries." >&2
+
+      # The tag is created at the commit the build job actually built. The replaced
+      # action, marvinpinto/action-automatic-releases, had no target-commit input: it
+      # tagged `context.sha`, which for the repository_dispatch runs every release uses
+      # is the default-branch head at dispatch time, frozen for the run, regardless of
+      # what was checked out. A hybrid release of anything other than the current tip
+      # therefore tagged code that was never built.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job has no checkout, and `gh release …` resolves the repository from the
+          # git remote — GITHUB_REPOSITORY is not consulted, GH_REPO is the only documented
+          # override. Without it every release subcommand dies with "failed to run git:
+          # not a git repository", after the artifacts are published. The sibling `gh api`
+          # calls are unaffected because they name the repository in the path.
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
+          BUILT_SHA: ${{ needs.prepare-build-publish-release.outputs.built-sha }}
         run: |
           set -euo pipefail
 
-          built_sha="$(git rev-parse HEAD)"
+          built_sha="${BUILT_SHA}"
+          if [ -z "$built_sha" ]; then
+            echo "::error title=Built commit unknown::The build job did not report the commit it built, so there is nothing safe to tag." >&2
+            exit 1
+          fi
+
+          # The asset must never gate the release. Two reasons it previously could:
+          #
+          #  * `gh release create <files>` and `gh release upload` were run bare under
+          #    `set -e`, so a 5xx from the asset endpoint aborted the step — after an
+          #    irreversible publish, and before the stamp step, which skips registration.
+          #  * passing files to `gh release create` makes it create a DRAFT, upload, then
+          #    publish. A runner killed mid-upload leaves a draft, which `releases/tags/...`
+          #    does not return, so the stamp fails and every re-run repeats it.
+          #
+          # So the release is always created WITHOUT assets — no draft phase exists — and the
+          # asset is attached afterwards by a helper that cannot fail the job.
+          note_missing_asset() {
+            echo "::warning title=Release asset missing::$1 The tag, the release and its run stamp are unaffected; only the attached pom.xml is missing."
+            {
+              echo "### Release ${TAG}: pom.xml asset missing"
+              echo ""
+              echo "$1"
+              echo "The tag, the release and the run stamp are correct; only the attached file is absent."
+              echo "Attach it manually, or re-run this job while the artifact is still retained."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          attach_asset() {
+            if [ ! -f released-pom/pom.xml ]; then
+              note_missing_asset "The released pom.xml could not be restored from the build job's artifact."
+              return 0
+            fi
+            if gh release upload "$TAG" released-pom/pom.xml; then
+              echo "Attached the released pom.xml to ${TAG}."
+              return 0
+            fi
+            note_missing_asset "The released pom.xml was restored but GitHub refused the asset upload."
+            return 0
+          }
+
+          # A draft left behind by an interrupted attempt is invisible to the stamp step's
+          # `releases/tags/...` lookup, so publish it rather than treating it as done.
+          publish_if_draft() {
+            if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+              echo "Release ${TAG} exists as a draft — publishing it."
+              gh release edit "$TAG" --draft=false
+            fi
+          }
 
           # The TAG is the authority, not the release: `gh release create --target` is IGNORED
           # when the tag already exists (REST: target_commitish is "unused if the Git tag already
@@ -377,12 +533,12 @@ jobs:
               # with the asset missing forever. Upload only when it is actually absent:
               # --clobber deletes before uploading, so a flaky upload here would destroy a
               # good asset.
-              assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
-              if grep -qxF "pom.xml" <<<"$assets"; then
+              publish_if_draft
+              existing_assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+              if grep -qxF "pom.xml" <<<"$existing_assets"; then
                 echo "Release $TAG already exists at $built_sha with pom.xml attached — nothing to do."
               else
-                gh release upload "$TAG" pom.xml
-                echo "Release $TAG already exists at $built_sha — attached the missing pom.xml."
+                attach_asset
               fi
               exit 0
             fi
@@ -392,8 +548,9 @@ jobs:
               exit 1
             fi
             # Tag is correct but has no release: adopt it instead of creating a second one.
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes pom.xml
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
             echo "Created release $TAG on the existing, correct tag $built_sha"
+            attach_asset
             exit 0
           fi
 
@@ -419,11 +576,12 @@ jobs:
             -f ref="refs/tags/${TAG}" -f sha="${built_sha}" --jq '.ref' 2>&1)" || ref_create=$?
           if [ "$ref_create" -ne 0 ]; then
             printf '%s\n' "$ref_create_out" >&2
-            echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again: create the tag manually with a token authorized to modify workflows, then re-run to attach the release." >&2
+            echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again, so do NOT re-dispatch the release. Recovery: create ${TAG} manually on ${built_sha} with a credential authorized to modify workflows, then use GitHub's 're-run failed jobs' on this run — that repeats only this job, which will adopt the tag and attach the release, and leaves the publish untouched." >&2
             exit 1
           fi
-          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes pom.xml
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           echo "Created tag and release $TAG at $built_sha"
+          attach_asset
       # Bind the release to the run that produced it. Registration happens afterwards
       # in a workflow_run context whose only trustworthy identity is this run's id and
       # attempt: a tag cannot say which release a run made when several releases share
@@ -433,10 +591,13 @@ jobs:
       # The marker is a delimited HTML comment: invisible in the rendered notes, and
       # not a prefix of another run's marker (555/1 vs 555/10).
       - name: Stamp the release with this run
-        if: ${{ !inputs.dry-run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v${{ env.BUILD_VERSION }}
+          # Set for the same reason as above. This step only uses `gh api` with explicit
+          # repository paths, so it does not need it today — but a future `gh release` call
+          # added here would fail in a way that is hard to read.
+          GH_REPO: ${{ github.repository }}
+          TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           MARKER: "<!-- octopus-release-run: ${{ github.run_id }}/${{ github.run_attempt }} -->"
         run: |
           set -euo pipefail
@@ -450,7 +611,8 @@ jobs:
   register-release-in-log:
       # register release in octopus-release-log
       if: inputs.register-release-immediately && !inputs.dry-run
-      needs: prepare-build-publish-release
+      # Both: the version comes from the build job, but the release must exist first.
+      needs: [prepare-build-publish-release, tag-and-release]
       uses: ./.github/workflows/common-register-release.yml
       name: Register release
       with:

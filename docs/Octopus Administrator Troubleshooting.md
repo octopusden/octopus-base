@@ -168,7 +168,20 @@ that:
   merge by default, so this is routine rather than a rare race. A commit that was legal *because*
   it headed a branch stops being legal when that branch goes away.
 
-The artifacts are published and immutable, so the version cannot be republished. The tag has to
-be created on the built commit and the release attached by re-running — which needs the credential
-described above. The error message states the situation; this is the one failure that can leave a
-release stuck with no operator-side way forward, so escalate rather than retrying.
+The artifacts are published and immutable, so the version cannot be republished. **Do not
+re-dispatch the release** — that would start a fresh run which tries to publish the same version
+and fails.
+
+Recovery, in this order:
+
+1. Create the tag on the commit the run built — the failing step prints both the tag name and the
+   commit sha. This needs the credential described above, so unless an administrator has minted
+   one, escalate here.
+2. On the same run, use GitHub's **"Re-run failed jobs"**. Tagging and release creation live in
+   their own job (`Tag and release`), downstream of the publish, so a re-run repeats only that
+   job: it finds the tag now present on the built commit, attaches the release to it, and leaves
+   the successful publish untouched.
+
+That job split is what makes step 2 work at all. Before it existed, publishing and tagging shared
+one job, so any re-run replayed the publish and failed on Central's immutability before ever
+reaching the tag — the recovery was undocumentable in practice.
