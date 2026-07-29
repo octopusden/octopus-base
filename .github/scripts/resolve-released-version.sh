@@ -21,7 +21,11 @@
 #      keeps the run id while the public flow recomputes the version, so id alone would
 #      match two different releases.
 #   3. The single version tag on the commit the run reports. Correct only when that
-#      commit carries exactly one version tag.
+#      commit carries exactly one version tag. Note that RELEASE_RUN_SHA is the release
+#      run's reported commit — for a repository_dispatch run, the default-branch head at
+#      dispatch time — while the release workflow now tags the commit it actually BUILT.
+#      For a hybrid release of anything other than that head the two differ by design, so
+#      this source simply will not match; source 2 covers those releases.
 #   4. The most recently created release. Last resort, for a release made before the
 #      stamp existed.
 #

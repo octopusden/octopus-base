@@ -218,6 +218,64 @@ jobs:
         with:
           ref: ${{ inputs.commit-hash }}
 
+      # A release must be able to tag the commit it builds — but for some commits
+      # GITHUB_TOKEN cannot. GitHub refuses ANY ref update, via REST or git push, that
+      # points a ref at a commit whose `.github/workflows/` files differ from the default
+      # branch, unless the token is authorized to modify workflows — which the
+      # GITHUB_TOKEN of Actions can never be. Verified empirically against a real
+      # repository: the identical request succeeds at the default-branch head and is
+      # refused for an older commit whose workflow files differ, and the REST refusal is
+      # masked as HTTP 404 (`git push` says so plainly: "refusing to allow ... to create
+      # or update workflow ... without `workflow` scope").
+      #
+      # This is checked here, before the build and the publish, because the tagging step
+      # runs after artifacts are already on Maven Central. Failing there would leave a
+      # version published, immutable, and untagged; failing here costs nothing.
+      - name: Fail early if the built commit cannot be tagged
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          built_sha="$(git rev-parse HEAD)"
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          default_head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${default_branch}" --jq '.sha')"
+
+          if [ "$built_sha" = "$default_head" ]; then
+            echo "Built commit is the ${default_branch} head: tagging is unrestricted."
+            exit 0
+          fi
+
+          # Compare blob shas of the workflow directory rather than the commit diff: the
+          # compare API caps `files` at 300 entries, which a wide backport could exceed,
+          # hiding the very file that triggers the refusal. Only files present in the
+          # BUILT tree matter — the refusal is about the tagged commit creating or
+          # updating a workflow, so a workflow that exists only on the default branch is
+          # not a problem. A missing directory (404) yields an empty list.
+          list_workflows() {
+            gh api "repos/${GITHUB_REPOSITORY}/contents/.github/workflows?ref=$1" \
+              --jq '[.[] | select(.type == "file") | .name + " " + .sha] | sort | .[]' 2>/dev/null || true
+          }
+
+          built_list="$(list_workflows "$built_sha")"
+          default_list="$(list_workflows "$default_head")"
+
+          blocking=""
+          while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            if ! grep -qxF -- "$entry" <<<"$default_list"; then
+              blocking="${blocking}${blocking:+, }${entry%% *}"
+            fi
+          done <<<"$built_list"
+
+          if [ -n "$blocking" ]; then
+            echo "::error title=Built commit cannot be tagged::This release builds ${built_sha}, whose workflow files differ from ${default_branch} (${blocking}). GitHub refuses to point a tag at such a commit with the Actions GITHUB_TOKEN, so the release could be published and never tagged. Release from a commit whose .github/workflows match ${default_branch}, or give the release a token authorized to modify workflows." >&2
+            exit 1
+          fi
+
+          echo "Workflow files at ${built_sha} match ${default_branch}: the tag can be created."
+
       # determine release version (for public flow)
       - name: Get latest tag
         if: inputs.flow-type == 'public'
@@ -638,9 +696,19 @@ jobs:
               echo "::error title=Release tag conflict::Tag ${TAG} already exists at ${tag_sha}, but this run built ${built_sha}. Not moving it. Delete the tag and its release (release immutability may prevent this once published), or release a new version." >&2
               exit 1
             fi
-            if gh release view "$TAG" >/dev/null 2>&1; then
+            # Fail closed here too: gh exits non-zero for a missing release and for a
+            # rate limit, auth error or 5xx alike, and reading the latter as "no release"
+            # makes the next line fail with a misleading "release already exists".
+            rel_lookup=0
+            rel_out="$(gh release view "$TAG" 2>&1)" || rel_lookup=$?
+            if [ "$rel_lookup" -eq 0 ]; then
               echo "Release $TAG already exists at $built_sha — nothing to do."
               exit 0
+            fi
+            if ! grep -qE 'release not found|HTTP 404|"status": ?"404"' <<<"$rel_out"; then
+              echo "$rel_out" >&2
+              echo "::error title=Release lookup failed::Could not determine whether release ${TAG} exists. Refusing to act on unverified state; re-run when the API is reachable." >&2
+              exit 1
             fi
             # Tag is correct but has no release: adopt it instead of creating a second one.
             gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
@@ -648,7 +716,7 @@ jobs:
             exit 0
           fi
 
-          if ! grep -q "HTTP 404" <<<"$ref_out"; then
+          if ! grep -qE 'HTTP 404|"status": ?"404"' <<<"$ref_out"; then
             echo "$ref_out" >&2
             echo "::error title=Tag lookup failed::Could not determine whether ${TAG} exists (the lookup failed with something other than 404). Refusing to create a release on unverified state; re-run when the API is reachable." >&2
             exit 1
