@@ -19,7 +19,7 @@ plugins {
 // inside a GradleRunner subprocess during functional tests — Kover's JVM agent cannot instrument
 // code in a different JVM process.  Excluding those classes keeps the gate honest: the threshold
 // applies only to code we can actually measure, not to code that is structurally untestable with
-// in-process instrumentation.  The excluded code IS tested — by the 11 GradleRunner functional
+// in-process instrumentation.  The excluded code IS tested — by the GradleRunner functional
 // tests — just not via Kover.
 kover {
     reports {
@@ -49,6 +49,8 @@ kover {
                     "org.octopusden.octopus.quality.internal.TaskRegistrar\$*",
                     "org.octopusden.octopus.quality.internal.PublicationValidator",
                     "org.octopusden.octopus.quality.internal.PublicationValidator\$*",
+                    "org.octopusden.octopus.quality.internal.CentralPublicationPolicy",
+                    "org.octopusden.octopus.quality.internal.CentralPublicationPolicy\$*",
                     "org.octopusden.octopus.quality.internal.HollowGateGuard",
                     "org.octopusden.octopus.quality.internal.HollowGateGuard\$*",
                 )

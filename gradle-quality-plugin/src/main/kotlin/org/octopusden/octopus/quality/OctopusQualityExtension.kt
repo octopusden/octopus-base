@@ -103,6 +103,41 @@ open class PublicationExtension
          * Root-level / per-repo / all-or-nothing by design.
          */
         val validateForMavenCentral = objects.property(Boolean::class.java).convention(true)
+
+        /**
+         * The exact set of publications this repository is allowed to send to Maven Central.
+         *
+         * Opt-in: leave it unset and nothing is enforced. Setting it — including to an EMPTY set,
+         * which means "this repository must publish nothing" — turns on `verifyCentralPublicationPolicy`,
+         * wired into `check` so drift is caught in review rather than at the next release.
+         *
+         * Each entry identifies one publication as
+         * `projectPath|publicationName|groupId:artifactId|[sorted extension:classifier]`, for example
+         * `":client|maven|org.example:client|[jar, jar:javadoc, jar:sources]"`.
+         *
+         * The composite shape is not decoration. A project path alone cannot distinguish two
+         * publications in the same project, and is constant in a single-module build; without the
+         * coordinate an overridden artifactId or a plugin marker under a different group goes
+         * unnoticed; without the artifact signatures, attaching another classifier to an existing
+         * publication changes nothing. The version is excluded on purpose — every release changes it.
+         *
+         * The easiest way to obtain the values is to enable enforcement with an empty set once and
+         * run the task: the failure message prints the actual set, which can be pasted back.
+         */
+        val centralPublications: SetProperty<String> =
+            objects.setProperty(String::class.java).convention(emptySet())
+
+        /**
+         * Turn the publication-set check on. Off by default, so bumping the plugin never starts
+         * failing a repository that has not opted in.
+         *
+         * This is a separate switch rather than "enforce when the set is non-empty", because an
+         * EMPTY set is itself a meaningful declaration — "this repository must publish nothing" —
+         * and that is exactly the case worth guarding in a deployable. Gradle gives collection
+         * properties an empty-collection convention, so an unset property and a deliberately empty
+         * one are indistinguishable without this flag.
+         */
+        val enforceCentralPublications = objects.property(Boolean::class.java).convention(false)
     }
 
 open class KotlinExtension

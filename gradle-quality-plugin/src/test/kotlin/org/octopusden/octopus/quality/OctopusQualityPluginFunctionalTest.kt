@@ -475,6 +475,153 @@ class OctopusQualityPluginFunctionalTest {
     }
 
     // ---------------------------------------------------------------
+    // 5b. Central publication policy — the SET, not each publication
+    // ---------------------------------------------------------------
+
+    /** Shared preamble: one well-formed publication, so validatePublications is happy. */
+    private fun publishingProject(policy: String) =
+        """
+        plugins {
+            kotlin("jvm") version "1.9.25"
+            `maven-publish`
+            id("org.octopusden.octopus-quality")
+        }
+        repositories { mavenCentral() }
+        group = "org.example"
+        version = "1.0.0"
+        java { withSourcesJar(); withJavadocJar() }
+        publishing {
+            publications {
+                create<MavenPublication>("mavenJava") {
+                    from(components["java"])
+                    pom {
+                        name.set("example")
+                        description.set("example")
+                        url.set("https://example.org")
+                        licenses { license { name.set("Apache-2.0"); url.set("https://example.org/l") } }
+                        scm { url.set("https://example.org") }
+                        developers { developer { id.set("dev"); name.set("dev") } }
+                    }
+                }
+            }
+        }
+        $policy
+        """.trimIndent() + "\n"
+
+    /**
+     * The regression test for the defect this task was written to prevent, and then reproduced:
+     * being a dependency of the publish tasks is useless on a pull request, because no PR check
+     * runs those. If this assertion ever fails, drift can be merged unnoticed again.
+     */
+    @Test
+    fun `verifyCentralPublicationPolicy is scheduled by check`() {
+        settingsFile(kotlinSettings("test-policy-in-check"))
+        buildFile(
+            publishingProject(
+                """
+                octopusQuality { publication { enforceCentralPublications.set(true); centralPublications.set(setOf("whatever")) } }
+                """.trimIndent(),
+            ),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/App.kt", "package com.example\nfun main() = Unit\n")
+
+        val result = runner("check", "--dry-run").build()
+        assertTrue(
+            result.output.contains(":verifyCentralPublicationPolicy"),
+            "check must schedule the policy task; it is the only gate a pull request runs",
+        )
+    }
+
+    @Test
+    fun `verifyCentralPublicationPolicy does nothing when the set is not declared`() {
+        settingsFile(kotlinSettings("test-policy-unset"))
+        buildFile(publishingProject(""))
+        writeKotlinFile("src/main/kotlin/com/example/App.kt", "package com.example\nfun main() = Unit\n")
+
+        // A publication exists and nothing is declared: the task must stay inert rather than
+        // failing every consumer that has not opted in.
+        val result = runner("verifyCentralPublicationPolicy").build()
+        assertTrue(result.output.contains("BUILD SUCCESSFUL"))
+    }
+
+    @Test
+    fun `verifyCentralPublicationPolicy fails when a publication is not declared`() {
+        settingsFile(kotlinSettings("test-policy-drift"))
+        buildFile(
+            publishingProject(
+                """
+                octopusQuality { publication { enforceCentralPublications.set(true); centralPublications.set(emptySet<String>()) } }
+                """.trimIndent(),
+            ),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/App.kt", "package com.example\nfun main() = Unit\n")
+
+        val result = runner("verifyCentralPublicationPolicy").buildAndFail()
+        val output = result.output.replace(ansiEscape, "")
+        assertTrue(output.contains("publication set drifted"), output)
+        // The message must print the actual set, so the fix is a copy-paste rather than a guess.
+        assertTrue(output.contains(":|mavenJava|org.example:test-policy-drift"), output)
+    }
+
+    @Test
+    fun `verifyCentralPublicationPolicy passes when the declared set matches`() {
+        settingsFile(kotlinSettings("test-policy-match"))
+        buildFile(
+            publishingProject(
+                """
+                octopusQuality {
+                    publication {
+                        enforceCentralPublications.set(true)
+                        centralPublications.set(
+                            setOf(
+                                ":|mavenJava|org.example:test-policy-match|[jar, jar:javadoc, jar:sources]",
+                            ),
+                        )
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/App.kt", "package com.example\nfun main() = Unit\n")
+
+        val result = runner("verifyCentralPublicationPolicy").build()
+        assertTrue(result.output.contains("BUILD SUCCESSFUL"))
+    }
+
+    /**
+     * The artifact signatures are part of the identity precisely so this case is caught: the
+     * coordinate and the publication name are unchanged, only an extra classifier appears.
+     */
+    @Test
+    fun `verifyCentralPublicationPolicy detects an added classifier`() {
+        settingsFile(kotlinSettings("test-policy-classifier"))
+        buildFile(
+            publishingProject(
+                """
+                val extraJar by tasks.registering(Jar::class) { archiveClassifier.set("extra") }
+                publishing.publications.named<MavenPublication>("mavenJava") { artifact(extraJar) }
+                octopusQuality {
+                    publication {
+                        enforceCentralPublications.set(true)
+                        centralPublications.set(
+                            setOf(
+                                ":|mavenJava|org.example:test-policy-classifier|[jar, jar:javadoc, jar:sources]",
+                            ),
+                        )
+                    }
+                }
+                """.trimIndent(),
+            ),
+        )
+        writeKotlinFile("src/main/kotlin/com/example/App.kt", "package com.example\nfun main() = Unit\n")
+
+        val result = runner("verifyCentralPublicationPolicy").buildAndFail()
+        val output = result.output.replace(ansiEscape, "")
+        assertTrue(output.contains("publication set drifted"), output)
+        assertTrue(output.contains("jar:extra"), output)
+    }
+
+    // ---------------------------------------------------------------
     // 6. Publication validator: valid jar publication passes
     // ---------------------------------------------------------------
     @Test
