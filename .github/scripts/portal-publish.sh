@@ -44,9 +44,20 @@ AUTH="Authorization: Bearer $(printf '%s' "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" 
 NET=(-sS --connect-timeout 15 --max-time 120)
 
 # Deadlines (seconds) — overridable for the canary.
+#
+# PUBLISH_DEADLINE is the one measured against real Sonatype behaviour rather than
+# guessed: octopus-components-registry-service 3.0.9 sat in PUBLISHING for ~32 minutes
+# (deployment b8df3ec1, 2026-07-30) and reached Maven Central two minutes AFTER the
+# then-current 1800s deadline expired. The publish had succeeded; only the waiting gave
+# up, which cost the tag, the release and the release-log entry and left a state the
+# pipeline cannot recover from on its own. 2700s covers that observation with headroom.
+#
+# Do not raise it past ~2700 without also raising TeamCity's OCTOPUS_RELEASE_TIMEOUT
+# (60 minutes): that poller waits on the whole release run, so build + this wait + tag
+# must fit inside it, or TeamCity reports a failure for a release that is still working.
 SEARCH_DEADLINE="${SEARCH_DEADLINE:-600}"
 VALIDATE_DEADLINE="${VALIDATE_DEADLINE:-1800}"
-PUBLISH_DEADLINE="${PUBLISH_DEADLINE:-1800}"
+PUBLISH_DEADLINE="${PUBLISH_DEADLINE:-2700}"
 CENTRAL_DEADLINE="${CENTRAL_DEADLINE:-1800}"
 # Settling window before re-reading state after an inconclusive publish response.
 SETTLE_SECONDS="${SETTLE_SECONDS:-45}"
