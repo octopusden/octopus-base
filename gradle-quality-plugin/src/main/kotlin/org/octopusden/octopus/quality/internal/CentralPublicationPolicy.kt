@@ -8,8 +8,16 @@ import org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 import org.octopusden.octopus.quality.OctopusQualityExtension
 
 /**
- * Registers `verifyCentralPublicationPolicy`, which fails when the set of publications a build
- * would send to Maven Central differs from the set the repository declared.
+ * Registers `verifyCentralPublicationPolicy`, which fails when the set of Maven publications a
+ * build DECLARES differs from the set the repository declared it should have.
+ *
+ * Scope, stated precisely because the task name is broader than its knowledge: it enumerates every
+ * `MavenPublication` in every project applying `maven-publish`. It does not inspect publishing
+ * repositories, task enablement or predicates, so it cannot tell a Central-bound publication from
+ * one aimed only at an internal repository, and it counts a publication that no repository would
+ * receive at all. Deciding what may actually reach Central is the release pipeline's job, through
+ * `fat-jar-publication-allowlist`. This task's purpose is narrower and complementary: keep the
+ * declared set from drifting unnoticed.
  *
  * [PublicationValidator] already checks that each publication is *well formed* — POM metadata,
  * sources and javadoc. This checks something different and complementary: that the *set itself*
@@ -79,7 +87,7 @@ internal object CentralPublicationPolicy {
             project.tasks.register(TASK_NAME) { task ->
                 task.group = "verification"
                 task.description =
-                    "Fails if the set of publications reaching Maven Central drifts from the declared set"
+                    "Fails if the set of Maven publications this build declares drifts from the declared set"
 
                 // Off unless the repository opted in: register the task so it can be invoked and
                 // wired, but stay inert. `declared.isPresent` cannot serve here — Gradle gives
@@ -98,10 +106,11 @@ internal object CentralPublicationPolicy {
                                 appendLine("  publishing: ${actual.sorted()}")
                                 append(
                                     "Update octopusQuality { publication { centralPublications } } " +
-                                        "only if the change is intentional. A coordinate that is not " +
-                                        "declared here is also not covered by the release-time " +
-                                        "fat-jar-publication-allowlist, so it would either fail the " +
-                                        "release or reach Central unnoticed.",
+                                        "only if the change is intentional. This compares DECLARED " +
+                                        "publications and does not inspect publishing repositories, " +
+                                        "so a publication aimed elsewhere appears here too. Whether a " +
+                                        "coordinate may reach Maven Central is enforced separately by " +
+                                        "the release pipeline's fat-jar-publication-allowlist.",
                                 )
                             },
                         )

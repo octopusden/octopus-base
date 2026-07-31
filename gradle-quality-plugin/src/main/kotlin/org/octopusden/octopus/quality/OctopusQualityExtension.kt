@@ -105,11 +105,20 @@ open class PublicationExtension
         val validateForMavenCentral = objects.property(Boolean::class.java).convention(true)
 
         /**
-         * The exact set of publications this repository is allowed to send to Maven Central.
+         * The exact set of Maven publications this build is expected to declare.
          *
-         * Opt-in: leave it unset and nothing is enforced. Setting it — including to an EMPTY set,
-         * which means "this repository must publish nothing" — turns on `verifyCentralPublicationPolicy`,
-         * wired into `check` so drift is caught in review rather than at the next release.
+         * Setting this does NOT switch the check on by itself — [enforceCentralPublications] does.
+         * Declaring the set without the flag leaves `verifyCentralPublicationPolicy` skipped.
+         *
+         * An EMPTY set is a meaningful value: "this build must declare no publications", which is
+         * what a deployable wants. Once enforcement is on, the task is wired into `check`, so drift
+         * is caught in review rather than at the next release.
+         *
+         * Note what this does and does not know. It compares the publications the build DECLARES,
+         * not the ones a given repository would receive: it does not inspect publishing
+         * repositories, so a publication aimed only at an internal Artifactory counts here too.
+         * Deciding what may actually reach Maven Central is the release pipeline's job, via
+         * `fat-jar-publication-allowlist`. This check exists to make the declared set stable.
          *
          * Each entry identifies one publication as
          * `projectPath|publicationName|groupId:artifactId|[sorted extension:classifier]`, for example
