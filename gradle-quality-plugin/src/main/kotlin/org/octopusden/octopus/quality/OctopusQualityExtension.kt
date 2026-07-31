@@ -103,6 +103,50 @@ open class PublicationExtension
          * Root-level / per-repo / all-or-nothing by design.
          */
         val validateForMavenCentral = objects.property(Boolean::class.java).convention(true)
+
+        /**
+         * The exact set of Maven publications this build is expected to declare.
+         *
+         * Setting this does NOT switch the check on by itself — [enforceCentralPublications] does.
+         * Declaring the set without the flag leaves `verifyCentralPublicationPolicy` skipped.
+         *
+         * An EMPTY set is a meaningful value: "this build must declare no publications", which is
+         * what a deployable wants. Once enforcement is on, the task is wired into `check`, so drift
+         * is caught in review rather than at the next release.
+         *
+         * Note what this does and does not know. It compares the publications the build DECLARES,
+         * not the ones a given repository would receive: it does not inspect publishing
+         * repositories, so a publication aimed only at an internal Artifactory counts here too.
+         * Deciding what may actually reach Maven Central is the release pipeline's job, via
+         * `fat-jar-publication-allowlist`. This check exists to make the declared set stable.
+         *
+         * Each entry identifies one publication as
+         * `projectPath|publicationName|groupId:artifactId|[sorted extension:classifier]`, for example
+         * `":client|maven|org.example:client|[jar, jar:javadoc, jar:sources]"`.
+         *
+         * The composite shape is not decoration. A project path alone cannot distinguish two
+         * publications in the same project, and is constant in a single-module build; without the
+         * coordinate an overridden artifactId or a plugin marker under a different group goes
+         * unnoticed; without the artifact signatures, attaching another classifier to an existing
+         * publication changes nothing. The version is excluded on purpose — every release changes it.
+         *
+         * The easiest way to obtain the values is to enable enforcement with an empty set once and
+         * run the task: the failure message prints the actual set, which can be pasted back.
+         */
+        val centralPublications: SetProperty<String> =
+            objects.setProperty(String::class.java).convention(emptySet())
+
+        /**
+         * Turn the publication-set check on. Off by default, so bumping the plugin never starts
+         * failing a repository that has not opted in.
+         *
+         * This is a separate switch rather than "enforce when the set is non-empty", because an
+         * EMPTY set is itself a meaningful declaration — "this repository must publish nothing" —
+         * and that is exactly the case worth guarding in a deployable. Gradle gives collection
+         * properties an empty-collection convention, so an unset property and a deliberately empty
+         * one are indistinguishable without this flag.
+         */
+        val enforceCentralPublications = objects.property(Boolean::class.java).convention(false)
     }
 
 open class KotlinExtension

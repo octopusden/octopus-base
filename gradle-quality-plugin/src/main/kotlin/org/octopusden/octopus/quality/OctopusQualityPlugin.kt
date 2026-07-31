@@ -2,6 +2,7 @@ package org.octopusden.octopus.quality
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.octopusden.octopus.quality.internal.CentralPublicationPolicy
 import org.octopusden.octopus.quality.internal.LanguageDetector
 import org.octopusden.octopus.quality.internal.PublicationValidator
 import org.octopusden.octopus.quality.internal.SubprojectConfigurer
@@ -98,5 +99,9 @@ class OctopusQualityPlugin : Plugin<Project> {
         // opts out via octopusQuality { publication { validateForMavenCentral.set(false) } }
         // (root-level / per-repo / all-or-nothing) — then the task is skipped on `check`.
         project.allprojects.forEach { PublicationValidator.register(it, extension) }
+
+        // Registered once on the root: unlike validatePublications, which judges each publication
+        // on its own, this one judges the SET across the whole build, so it needs a single owner.
+        CentralPublicationPolicy.register(project, extension)
     }
 }
