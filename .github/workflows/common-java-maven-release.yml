@@ -464,11 +464,21 @@ jobs:
           #    `set -e`, so a 5xx from the asset endpoint aborted the step — after an
           #    irreversible publish, and before the stamp step, which skips registration.
           #  * passing files to `gh release create` makes it create a DRAFT, upload, then
-          #    publish. A runner killed mid-upload leaves a draft, which `releases/tags/...`
-          #    does not return, so the stamp fails and every re-run repeats it.
+          #    publish, all inside one command. A runner killed mid-upload leaves a draft,
+          #    which `releases/tags/...` does not return, so the stamp fails and every
+          #    re-run repeats it.
           #
-          # So the release is always created WITHOUT assets — no draft phase exists — and the
-          # asset is attached afterwards by a helper that cannot fail the job.
+          # The draft phase is now deliberate rather than avoided: every path creates the
+          # release as a draft, attaches the asset, then publishes. Attaching after
+          # publication is not an option, because GitHub refuses asset uploads to a
+          # published release once immutable releases are enabled on the repository, which
+          # would lose the pom.xml permanently and silently.
+          #
+          # What makes the draft safe here — and did not hold for the single-command form
+          # above — is that the draft is never the last word. The attach helper cannot fail
+          # the job, and publication happens unconditionally afterwards, so a refused or
+          # impossible upload still yields a published release; `publish_if_draft` finishes
+          # off a draft stranded by an earlier interrupted attempt.
           note_missing_asset() {
             echo "::warning title=Release asset missing::$1 The tag, the release and its run stamp are unaffected; only the attached pom.xml is missing."
             {
