@@ -547,7 +547,12 @@ jobs:
               # with the asset missing forever. Upload only when it is actually absent:
               # --clobber deletes before uploading, so a flaky upload here would destroy a
               # good asset.
-              publish_if_draft
+              # Asset FIRST, publication second — the same order as the create path below,
+              # and for the same reason. A previous attempt can leave a draft with no
+              # pom.xml; publishing it here before the upload would put the release beyond
+              # reach of an asset once immutable releases are enabled on the repository,
+              # permanently. `publish_if_draft` therefore runs after the block below.
+              #
               # This lookup is part of the best-effort asset path, so it must not abort the
               # job either: failing here would skip stamping and registration over a
               # convenience file. When the asset list cannot be read, just try the upload —
@@ -564,6 +569,7 @@ jobs:
               else
                 attach_asset
               fi
+              publish_if_draft
               exit 0
             fi
             if ! grep -qE 'release not found|HTTP 404|"status": ?"404"' <<<"$rel_out"; then
