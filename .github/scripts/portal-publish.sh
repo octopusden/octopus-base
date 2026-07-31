@@ -44,9 +44,33 @@ AUTH="Authorization: Bearer $(printf '%s' "${MAVEN_USERNAME}:${MAVEN_PASSWORD}" 
 NET=(-sS --connect-timeout 15 --max-time 120)
 
 # Deadlines (seconds) — overridable for the canary.
+#
+# PUBLISH_DEADLINE is set from an observation rather than guessed. In
+# octopus-components-registry-service 3.0.9 (deployment b8df3ec1, run 30552430027,
+# 2026-07-30) the publish was accepted at 14:38:33 and this script gave up at 15:08:35 —
+# exactly the 1800s then in force, with the deployment still PUBLISHING. Central did
+# finish shortly afterwards, at about 15:10, so roughly 32 minutes in total; that last
+# figure comes from the release notes written by hand afterwards, NOT from the run, which
+# had already stopped and so recorded no PUBLISHED state. 2700s covers the ~32 minutes
+# with about 13 minutes to spare. Note it is one data point: no second slow publish has
+# been observed.
+#
+# The publish had succeeded; only the waiting gave up. Because that happens after the
+# upload, the tag, the GitHub release and the release-log entry were all skipped, leaving
+# a state the pipeline cannot finish by itself (see octopus-base#189).
+#
+# Before raising this further, check the OUTER budget, which this script cannot see.
+# TeamCity's poller waits on the whole release run; its OCTOPUS_RELEASE_TIMEOUT is
+# configured in TeamCity, not declared here, and was 60 minutes when this was written.
+# 2700s does NOT by itself guarantee the run fits: the deadlines below are sequential, so
+# this wait plus CENTRAL_DEADLINE alone permit 75 minutes, and all four permit 115 —
+# before any build, tagging or registration time. In practice the phases after PUBLISHED
+# cost seconds (measured: 6s in octopus-dms-service run 30597896298), which is why the
+# arithmetic has not bitten. Treat 2700 as "covers the observed publish", not as
+# "provably inside the TeamCity budget".
 SEARCH_DEADLINE="${SEARCH_DEADLINE:-600}"
 VALIDATE_DEADLINE="${VALIDATE_DEADLINE:-1800}"
-PUBLISH_DEADLINE="${PUBLISH_DEADLINE:-1800}"
+PUBLISH_DEADLINE="${PUBLISH_DEADLINE:-2700}"
 CENTRAL_DEADLINE="${CENTRAL_DEADLINE:-1800}"
 # Settling window before re-reading state after an inconclusive publish response.
 SETTLE_SECONDS="${SETTLE_SECONDS:-45}"
