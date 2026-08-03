@@ -1,0 +1,50 @@
+name: Test wait-for-tag-ref script
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/wait-for-tag-ref.sh'
+      - '.github/workflows/test-wait-for-tag-ref.yml'
+  workflow_dispatch:
+
+# Same shape as test-merge-gate-action.yml: synthetic cases with explicit assertions, no real
+# repository and no network. A stub `gh` on PATH decides how many lookups fail before one
+# succeeds, which is the only behaviour worth pinning here — the retry either survives early
+# failures or it does not.
+
+jobs:
+  test:
+    name: test wait-for-tag-ref
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run cases
+        run: |
+          set -uo pipefail
+          S=".github/scripts/wait-for-tag-ref.sh"
+          stub=$(mktemp -d)
+          cat > "$stub/gh" <<'STUB'
+          #!/usr/bin/env bash
+          n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNTER"
+          [ "$n" -le "${FAIL_TIMES:-0}" ] && { echo "gh: HTTP 404" >&2; exit 1; }
+          echo '{"ref":"refs/tags/v1.2.3"}'
+          STUB
+          chmod +x "$stub/gh"
+          export PATH="$stub:$PATH" WAIT_ATTEMPTS=5 WAIT_INTERVAL=0
+
+          fail=0
+          run() { COUNTER=$(mktemp) FAIL_TIMES=$1 bash "$S" octopusden/x v1.2.3 >/dev/null 2>&1; echo $?; }
+          check() {
+            if [ "$2" = "$3" ]; then echo "ok   $1"
+            else echo "::error::$1 — expected rc=$2, got rc=$3"; fail=1; fi
+          }
+
+          # Readable on the first lookup — the normal case.
+          check "visible immediately" 0 "$(run 0)"
+          # Readable only after two failures — the race this script exists for.
+          check "visible on 3rd attempt" 0 "$(run 2)"
+          # Never readable inside the budget — must fail, not hang and not pass.
+          check "never visible" 1 "$(run 99)"
+
+          exit "$fail"
