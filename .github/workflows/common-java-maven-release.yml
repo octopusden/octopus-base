@@ -546,6 +546,11 @@ jobs:
           # directly: doing that makes it draft, upload and publish as one step, where an
           # interrupted upload leaves a draft nothing ever finishes.
           create_release_with_asset() {
+            # Wait for the tag to be readable by the lookup --verify-tag performs before asking
+            # for the release. Inside the function so BOTH call sites are covered: the path that
+            # just created the ref, and the path that adopts a tag found by the REST lookup below
+            # — REST answering does not mean the GraphQL query --verify-tag uses will.
+            bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
             gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
             attach_asset
             gh release edit "$TAG" --draft=false
@@ -655,16 +660,11 @@ jobs:
           # `gh release create` on a tag it cannot see would create the tag ITSELF at the
           # default branch head, which is the stale-code release this whole step exists to
           # prevent. So the fix is to make the read succeed, not to stop checking.
-          # The create above returned success, so the tag exists — but
-          # `gh release create --verify-tag` performs its OWN lookup, and that read can miss a
-          # ref committed milliseconds earlier. Waiting for it is extracted into a script so the
-          # retry can actually be tested; see .github/workflows/test-wait-for-tag-ref.yml.
           #
-          # `--verify-tag` is deliberately KEPT rather than dropped as redundant: without it,
-          # `gh release create` on a tag it cannot see would create the tag ITSELF at the default
-          # branch head, releasing whatever code sits there. So the read is made to succeed, not
-          # skipped.
-          bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
+          # Extracted into a script so the retry is testable; see
+          # .github/workflows/test-wait-for-tag-ref.yml. It polls the GraphQL ref query that
+          # --verify-tag itself uses, NOT a REST ref endpoint: the two are separate read paths
+          # and REST can answer while GraphQL is still stale.
           create_release_with_asset
           echo "Created tag and release $TAG at $built_sha"
       # Bind the release to the run that produced it. Registration happens afterwards
