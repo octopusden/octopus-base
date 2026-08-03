@@ -29,23 +29,38 @@ jobs:
           # performs — the GraphQL repository.ref(qualifiedName:) query (cli/cli pkg/cmd/release/create/
           # http.go, remoteTagExists). Any other lookup, the REST ref endpoint included, is rejected on
           # every attempt: REST can answer while GraphQL is still stale, so polling it proves nothing.
-          if [ "${1:-}" != "api" ] || [ "${2:-}" != "graphql" ] || ! printf '%s\n' "$@" | grep -q 'ref(qualifiedName:'; then
+          [ "${1:-}" = "api" ] && [ "${2:-}" = "graphql" ] || {
               echo "stub: refusing non-GraphQL lookup: $*" >&2; exit 1
-          fi
+          }
+          printf '%s\n' "$@" | grep -q 'ref(qualifiedName:' || {
+              echo "stub: query does not resolve a ref: $*" >&2; exit 1
+          }
+          # The tag must be asked for as a FULLY QUALIFIED ref. GraphQL matches qualifiedName literally,
+          # so "v1.2.3" instead of "refs/tags/v1.2.3" would never resolve — and without this assertion a
+          # script that dropped the prefix would pass every case here while never working in production.
+          printf '%s\n' "$@" | grep -qx "tagName=refs/tags/${EXPECT_TAG}" || {
+              echo "stub: tagName is not refs/tags/${EXPECT_TAG}: $*" >&2; exit 1
+          }
+          # Emit a realistic response and apply the caller's own --jq filter to it, rather than emitting
+          # what a correct filter would have produced. Otherwise the filter is never under test: an
+          # absent tag yields the JSON below, and it is the filter's job to turn that into nothing.
+          filter=""; prev=""
+          for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; prev="$a"; done
           n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNTER"
           if [ "$n" -le "${FAIL_TIMES:-0}" ]; then
               case "${FAIL_MODE:-error}" in
-                  # GraphQL reports an absent tag as a SUCCESSFUL response carrying a null ref, so a
-                  # script that trusts the exit status alone declares victory while the tag is missing.
-                  null) echo "" ;;
+                  # GraphQL reports an absent tag as a SUCCESSFUL response carrying a null ref, so the
+                  # exit status says nothing about whether the tag is there.
+                  null) body='{"data":{"repository":{"ref":null}}}' ;;
                   *)    echo "gh: HTTP 502" >&2; exit 1 ;;
               esac
-              exit 0
+          else
+              body='{"data":{"repository":{"ref":{"id":"REF_kwDOabcdef"}}}}'
           fi
-          echo "REF_kwDOabcdef"
+          if [ -n "$filter" ]; then printf '%s' "$body" | jq -r "$filter"; else printf '%s' "$body"; fi
           STUB
           chmod +x "$stub/gh"
-          export PATH="$stub:$PATH" WAIT_ATTEMPTS=5 WAIT_INTERVAL=0
+          export PATH="$stub:$PATH" WAIT_ATTEMPTS=5 WAIT_INTERVAL=0 EXPECT_TAG=v1.2.3
 
           fail=0
           run() { COUNTER=$(mktemp) FAIL_TIMES=$1 bash "$S" octopusden/x v1.2.3 >/dev/null 2>&1; echo $?; }
