@@ -22,6 +22,15 @@ printf '%s\n' "$@" | grep -q 'ref(qualifiedName:' || {
 printf '%s\n' "$@" | grep -qx "tagName=refs/tags/${EXPECT_TAG}" || {
     echo "stub: tagName is not refs/tags/${EXPECT_TAG}: $*" >&2; exit 1
 }
+# ...and about the right repository. Querying the wrong owner/name returns repository:null, which
+# `// empty` turns into "not visible" — so it fails closed rather than releasing wrongly, but it
+# fails closed on EVERY release. Asserting the values is what makes swapping them detectable.
+printf '%s\n' "$@" | grep -qx "owner=${EXPECT_OWNER}" || {
+    echo "stub: owner is not ${EXPECT_OWNER}: $*" >&2; exit 1
+}
+printf '%s\n' "$@" | grep -qx "name=${EXPECT_NAME}" || {
+    echo "stub: name is not ${EXPECT_NAME}: $*" >&2; exit 1
+}
 # Emit a realistic response and apply the caller's own --jq filter to it, rather than emitting
 # what a correct filter would have produced. Otherwise the filter is never under test: an
 # absent tag yields the JSON below, and it is the filter's job to turn that into nothing.
@@ -41,7 +50,7 @@ fi
 if [ -n "$filter" ]; then printf '%s' "$body" | jq -r "$filter"; else printf '%s' "$body"; fi
 STUB
 chmod +x "$stub_dir/gh"; export PATH="$stub_dir:$PATH"
-export WAIT_ATTEMPTS=5 WAIT_INTERVAL=0 EXPECT_TAG=v1.2.3
+export WAIT_ATTEMPTS=5 WAIT_INTERVAL=0 EXPECT_TAG=v1.2.3 EXPECT_OWNER=octopusden EXPECT_NAME=x
 
 pass=0; fail=0
 check() { # name expected_rc actual_rc
@@ -55,5 +64,16 @@ echo "case: visible on 3rd attempt";      check "rc 0" 0 "$(run 2)"
 echo "case: never visible within budget"; check "rc 1" 1 "$(run 99)"
 echo "case: empty ref is not visible";    check "rc 1" 1 "$(FAIL_MODE=null run 99)"
 echo "case: empty ref then visible";      check "rc 0" 0 "$(FAIL_MODE=null run 2)"
+
+# The wait must actually WAIT. With the sleep removed, ten attempts finish in milliseconds and the
+# retry cannot outlast any real propagation gap — while every case above still passes, because they
+# run with WAIT_INTERVAL=0 and so carry no timing signal at all.
+start=$SECONDS
+COUNTER=$(mktemp) FAIL_TIMES=2 WAIT_INTERVAL=1 bash "$S" octopusden/x v1.2.3 >/dev/null 2>&1
+elapsed=$((SECONDS - start))
+echo "case: honours the interval between attempts"
+if [ "$elapsed" -ge 2 ]; then echo "  ok   waited ${elapsed}s for 2 failed attempts"; pass=$((pass+1))
+else echo "  FAIL waited only ${elapsed}s — expected >=2s"; fail=$((fail+1)); fi
+
 echo "--- passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

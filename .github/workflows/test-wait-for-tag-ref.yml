@@ -41,6 +41,15 @@ jobs:
           printf '%s\n' "$@" | grep -qx "tagName=refs/tags/${EXPECT_TAG}" || {
               echo "stub: tagName is not refs/tags/${EXPECT_TAG}: $*" >&2; exit 1
           }
+          # ...and about the right repository. Querying the wrong owner/name returns repository:null, which
+          # `// empty` turns into "not visible" — so it fails closed rather than releasing wrongly, but it
+          # fails closed on EVERY release. Asserting the values is what makes swapping them detectable.
+          printf '%s\n' "$@" | grep -qx "owner=${EXPECT_OWNER}" || {
+              echo "stub: owner is not ${EXPECT_OWNER}: $*" >&2; exit 1
+          }
+          printf '%s\n' "$@" | grep -qx "name=${EXPECT_NAME}" || {
+              echo "stub: name is not ${EXPECT_NAME}: $*" >&2; exit 1
+          }
           # Emit a realistic response and apply the caller's own --jq filter to it, rather than emitting
           # what a correct filter would have produced. Otherwise the filter is never under test: an
           # absent tag yields the JSON below, and it is the filter's job to turn that into nothing.
@@ -60,7 +69,7 @@ jobs:
           if [ -n "$filter" ]; then printf '%s' "$body" | jq -r "$filter"; else printf '%s' "$body"; fi
           STUB
           chmod +x "$stub/gh"
-          export PATH="$stub:$PATH" WAIT_ATTEMPTS=5 WAIT_INTERVAL=0 EXPECT_TAG=v1.2.3
+          export PATH="$stub:$PATH" WAIT_ATTEMPTS=5 WAIT_INTERVAL=0 EXPECT_TAG=v1.2.3 EXPECT_OWNER=octopusden EXPECT_NAME=x
 
           fail=0
           run() { COUNTER=$(mktemp) FAIL_TIMES=$1 bash "$S" octopusden/x v1.2.3 >/dev/null 2>&1; echo $?; }
@@ -78,5 +87,15 @@ jobs:
           # Absent tag reported as a 200 with an empty ref: still not visible.
           check "empty ref is not visible" 1 "$(FAIL_MODE=null run 99)"
           check "empty ref then visible" 0 "$(FAIL_MODE=null run 2)"
+
+
+          # The wait must actually WAIT. With the sleep removed, ten attempts finish in
+          # milliseconds and the retry cannot outlast a real propagation gap — while every case
+          # above still passes, since they run with WAIT_INTERVAL=0 and carry no timing signal.
+          start=$SECONDS
+          COUNTER=$(mktemp) FAIL_TIMES=2 WAIT_INTERVAL=1 bash "$S" octopusden/x v1.2.3 >/dev/null 2>&1
+          elapsed=$((SECONDS - start))
+          if [ "$elapsed" -ge 2 ]; then echo "ok   honours the interval (waited ${elapsed}s)"
+          else echo "::error::honours the interval — waited only ${elapsed}s, expected >=2s"; fail=1; fi
 
           exit "$fail"
