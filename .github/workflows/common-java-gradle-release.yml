@@ -864,6 +864,30 @@ jobs:
             echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again, so do NOT re-dispatch the release. Recovery: create ${TAG} manually on ${built_sha} with a credential authorized to modify workflows, then use GitHub's 're-run failed jobs' on this run — that repeats only this job, which will adopt the tag and attach the release, and leaves the publish untouched." >&2
             exit 1
           fi
+          # Wait for the ref to become readable before creating the release. The create
+          # above returned success, so the tag exists — but `gh release create --verify-tag`
+          # performs its OWN lookup, and that read can miss a ref committed milliseconds
+          # earlier. Observed on octopus-api-gateway 2.0.19: the ref was created at the built
+          # commit, the very next command reported "tag v2.0.19 doesn't exist", and the tag was
+          # there afterwards. Cost of losing that race is a half-release — artifacts published,
+          # tag created, no release and no registration — recoverable only by re-running.
+          #
+          # `--verify-tag` is deliberately KEPT rather than dropped as redundant: without it,
+          # `gh release create` on a tag it cannot see would create the tag ITSELF at the
+          # default branch head, which is the stale-code release this whole step exists to
+          # prevent. So the fix is to make the read succeed, not to stop checking.
+          tag_visible=0
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+              tag_visible=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$tag_visible" -ne 1 ]; then
+            echo "::error title=Tag not readable after creation::Created ${TAG} at ${built_sha}, but it was still not readable after 10 attempts over ~20s. The artifacts for this version are already published, so do NOT re-dispatch the release. Use GitHub's 're-run failed jobs' on this run once the ref is visible — that repeats only this job, adopts the tag and attaches the release." >&2
+            exit 1
+          fi
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           echo "Created tag and release $TAG at $built_sha"
 
