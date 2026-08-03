@@ -773,6 +773,31 @@ jobs:
       # is the default-branch head at dispatch time, frozen for the run, regardless of
       # what was checked out. A hybrid release of anything other than the current tip
       # therefore tagged code that was never built.
+      # This job otherwise has no checkout. The retry below is a script rather than an inline
+      # loop so it can be tested (see .github/workflows/test-wait-for-tag-ref.yml), and a script
+      # has to be fetched. Pinned to job.workflow_sha — the same commit as this workflow — so the
+      # helper can never drift from the logic that calls it. Same mechanism the publish helper
+      # already uses in the build job.
+      - name: Resolve tag-wait helper ref
+        id: tagwait-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the tag-wait helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch tag-wait helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.tagwait-ref.outputs.sha }}
+          path: .octopus-base-tagwait
+          sparse-checkout: .github/scripts
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -834,6 +859,11 @@ jobs:
               exit 1
             fi
             # Tag is correct but has no release: adopt it instead of creating a second one.
+            # The same wait applies here. This path is reached from the REST lookup above, and
+            # --verify-tag resolves the tag through GraphQL, so "REST sees it" does not mean
+            # "the release command will". Usually warm on this path — the tag predates the run —
+            # but the failure shape is identical, so it is not left to luck.
+            bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
             gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
             echo "Created release $TAG on the existing, correct tag $built_sha"
             exit 0
@@ -864,6 +894,24 @@ jobs:
             echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again, so do NOT re-dispatch the release. Recovery: create ${TAG} manually on ${built_sha} with a credential authorized to modify workflows, then use GitHub's 're-run failed jobs' on this run — that repeats only this job, which will adopt the tag and attach the release, and leaves the publish untouched." >&2
             exit 1
           fi
+          # Wait for the ref to become readable before creating the release. The create
+          # above returned success, so the tag exists — but `gh release create --verify-tag`
+          # performs its OWN lookup, and that read can miss a ref committed milliseconds
+          # earlier. Observed on octopus-api-gateway 2.0.19: the ref was created at the built
+          # commit, the very next command reported "tag v2.0.19 doesn't exist", and the tag was
+          # there afterwards. Cost of losing that race is a half-release — artifacts published,
+          # tag created, no release and no registration — recoverable only by re-running.
+          #
+          # `--verify-tag` is deliberately KEPT rather than dropped as redundant: without it,
+          # `gh release create` on a tag it cannot see would create the tag ITSELF at the
+          # default branch head, which is the stale-code release this whole step exists to
+          # prevent. So the fix is to make the read succeed, not to stop checking.
+          #
+          # Extracted into a script so the retry is testable; see
+          # .github/workflows/test-wait-for-tag-ref.yml. It polls the GraphQL ref query that
+          # --verify-tag itself uses, NOT the REST endpoint above: the two are separate read
+          # paths and REST can answer while GraphQL is still stale.
+          bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           echo "Created tag and release $TAG at $built_sha"
 
