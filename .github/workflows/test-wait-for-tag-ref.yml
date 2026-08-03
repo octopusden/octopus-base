@@ -9,8 +9,7 @@ on:
 
 # Same shape as test-merge-gate-action.yml: synthetic cases with explicit assertions, no real
 # repository and no network. A stub `gh` on PATH decides how many lookups fail before one
-# succeeds, which is the only behaviour worth pinning here — the retry either survives early
-# failures or it does not.
+# succeeds, and rejects any lookup other than the GraphQL query `--verify-tag` itself uses.
 
 jobs:
   test:
@@ -26,9 +25,24 @@ jobs:
           stub=$(mktemp -d)
           cat > "$stub/gh" <<'STUB'
           #!/usr/bin/env bash
+          # Stands in for `gh`. Accepts ONLY the lookup that `gh release create --verify-tag` itself
+          # performs — the GraphQL repository.ref(qualifiedName:) query (cli/cli pkg/cmd/release/create/
+          # http.go, remoteTagExists). Any other lookup, the REST ref endpoint included, is rejected on
+          # every attempt: REST can answer while GraphQL is still stale, so polling it proves nothing.
+          if [ "${1:-}" != "api" ] || [ "${2:-}" != "graphql" ] || ! printf '%s\n' "$@" | grep -q 'ref(qualifiedName:'; then
+              echo "stub: refusing non-GraphQL lookup: $*" >&2; exit 1
+          fi
           n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNTER"
-          [ "$n" -le "${FAIL_TIMES:-0}" ] && { echo "gh: HTTP 404" >&2; exit 1; }
-          echo '{"ref":"refs/tags/v1.2.3"}'
+          if [ "$n" -le "${FAIL_TIMES:-0}" ]; then
+              case "${FAIL_MODE:-error}" in
+                  # GraphQL reports an absent tag as a SUCCESSFUL response carrying a null ref, so a
+                  # script that trusts the exit status alone declares victory while the tag is missing.
+                  null) echo "" ;;
+                  *)    echo "gh: HTTP 502" >&2; exit 1 ;;
+              esac
+              exit 0
+          fi
+          echo "REF_kwDOabcdef"
           STUB
           chmod +x "$stub/gh"
           export PATH="$stub:$PATH" WAIT_ATTEMPTS=5 WAIT_INTERVAL=0
@@ -42,9 +56,12 @@ jobs:
 
           # Readable on the first lookup — the normal case.
           check "visible immediately" 0 "$(run 0)"
-          # Readable only after two failures — the race this script exists for.
+          # Readable only after two failed lookups — the race this script exists for.
           check "visible on 3rd attempt" 0 "$(run 2)"
           # Never readable inside the budget — must fail, not hang and not pass.
           check "never visible" 1 "$(run 99)"
+          # Absent tag reported as a 200 with an empty ref: still not visible.
+          check "empty ref is not visible" 1 "$(FAIL_MODE=null run 99)"
+          check "empty ref then visible" 0 "$(FAIL_MODE=null run 2)"
 
           exit "$fail"
