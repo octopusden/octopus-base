@@ -438,6 +438,31 @@ jobs:
       # is the default-branch head at dispatch time, frozen for the run, regardless of
       # what was checked out. A hybrid release of anything other than the current tip
       # therefore tagged code that was never built.
+      # This job otherwise has no checkout. The retry below is a script rather than an inline
+      # loop so it can be tested (see .github/workflows/test-wait-for-tag-ref.yml), and a script
+      # has to be fetched. Pinned to job.workflow_sha — the same commit as this workflow — so the
+      # helper can never drift from the logic that calls it. Same mechanism the publish helper
+      # already uses in the build job.
+      - name: Resolve tag-wait helper ref
+        id: tagwait-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the tag-wait helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch tag-wait helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.tagwait-ref.outputs.sha }}
+          path: .octopus-base-tagwait
+          sparse-checkout: .github/scripts
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -630,18 +655,16 @@ jobs:
           # `gh release create` on a tag it cannot see would create the tag ITSELF at the
           # default branch head, which is the stale-code release this whole step exists to
           # prevent. So the fix is to make the read succeed, not to stop checking.
-          tag_visible=0
-          for _ in 1 2 3 4 5 6 7 8 9 10; do
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
-              tag_visible=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$tag_visible" -ne 1 ]; then
-            echo "::error title=Tag not readable after creation::Created ${TAG} at ${built_sha}, but it was still not readable after 10 attempts over ~20s. The artifacts for this version are already published, so do NOT re-dispatch the release. Use GitHub's 're-run failed jobs' on this run once the ref is visible — that repeats only this job, adopts the tag and attaches the release." >&2
-            exit 1
-          fi
+          # The create above returned success, so the tag exists — but
+          # `gh release create --verify-tag` performs its OWN lookup, and that read can miss a
+          # ref committed milliseconds earlier. Waiting for it is extracted into a script so the
+          # retry can actually be tested; see .github/workflows/test-wait-for-tag-ref.yml.
+          #
+          # `--verify-tag` is deliberately KEPT rather than dropped as redundant: without it,
+          # `gh release create` on a tag it cannot see would create the tag ITSELF at the default
+          # branch head, releasing whatever code sits there. So the read is made to succeed, not
+          # skipped.
+          bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
           create_release_with_asset
           echo "Created tag and release $TAG at $built_sha"
       # Bind the release to the run that produced it. Registration happens afterwards
