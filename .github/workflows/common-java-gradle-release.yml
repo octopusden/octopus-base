@@ -588,12 +588,9 @@ jobs:
             --init-script "$RUNNER_TEMP/no-signing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
 
-          # Unlike the Central preflight, this guard is a real gate: it exists to stop artifacts
-          # that must not reach Central, so being unable to run it is a reason not to publish.
-          # But a dry run publishes nothing, and its helper checkout is deliberately tolerant of
-          # a transient failure — so on a dry run a missing inspector is a warning, and on a real
-          # release it is a refusal. Before this script was extracted the logic was inline and
-          # could not be missing; the distinction is what keeps a dry run behaving as it did.
+          # This guard is a real gate, unlike the fail-open Central preflight: being unable to
+          # run it IS a reason not to publish to an immutable repository. A dry run publishes
+          # nothing and tolerates a failed helper fetch, so there it is a warning.
           inspector=".octopus-base-helper/.github/scripts/inspect-publication-set.py"
           if [ ! -f "$inspector" ]; then
             if [ "${DRY_RUN}" = "true" ]; then

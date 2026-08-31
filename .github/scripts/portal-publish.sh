@@ -230,6 +230,10 @@ echo "::group::Deployment coordinates"
 printf '  %s\n' "${MAVEN_COORDS[@]}"
 echo "::endgroup::"
 
+# The publication guard makes the same version assertion BEFORE the upload, and this one is
+# not redundant with it: that guard sees what this build produced, while this sees what the
+# deployment being published actually contains — which is a different thing when
+# resume-deployment-id names someone else's deployment. Keep both.
 for c in "${MAVEN_COORDS[@]}"; do
   grp="${c%%:*}"; ver="${c##*:}"
   [ "$ver" = "$BUILD_VERSION" ] \

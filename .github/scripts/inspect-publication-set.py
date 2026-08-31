@@ -10,10 +10,11 @@ release when it would publish something Central should not receive. Two independ
   * an artifact unfit for Central as a dependency — a shadow/uber jar, a Spring Boot
     executable jar, or anything over the size limit.
 
-Both are refusals the pipeline already makes later: the Portal publish step rejects a
-deployment containing a foreign version, but only after everything has been built, signed and
-uploaded, leaving a staging repository to drop by hand. This is the same judgement, before the
-upload.
+The version refusal is also made later, by the Portal publish step — but only after
+everything has been built, signed and uploaded, leaving a staging repository to drop by hand.
+This is the same judgement, before the upload. Both are kept: that one sees what the deployment
+being published contains, which differs from what this build produced when
+resume-deployment-id names another deployment.
 
 Usage: inspect-publication-set.py <local-repo-dir>
 Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, MAX_ARTIFACT_MB
@@ -30,19 +31,31 @@ max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
 release_version = os.environ.get("BUILD_VERSION", "").strip()
 
 published, offenders, wrong_version = [], [], []
+
+# Publications are enumerated from their POMs, not from the archives below. Every Maven
+# publication writes a POM whether or not it has an archive, so this is the only enumeration
+# that sees a POM-only publication such as a BOM — which the archive glob would miss, letting
+# a BOM at the wrong version through to the upload. The glob answers a different question:
+# whether an artifact is fit for Central at all.
+for pom in sorted(repo.rglob("*.pom")):
+    version = pom.parent.name
+    coordinate = "{}:{}".format(
+        str(pom.parent.parent.parent.relative_to(repo)).replace("/", "."),
+        pom.parent.parent.name,
+    )
+    # A release publishes ONE version. Any other — most often Gradle's `unspecified`, when the
+    # version properties never reached that project — is a build defect, and Central keeps
+    # whatever it is handed forever.
+    if release_version and version != release_version:
+        wrong_version.append((coordinate, version))
+
 # .zip is included because automation modules can publish shadow distributions and
 # TeamCity plugin bundles, which cost the same quota as a jar.
 for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in repo.rglob(ext)):
     # <group path>/<artifactId>/<version>/<file>
     artifact_id = path.parent.parent.name
-    version = path.parent.name
     size_mb = path.stat().st_size / 1048576
     published.append((artifact_id, path.name, size_mb))
-    # A release publishes ONE version. A publication carrying any other — most often
-    # Gradle's `unspecified`, when -Pversion never reached that project — is a build
-    # defect, and Central keeps whatever it is handed forever.
-    if release_version and version != release_version:
-        wrong_version.append((artifact_id, version, path.name))
     reasons = []
     # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
     if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
@@ -71,18 +84,13 @@ if allowed:
 
 if wrong_version:
     print(f"\n::error::Artifact(s) would be published at a version other than {release_version}", flush=True)
-    for artifact_id, version, name in wrong_version:
-        print(f"  {artifact_id}: {name} carries version '{version}'", file=sys.stderr)
+    for coordinate, version in sorted(set(wrong_version)):
+        print(f"  {coordinate} carries version '{version}'", file=sys.stderr)
     print(
-        f"\nThis release is {release_version}, and a release publishes exactly one version. A "
-        "publication at another version means the version properties did not reach that project "
-        "— `unspecified` is Gradle's value when nothing set one. Set the version for every "
-        "project that declares a publication (an `allprojects`/`subprojects` block, or the "
-        "convention plugin), or stop publishing the module.\n"
-        "Refused here rather than later: the Portal publish step already refuses a deployment "
-        "containing a foreign version, but only after the artifacts have been built, signed and "
-        "uploaded, which leaves a staging repository to drop by hand. Versions on Maven Central "
-        "are immutable, and coordinates like `unspecified` have reached it this way before.",
+        f"\nThis release is {release_version}, and a release publishes exactly one version. "
+        "`unspecified` is Gradle's value when nothing set one, so a publication carrying it never "
+        "received the version properties: set the version for every project that declares a "
+        "publication, or stop publishing the module.",
         file=sys.stderr,
     )
     sys.exit(1)

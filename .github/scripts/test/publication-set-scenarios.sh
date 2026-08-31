@@ -22,8 +22,18 @@ SCRIPT="$here/../inspect-publication-set.py"
 
 pass=0; fail=0
 
-# jar <repo> <group-path> <artifact> <version> <filename> [entry-inside]
+# pom <repo> <group-path> <artifact> <version>
+# Every Maven publication writes one, archive or not, so the fixtures do too — the version
+# check enumerates publications from their POMs, which is the only way a POM-only publication
+# (a BOM) is seen at all.
+pom() {
+  local dir="$1/$2/$3/$4"; mkdir -p "$dir"
+  printf '<project><artifactId>%s</artifactId><version>%s</version></project>\n' "$3" "$4" > "$dir/$3-$4.pom"
+}
+
+# jar <repo> <group-path> <artifact> <version> <filename> [entry-inside] — writes the POM too
 jar() {
+  pom "$1" "$2" "$3" "$4"
   local dir="$1/$2/$3/$4"; mkdir -p "$dir"
   local target="$dir/$5"
   if [ -n "${6:-}" ]; then
@@ -42,16 +52,21 @@ jar() {
 # pad <path> <mb> — grow a file past the size limit
 pad() { local f="$1"; local mb="$2"; dd if=/dev/zero bs=1048576 count="$mb" >> "$f" 2>/dev/null; }
 
+# sized <path> <mb> — set an EXACT size, for the boundary case. Appending cannot do it: the zip
+# content would push the file just over, which is how this fixture first read as "exceeds".
+sized() { truncate -s $(( $2 * 1048576 )) "$1"; }
+
 # run <name> <expected-rc> <must-match> [<must-not-match>]  — fixture built by $SETUP
 run() {
   local name="$1" erc="$2" want="$3" nowant="${4:-}"
   local repo; repo="$(mktemp -d)"
   eval "${SETUP}"
   local out; out="$(mktemp)"
-  env BUILD_VERSION="${VERSION-2.0.105}" \
-      FAT_JAR_ALLOWLIST="${ALLOWLIST:-}" \
-      MAX_ARTIFACT_MB="${MAX_MB:-8}" \
-      python3 "$SCRIPT" "$repo" >"$out" 2>&1
+  # Omitted rather than emptied when NO_MAX is set: the script's fallback fires on unset OR
+  # empty, but only omitting it proves the fallback rather than the empty-string branch.
+  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}")
+  [ "${NO_MAX:-}" = "1" ] || envs+=("MAX_ARTIFACT_MB=${MAX_MB:-8}")
+  env "${envs[@]}" python3 "$SCRIPT" "$repo" >"$out" 2>&1
   local rc=$? ok=true
   [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }
   [ -n "$want" ] && ! grep -qE "$want" "$out" && { ok=false; echo "  missing: $want"; }
@@ -76,8 +91,18 @@ jar "$repo" "$G" legacy unspecified legacy-unspecified.jar' \
   run "refuses when only ONE of several publications is adrift" 1 "legacy"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' VERSION='' \
   run "checks nothing when no release version is known" 0 "Publication set is fit" "carries version"
+# A padded value must compare equal to the artifact's version, or every publication reads as
+# adrift and no release could ever pass.
+SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar' VERSION='  2.0.105
+' \
+  run "trims the release version before comparing" 0 "Publication set is fit" "carries version"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' \
   run "says which release version it expected" 1 "This release is 2.0.105"
+SETUP='pom "$repo" "$G" bom unspecified' \
+  run "refuses a POM-only publication at another version" 1 "carries version 'unspecified'"
+SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar
+pom "$repo" org/other client unspecified' \
+  run "names the group, so same-named artifacts are distinguishable" 1 "org.other:client"
 
 echo "-- artifacts unfit for Central (pre-existing rules) -----------------------"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' \
@@ -90,6 +115,14 @@ SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/b
   run "refuses an oversized artifact" 1 "exceeds 8 MB"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' MAX_MB=16 \
   run "accepts it under a raised limit" 0 "Publication set is fit"
+# The limit is a ceiling, not a floor: at exactly the limit the artifact passes. Without this
+# the comparison could be flipped to >= and nothing would notice.
+SETUP='jar "$repo" "$G" edge 2.0.105 edge-2.0.105.jar; sized "$repo/$G/edge/2.0.105/edge-2.0.105.jar" 4' MAX_MB=4 \
+  run "accepts an artifact exactly at the limit" 0 "Publication set is fit" "exceeds"
+# MAX_ARTIFACT_MB unset, so the script's own 8 MB fallback decides — the workflow passes the
+# input explicitly, so this is the only place that default is ever exercised.
+SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' NO_MAX=1 \
+  run "falls back to an 8 MB limit when none is given" 1 "exceeds 8 MB"
 
 echo "-- the version refusal comes first ---------------------------------------"
 # Both defects at once: the version is the one to report, since it means the build is wrong

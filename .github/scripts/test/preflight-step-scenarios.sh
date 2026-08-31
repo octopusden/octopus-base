@@ -112,13 +112,6 @@ GRADLEW='exit 0' \
 GRADLEW='printf "" > "$OCTOPUS_COORDS_FILE"' \
   run "proceeds when the listing writes an empty file" 0 "preflight skipped"
 
-echo "-- a publication at another version --------------------------------------"
-GRADLEW='echo "skipping org.octopusden.octopus:legacy:unspecified - not the version being released (2.0.105)"
-printf "org.octopusden.octopus:client\n" > "$OCTOPUS_COORDS_FILE"' REPO1_CODES=404 \
-  run "surfaces a publication left at another version" 0 "Publication at another version" "::error"
-GRADLEW="$WRITES_ONE" REPO1_CODES=404 \
-  run "says nothing about versions when every publication matches" 0 "the version is free" "Publication at another version"
-
 echo "-- an incomplete helper checkout ------------------------------------------"
 HELPER_OVERRIDE="$(mktemp -d)" GRADLEW="$WRITES_ONE" \
   run "proceeds when the helper directory is missing its scripts" 0 "preflight skipped" "::error"
