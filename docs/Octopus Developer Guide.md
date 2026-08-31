@@ -262,6 +262,11 @@ again. Before building, the release asks Central whether it already holds the ve
 per publication, against coordinates read from Gradle's own publication model at configuration
 time — and refuses to start when **every** coordinate is already published.
 
+The requests are serial, so the sweep is bounded as a whole (90s by default): whatever is still
+unanswered when the budget runs out counts as unanswered, which lets the release run. A repo1
+HEAD normally answers in milliseconds, and the point of the check is to be cheaper than the
+build it replaces — a partial Central outage must not turn it into a long wait of its own.
+
 That case used to surface at the very end, at `closeSonatypeStagingRepository`, after a full
 build, sign, stage and upload, as:
 

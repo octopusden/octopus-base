@@ -19,6 +19,7 @@
 #   DRY_RUN            "true" => never fail, report only
 #   GITHUB_REPOSITORY  owner/repo, for the "is it recorded on our side" lookup (optional)
 #   GH_TOKEN           token for that lookup (optional)
+#   PREFLIGHT_BUDGET   seconds the whole repo1 sweep may take (default 90)
 #
 # Exit 0 = start the release, 1 = do not.
 #
@@ -45,7 +46,15 @@ DRY_RUN="${DRY_RUN:-false}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}"
 
 REPO1="${REPO1:-https://repo1.maven.org/maven2}"
-NET=(-sS --connect-timeout 15 --max-time 60)
+PREFLIGHT_BUDGET="${PREFLIGHT_BUDGET:-90}"
+# HEAD, not GET: only the status code is read, so there is no reason to pull every POM body
+# down — and the workflow comment and developer guide both describe this as a HEAD.
+# The per-request ceiling is deliberately short. A repo1 HEAD answers in milliseconds, while
+# the requests are serial: at a 60s ceiling a repository with eleven publications could hang
+# for eleven minutes BEFORE the build, which would cost more than the build this check exists
+# to save. PREFLIGHT_BUDGET bounds the sweep as a whole, so a partial outage cannot turn a
+# cheap question into a long one.
+NET=(-sS --head --connect-timeout 10 --max-time 20)
 
 # Report the verdict and leave. In dry-run every stop degrades to a warning: a dry run
 # publishes nothing, and this is the only run type in which the logic gets exercised
@@ -102,7 +111,18 @@ COORDS=("${UNIQUE[@]}")
 
 echo "::group::Asking Maven Central about $BUILD_VERSION (${#COORDS[@]} coordinate(s))"
 declare -a PRESENT=() ABSENT=() UNKNOWN=()
+sweep_start=$SECONDS
+budget_spent=false
 for ga in "${COORDS[@]}"; do
+  # Out of budget: the remaining coordinates are recorded as unanswered rather than asked
+  # about. That lands in the inconclusive branch below, which lets the release run — the
+  # same outcome as any other unanswered question, reached without spending more time.
+  if [ "$budget_spent" = true ] || (( SECONDS - sweep_start >= PREFLIGHT_BUDGET )); then
+    budget_spent=true
+    echo "  skipped  $ga (the ${PREFLIGHT_BUDGET}s budget for this check is spent)"
+    UNKNOWN+=("$ga")
+    continue
+  fi
   grp="${ga%%:*}"; art="${ga##*:}"
   # ${grp//.//} rather than ${grp//./\/}: a backslash-escaped replacement is stripped by
   # bash 5 but kept literally by bash 3.2, which would build .../org\/octopusden/... and
@@ -121,7 +141,9 @@ done
 echo "::endgroup::"
 
 if [ "${#UNKNOWN[@]}" -gt 0 ]; then
-  echo "::warning title=Central preflight inconclusive::Maven Central did not answer for ${#UNKNOWN[@]} of ${#COORDS[@]} coordinate(s) (${UNKNOWN[*]}), so whether $BUILD_VERSION is already published is unknown. Continuing rather than blocking a release that may be perfectly valid."
+  reason="did not answer"
+  [ "$budget_spent" = true ] && reason="did not answer within this check's ${PREFLIGHT_BUDGET}s budget"
+  echo "::warning title=Central preflight inconclusive::Maven Central ${reason} for ${#UNKNOWN[@]} of ${#COORDS[@]} coordinate(s) (${UNKNOWN[*]}), so whether $BUILD_VERSION is already published is unknown. Continuing rather than blocking a release that may be perfectly valid."
   exit 0
 fi
 

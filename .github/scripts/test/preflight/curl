@@ -6,18 +6,19 @@
 #                A sequence is what lets a scenario say "first coordinate published,
 #                second free" — the partial case the script must NOT stop on.
 set -u
-out=/dev/null; url=""
+out=/dev/null; url=""; method=GET
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
     -w|-H|--connect-timeout|--max-time) shift 2 ;;
+    -I|--head) method=HEAD; shift ;;
     -sS|-s|-S) shift ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
 S="${STATE_DIR:?}"
-echo "GET $url" >> "$S/calls.log"
+echo "$method $url" >> "$S/calls.log"
 # The URL shape is asserted, not just matched loosely: a group path built with a
 # backslash-escaped replacement (`${g//./\/}`) yields org\/octopusden on the bash 3.2 that
 # ships with macOS while working on the runner's bash 5, so a stub that matched *maven2*

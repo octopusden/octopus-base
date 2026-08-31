@@ -472,8 +472,9 @@ jobs:
       # Failed" with `already exists` buried underneath (#195).
       #
       # Ask Maven Central up front instead. The coordinates come from Gradle's own
-      # publication model, listed at CONFIGURATION time — no compilation, no signing, no
-      # network beyond the repo1 HEADs — so this costs seconds against a build of minutes.
+      # publication model, listed at CONFIGURATION time — no compilation, no signing, and one
+      # HEAD per publication under a bounded overall budget — so this costs seconds against a
+      # build of minutes, and stays cheap even when repo1 is having a bad day.
       # `-Pnexus=true` and the version properties are passed exactly as the real upload
       # passes them, because some consumers shape their publications on those: without
       # them this could inspect a different artifact set than the one that gets uploaded.

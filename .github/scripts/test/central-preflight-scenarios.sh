@@ -43,6 +43,7 @@ run() {
     BUILD_VERSION="${VERSION:-2.0.105}" \
     COORDS_FILE="$coords" \
     DRY_RUN="${DRY:-false}" \
+    PREFLIGHT_BUDGET="${BUDGET:-90}" \
     GITHUB_REPOSITORY="${REPO-octopusden/octopus-external-systems-client}" \
     REPO1_CODES="${REPO1_CODES:-404}" \
     TAG_STATE="${TAG_STATE:-no}" RELEASE_STATE="${RELEASE_STATE:-no}" \
@@ -55,6 +56,11 @@ run() {
   if [ -n "${WANT_REPO1_CALLS:-}" ]; then
     local n; n=$(grep -c 'maven2' "$STATE_DIR/calls.log" 2>/dev/null || echo 0)
     [ "$n" = "$WANT_REPO1_CALLS" ] || { ok=false; echo "  repo1 calls=$n expected=$WANT_REPO1_CALLS"; }
+  fi
+  # Only the status code is read, so a body must never be requested. Asserted on every
+  # scenario rather than in one of its own: a regression to GET would otherwise stay green.
+  if [ -s "$STATE_DIR/calls.log" ] && grep -qv '^HEAD ' "$STATE_DIR/calls.log"; then
+    ok=false; echo "  a repo1 request was not a HEAD:"; sed 's/^/    /' "$STATE_DIR/calls.log"
   fi
   if $ok; then echo "PASS  $name"; pass=$((pass+1)); else
     echo "FAIL  $name"; fail=$((fail+1)); sed 's/^/    | /' "$out"
@@ -93,6 +99,10 @@ REPO1_CODES=500 \
   run "proceeds when Central does not answer" 0 "inconclusive" "::error"
 COORDS="$TWO_COORDS" REPO1_CODES="200 000" \
   run "proceeds when one coordinate is unanswered, even with another published" 0 "inconclusive" "::error"
+COORDS="$TWO_COORDS" BUDGET=0 WANT_REPO1_CALLS=0 \
+  run "stops asking once its time budget is spent, and proceeds" 0 "budget for this check is spent" "::error"
+COORDS="$TWO_COORDS" BUDGET=0 \
+  run "says the budget is why the answer is missing" 0 "within this check's 0s budget"
 NO_COORDS_FILE=1 \
   run "proceeds when the publication set could not be listed" 0 "preflight skipped" "::error"
 COORDS="" \
