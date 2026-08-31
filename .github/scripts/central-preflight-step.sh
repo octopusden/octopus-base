@@ -87,6 +87,15 @@ if ! OCTOPUS_COORDS_FILE="$coords" OCTOPUS_RELEASE_VERSION="$BUILD_VERSION" \
   echo "::warning title=Publication listing failed::Could not list the publication coordinates (timed out, or Gradle exited non-zero — see below); the preflight will report that it could not check."
 fi
 
+# The listing reports publications at another version, and until now that report only reached a
+# log file shown when nothing was listed at all. It is worth seeing on its own: such a publication
+# is a build defect that the publication guard will refuse before the upload, and knowing it now
+# saves reading the guard's failure later. A warning, not a failure — deciding that is the
+# guard's job, on the artifacts it can actually see, not this script's on a configuration model.
+if adrift=$(grep -F "not the version being released" "$log" 2>/dev/null) && [ -n "$adrift" ]; then
+  echo "::warning title=Publication at another version::$(printf '%s' "$adrift" | tr '\n' ';') — the publication guard will refuse this before the upload unless the version reaches that project."
+fi
+
 if [ -s "$coords" ]; then
   echo "Publications this release would publish:"
   sed 's/^/  /' "$coords"

@@ -564,6 +564,7 @@ jobs:
         env:
           FAT_JAR_ALLOWLIST: ${{ inputs.fat-jar-publication-allowlist }}
           MAX_ARTIFACT_MB: ${{ inputs.max-central-artifact-mb }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
 
@@ -587,64 +588,23 @@ jobs:
             --init-script "$RUNNER_TEMP/no-signing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
 
-          python3 - "$GUARD_REPO" <<'PY'
-          import os, re, sys, zipfile
-          from pathlib import Path
+          # Unlike the Central preflight, this guard is a real gate: it exists to stop artifacts
+          # that must not reach Central, so being unable to run it is a reason not to publish.
+          # But a dry run publishes nothing, and its helper checkout is deliberately tolerant of
+          # a transient failure — so on a dry run a missing inspector is a warning, and on a real
+          # release it is a refusal. Before this script was extracted the logic was inline and
+          # could not be missing; the distinction is what keeps a dry run behaving as it did.
+          inspector=".octopus-base-helper/.github/scripts/inspect-publication-set.py"
+          if [ ! -f "$inspector" ]; then
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning title=Publication set not inspected::${inspector} is not on disk, so what this build would publish was not checked. Continuing because this is a dry run; a real release would refuse."
+              exit 0
+            fi
+            echo "::error title=Cannot inspect the publication set::${inspector} is not on disk, so what this release would publish to Maven Central cannot be checked. Refusing to publish unverified artifacts to an immutable repository." >&2
+            exit 1
+          fi
 
-          repo = Path(sys.argv[1])
-          allowed = {a.strip() for a in os.environ.get("FAT_JAR_ALLOWLIST", "").split(",") if a.strip()}
-          max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
-
-          published, offenders = [], []
-          # .zip is included because automation modules can publish shadow distributions and
-          # TeamCity plugin bundles, which cost the same quota as a jar.
-          for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in repo.rglob(ext)):
-              # <group path>/<artifactId>/<version>/<file>
-              artifact_id = path.parent.parent.name
-              size_mb = path.stat().st_size / 1048576
-              published.append((artifact_id, path.name, size_mb))
-              reasons = []
-              # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
-              if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
-                  reasons.append("shadow/uber artifact (-all classifier)")
-              else:
-                  try:
-                      with zipfile.ZipFile(path) as z:
-                          if any(n.startswith("BOOT-INF/") for n in z.namelist()):
-                              reasons.append("Spring Boot executable jar (BOOT-INF/)")
-                  except zipfile.BadZipFile:
-                      pass
-              # Size is the signal that catches what the markers miss — e.g. a shadow jar
-              # published with the classifier stripped, which is indistinguishable from a
-              # library jar by name and has no BOOT-INF/ either.
-              if size_mb > max_mb:
-                  reasons.append(f"exceeds {max_mb:g} MB")
-              if reasons and artifact_id not in allowed:
-                  offenders.append((artifact_id, path.name, size_mb, "; ".join(reasons)))
-
-          print(f"Inspected {len(published)} artifact(s) that would be published to Maven Central "
-                f"(size limit {max_mb:g} MB):")
-          for artifact_id, name, size_mb in published:
-              print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
-          if allowed:
-              print(f"Explicitly allowed: {', '.join(sorted(allowed))}")
-
-          if offenders:
-              print("\n::error::Artifact(s) unfit for Maven Central would be published", flush=True)
-              for artifact_id, name, size_mb, reason in offenders:
-                  print(f"  {artifact_id}: {name} ({size_mb:.2f} MB) — {reason}", file=sys.stderr)
-              print(
-                  "\nCentral is for artifacts consumed as a Maven dependency. Either stop publishing "
-                  "this module (declare no MavenPublication for it, or set publish-to-nexus: false for "
-                  "a repository nobody consumes), or — if a consumer really resolves this artifact from "
-                  "a Maven repository, e.g. a TeamCity metarunner — add its artifactId to the "
-                  "fat-jar-publication-allowlist input with that justification. Raise "
-                  "max-central-artifact-mb only if a genuinely consumed library is legitimately large.",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          print("\nPublication set is fit for Maven Central.")
-          PY
+          python3 "$inspector" "$GUARD_REPO"
 
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script

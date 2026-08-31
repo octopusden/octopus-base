@@ -244,6 +244,18 @@ workflow's `artifact-pattern` at a module that is still published.
 
 Before uploading, the release inspects what would reach Central and **fails** on:
 
+- **a version other than the one being released** — most often Gradle's `unspecified`, which is
+  its value when nothing set one. A release publishes exactly one version, and a publication at
+  another version means the version properties never reached that project. Fix it by setting the
+  version for every project that declares a publication (an `allprojects` / `subprojects` block,
+  or the convention plugin), or by not publishing the module.
+
+  The Portal publish step already refuses a deployment containing a foreign version — but only
+  after everything has been built, signed, staged and uploaded, which leaves a staging repository
+  to drop by hand. This is the same judgement, before the upload. Coordinates such as
+  `unspecified` reached Central this way before the later check existed, and Central keeps them
+  permanently.
+
 - a shadow/uber artifact (`-all` classifier);
 - a Spring Boot executable jar, detected by a `BOOT-INF/` entry inside the archive — its file
   name is indistinguishable from a library's;

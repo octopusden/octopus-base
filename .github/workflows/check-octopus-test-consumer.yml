@@ -153,6 +153,12 @@ jobs:
       - name: Preflight step scenarios
         shell: bash
         run: bash .github/scripts/test/preflight-step-scenarios.sh
+      # The publication guard decides what may reach an immutable public repository and had no
+      # tests before the version refusal was added to it. Fixtures are local-repository trees, so
+      # no Gradle is needed.
+      - name: Publication set scenarios
+        shell: bash
+        run: bash .github/scripts/test/publication-set-scenarios.sh
 
   security:
     name: security
