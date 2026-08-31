@@ -33,6 +33,7 @@ published Release and its tag stop being freely deletable either.
 
 ```mermaid
 flowchart LR
+    PF["ask Central:<br/>is this version<br/>already there?"]
     subgraph publish ["IRREVERSIBLE - Maven Central"]
         direction LR
         B["build<br/>+ sign"] --> S["staging"] --> C["close<br/>validate"] --> P["publish<br/>wait for PUBLISHED"]
@@ -41,6 +42,7 @@ flowchart LR
         direction LR
         T["tag<br/>vX.Y.Z"] --> R["GitHub<br/>Release"] --> L["registration<br/>repository_dispatch"]
     end
+    PF -->|"only if the version is free"| B
     P -->|"only if green"| T
 ```
 
@@ -153,7 +155,24 @@ fails **after** publishing never registers: route B is gated on the release run 
 ### Build, guard, stage, close
 
 The job checks out (the default ref for `public`, `commit-hash` for `hybrid`), verifies the
-built commit can be tagged **before** building anything, sets up Java, and runs `./gradlew build`.
+built commit can be tagged **before** building anything, sets up Java, asks Maven Central whether
+this version is already published, and only then runs `./gradlew build`.
+
+**The Central preflight** (`.github/scripts/central-preflight.sh`, added in #198) lists the
+coordinates the upload would send — from Gradle's publication model at *configuration* time, no
+compilation — and HEADs each one on repo1. It stops the release on exactly one verdict: **every**
+coordinate is already published, which means the close step provably cannot succeed. Everything
+else warns and proceeds — a partial overlap, an unanswered repo1, an unlistable publication set,
+an exhausted budget, a missing helper. The asymmetry is deliberate: the check can only ever save a
+build that was going to fail, so it must never become a new reason a valid release does not run.
+It is the exact opposite of the taggability check beside it, which fails closed.
+
+> When it does stop, it separates the two situations Sonatype's identical error string conflates:
+> the previous release published *and* was tagged (release the next version), versus published but
+> never recorded (that is [#189](https://github.com/octopusden/octopus-base/issues/189) — a
+> recovery, not a re-dispatch). In dry-run every stop degrades to a warning.
+
+> Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
 Before the upload, the **publication guard** inspects what would reach Central by publishing to a
 throwaway local repository first, and fails on a shadow/uber artifact, a Spring Boot executable
@@ -244,16 +263,17 @@ against the deployment state after a settling window, because a late 400 usually
 The verdict travels as **log lines**, not step outputs, because reusable-workflow step outputs
 are unreliable on failed runs. Anything consuming them scrapes the log.
 
-Two different places emit it, and knowing which one spoke tells you which stage failed:
+Three different places emit it, and knowing which one spoke tells you which stage failed:
 
 | Emitter | Covers | Classes it can emit |
 |---|---|---|
+| `central-preflight.sh` | before the build — the version is already on Central | `deterministic` |
 | `portal-publish.sh` | the Portal phases — search, validate, guard, publish, verify | `published`, `deterministic`, `resumable` |
 | step *Diagnose & classify Sonatype publish failure* | the Gradle upload/close stage, before the Portal | `deterministic`, `resumable`, `transient`, `unknown` |
 
-They are mutually exclusive. The script drops a marker file when it classifies, and the workflow
-step stays quiet if that marker is present — so exactly one `RELEASE_PUBLISH_CLASS` line appears
-per run. `transient` and `unknown` therefore only ever describe a failure *before* the Portal took
+Only one of them ever speaks per run. The preflight stops before anything is built, so the other
+two are never reached; and between those two, the Portal script drops a marker file when it
+classifies and the workflow step stays quiet if that marker is present. `transient` and `unknown` therefore only ever describe a failure *before* the Portal took
 over; the script has a `fail_transient` helper but no code path reaches it.
 
 | Class | Retryable | Meaning |
@@ -369,7 +389,7 @@ the release state.
 |---|:---:|:---:|:---:|:---:|---|
 | Guard rejects the upload | — | — | — | — | Yes — nothing left anywhere. Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
-| Version already on Central | published earlier | — | — | — | The run is red but the earlier release is intact. Release the next version. |
+| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. Release the next version — or, if the tag or release is missing, run the #189 recovery. |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
