@@ -75,9 +75,29 @@ G
 cat > "$multi/build.gradle" <<'G'
 allprojects {
     apply plugin: 'maven-publish'
+    apply plugin: 'ivy-publish'
     group = "org.fixture.${project.name}"
     version = project.property('fixtureVersion')
-    publishing { publications { register(project.name, MavenPublication) { } } }
+    publishing {
+        publications {
+            register(project.name, MavenPublication) { }
+            // Same coordinates as the one above. The listing must collapse them, or the
+            // "writes no duplicates" assertion is describing an input that never occurs.
+            register("${project.name}Twin", MavenPublication) {
+                groupId = "org.fixture.${project.name}"
+                artifactId = project.name
+            }
+            // Pinned to another version, so it is NOT part of what this release uploads.
+            // Filtering on the PROJECT's version instead of the PUBLICATION's would list it.
+            register("${project.name}Pinned", MavenPublication) {
+                artifactId = "${project.name}-pinned"
+                version = '0.0.1-pinned'
+            }
+            // Not a Maven publication at all: it has no groupId, so a listing that does not
+            // check the type reaches for one and dies, taking the whole check with it.
+            register("${project.name}Ivy", IvyPublication) { }
+        }
+    }
 }
 G
 : > "$tmp/coords"
@@ -90,6 +110,10 @@ grep -qxF 'org.fixture.fixture-root:fixture-root' "$tmp/coords"; check \
   "lists the root project's publication" "root publication missing"
 grep -qxF 'org.fixture.sub:sub' "$tmp/coords"; check \
   "lists a SUBPROJECT's publication" "subproject publication missing — a hook that walks only the root project would do this, and every subproject of every consumer would go unchecked"
+! grep -q 'pinned' "$tmp/coords"; check \
+  "excludes a publication pinned to another version" "a publication carrying its own version was listed under the release version — this is the direction that can produce a false 'all published' and stop a valid release"
+[ "$(wc -l < "$tmp/coords" | tr -d ' ')" = "2" ]; check \
+  "lists exactly the two coordinates this release would upload" "the line count is not 2, so a duplicate, the pinned publication or the Ivy publication leaked in"
 
 echo "-- publications at another version ----------------------------------------"
 # The build is at 9.9.9-fixture; the release claims to be releasing 1.2.3. Nothing matches.

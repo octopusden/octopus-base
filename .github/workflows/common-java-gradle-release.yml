@@ -508,51 +508,19 @@ jobs:
         run: |
           set -uo pipefail
 
-          coords="$RUNNER_TEMP/publication-coords.txt"
-          rm -f "$coords"
-
-          # The listing script and the preflight both come from the pinned helper checkout. If
-          # that checkout did not happen — a tolerated failure on a dry run, see above — there
-          # is nothing to run, and this step must still not fail: the whole check is an
-          # optimisation, and the release behaves as it did before it existed.
+          # Everything this step does lives in central-preflight-step.sh, which is covered by
+          # .github/scripts/test/preflight-step-scenarios.sh. What CANNOT move there is the
+          # check that the helper checkout happened at all — a script cannot verify its own
+          # absence. If it did not happen (a tolerated failure on a dry run, see above), this
+          # step must still not fail: the whole check is an optimisation, and the release
+          # behaves exactly as it did before it existed.
           helper=".octopus-base-helper/.github/scripts"
-          if [ ! -f "$helper/central-preflight.sh" ] || [ ! -f "$helper/list-publications.init.gradle" ]; then
+          if [ ! -f "$helper/central-preflight-step.sh" ]; then
             echo "::warning title=Central preflight skipped::The release helpers are not on disk, so whether $BUILD_VERSION is already on Maven Central could not be checked. Continuing."
             exit 0
           fi
 
-
-          # `help` is the cheapest task that still configures the whole project tree.
-          # Two things are pinned off, both because they would skip configuration and take
-          # the listing with it: configure-on-demand would leave unbuilt subprojects
-          # unevaluated, so their publications would silently go unchecked, and a
-          # configuration-cache HIT skips configuration entirely, so the hook would never
-          # run. Both are set as `-D` properties rather than command-line flags on purpose:
-          # an unknown property is ignored by older Gradle versions, while an unknown flag
-          # would fail the invocation on the consumers still on Gradle 7.
-          # `timeout` because this is the dominant and, until now, the only unbounded cost in
-          # the step: the HEAD sweep has its own budget, but `gradlew help` pays cold daemon
-          # start, full configuration and any configuration-time dependency resolution. A
-          # non-zero exit already falls open; without a ceiling there is no answer for a
-          # stall, which is the one failure that would make this check cost more than the
-          # build it exists to save. 300s is far above the observed cost (9s on the canary,
-          # ~32s cold locally) and still bounded.
-          OCTOPUS_COORDS_FILE="$coords" OCTOPUS_RELEASE_VERSION="$BUILD_VERSION" timeout 300 ./gradlew help -q \
-            --init-script "$helper/list-publications.init.gradle" \
-            -Dorg.gradle.configureondemand=false \
-            -Dorg.gradle.configuration-cache=false \
-            -Pnexus=true -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" \
-            > "$RUNNER_TEMP/list-publications.log" 2>&1 \
-            || echo "::warning title=Publication listing failed::Could not list the publication coordinates within 300s, or it exited non-zero (see below); the preflight will report that it could not check."
-
-          if [ -s "$coords" ]; then
-            echo "Publications this release would publish:"
-            sed 's/^/  /' "$coords"
-          else
-            tail -n 40 "$RUNNER_TEMP/list-publications.log" || true
-          fi
-
-          COORDS_FILE="$coords" bash "$helper/central-preflight.sh"
+          HELPER_DIR="$helper" bash "$helper/central-preflight-step.sh"
 
       # gradle build
       - name: Gradle build
