@@ -158,6 +158,12 @@ The job checks out (the default ref for `public`, `commit-hash` for `hybrid`), v
 built commit can be tagged **before** building anything, sets up Java, asks Maven Central whether
 this version is already published, and only then runs `./gradlew build`.
 
+> **The order matters and is not what the irreversible/reversible split suggests.** For a
+> `docker-image` component the image is pushed *before* the publication guard runs, so a guard
+> rejection — or any later failure — leaves a pushed image behind that nothing removes. The
+> tables below track Central, the tag, the Release and the log; the container registry is a fifth
+> piece of state they do not cover. That ordering is #190.
+
 **The Central preflight** stops the release on exactly one verdict: **every** coordinate the
 upload would send is already published, which means the close step provably cannot succeed.
 Everything else warns and proceeds — a partial overlap, an unanswered repo1, an unlistable
@@ -398,7 +404,7 @@ the release state.
 
 | Failure | Central | tag | Release | log | Recoverable by the pipeline? |
 |---|:---:|:---:|:---:|:---:|---|
-| Guard rejects the upload | — | — | — | — | Yes — nothing left anywhere. Fix and re-dispatch. |
+| Guard rejects the upload | — | — | — | — | Nothing left on Central, in git or in the log. But a `docker-image` release has already pushed its image by this point — the push runs before the guard — and nothing cleans that up (#190). Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
 | Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. If the tag or release is missing, run the #189 recovery. Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
