@@ -20,7 +20,3 @@ it: the step runs under `bash -e`, the comment asserted it did not, and the firs
 the whole step on the ordinary HTTP 404 for a component with no log file. Every new component's
 first release therefore failed to register, for the entire time the comment claimed the opposite
 (#196).
-
-Deduplication is an optimisation, not a guarantee, and cannot become one here: registration is an
-asynchronous dispatch, so two callers can both read the log before either write lands. Removing
-duplicates for good has to happen where the log is written (#174).

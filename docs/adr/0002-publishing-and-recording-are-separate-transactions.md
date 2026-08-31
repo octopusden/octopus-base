@@ -18,7 +18,3 @@ Every deadline in the publish path inherits this. Giving up while Central is sti
 does not stop the publish; it only stops us watching, and Central may finish minutes later
 (#193). That is why such a failure is classified `resumable` and explicitly not retryable: a plain
 re-run would upload a version that is already on its way.
-
-The two halves therefore need separate names, and the
-[pipeline reference](../Octopus%20Release%20Pipeline.md) gives them: a *deployment state* belongs
-to Sonatype, a *release state* is ours and is four independent facts rather than one value.
