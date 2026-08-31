@@ -458,6 +458,12 @@ jobs:
 
       - name: Fetch Portal publish helper
         if: ${{ inputs.publish-to-nexus }}
+        # A real release cannot proceed without these helpers: the publish step is one of
+        # them. A dry run can — nothing downstream of it uses them except the preflight,
+        # which is fail-open by design. So a transient failure fetching octopus-base must
+        # not fail a dry run that, before this step moved here, touched nothing outside the
+        # consumer's own checkout at this point in the job.
+        continue-on-error: ${{ inputs.dry-run }}
         uses: actions/checkout@v4
         with:
           repository: octopusden/octopus-base
@@ -495,36 +501,16 @@ jobs:
           coords="$RUNNER_TEMP/publication-coords.txt"
           rm -f "$coords"
 
-          # projectsEvaluated fires after every project's `afterEvaluate` has run, which is
-          # where the convention plugin and java-gradle-plugin create their publications —
-          # including the plugin marker publications. Written to a file rather than stdout so
-          # Gradle's own chatter cannot be mistaken for a coordinate.
-          #
-          # Gradle already knows which version it would publish, so it does the filtering:
-          # only publications at the release version reach the file, and the set collapses
-          # duplicates. A publication at any other version is reported and dropped — it is
-          # not evidence either way, and asking Central about it would answer a different
-          # question.
-          cat > "$RUNNER_TEMP/list-publications.init.gradle" <<'GRADLE'
-          def out = new File(System.getenv('OCTOPUS_COORDS_FILE'))
-          def want = System.getenv('OCTOPUS_RELEASE_VERSION')
-          gradle.projectsEvaluated { g ->
-              def seen = new LinkedHashSet<String>()
-              g.rootProject.allprojects.each { proj ->
-                  def publishing = proj.extensions.findByName('publishing')
-                  if (publishing == null) return
-                  publishing.publications.each { pub ->
-                      if (!(pub instanceof org.gradle.api.publish.maven.MavenPublication)) return
-                      if (pub.version == want) {
-                          seen << "${pub.groupId}:${pub.artifactId}".toString()
-                      } else {
-                          println "skipping ${pub.groupId}:${pub.artifactId}:${pub.version} - not the version being released ($want)"
-                      }
-                  }
-              }
-              out.withWriter('UTF-8') { w -> seen.each { w.writeLine(it) } }
-          }
-          GRADLE
+          # The listing script and the preflight both come from the pinned helper checkout. If
+          # that checkout did not happen — a tolerated failure on a dry run, see above — there
+          # is nothing to run, and this step must still not fail: the whole check is an
+          # optimisation, and the release behaves as it did before it existed.
+          helper=".octopus-base-helper/.github/scripts"
+          if [ ! -f "$helper/central-preflight.sh" ] || [ ! -f "$helper/list-publications.init.gradle" ]; then
+            echo "::warning title=Central preflight skipped::The release helpers are not on disk, so whether $BUILD_VERSION is already on Maven Central could not be checked. Continuing."
+            exit 0
+          fi
+
 
           # `help` is the cheapest task that still configures the whole project tree.
           # Two things are pinned off, both because they would skip configuration and take
@@ -535,7 +521,7 @@ jobs:
           # an unknown property is ignored by older Gradle versions, while an unknown flag
           # would fail the invocation on the consumers still on Gradle 7.
           OCTOPUS_COORDS_FILE="$coords" OCTOPUS_RELEASE_VERSION="$BUILD_VERSION" ./gradlew help -q \
-            --init-script "$RUNNER_TEMP/list-publications.init.gradle" \
+            --init-script "$helper/list-publications.init.gradle" \
             -Dorg.gradle.configureondemand=false \
             -Dorg.gradle.configuration-cache=false \
             -Pnexus=true -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" \
@@ -549,7 +535,7 @@ jobs:
             tail -n 40 "$RUNNER_TEMP/list-publications.log" || true
           fi
 
-          COORDS_FILE="$coords" bash .octopus-base-helper/.github/scripts/central-preflight.sh
+          COORDS_FILE="$coords" bash "$helper/central-preflight.sh"
 
       # gradle build
       - name: Gradle build

@@ -93,7 +93,7 @@ COORDS="$TWO_COORDS" REPO1_CODES="200 200" TAG_STATE=yes RELEASE_STATE=yes \
   run "stops only after every coordinate answers present" 1 "all 2 coordinate"
 
 echo "-- inconclusive: must proceed --------------------------------------------"
-COORDS="$TWO_COORDS" REPO1_CODES="200 404" \
+COORDS="$TWO_COORDS" REPO1_CODES="200 404" WANT_REPO1_CALLS=2 \
   run "proceeds on a partial overlap, saying why" 0 "partially on Maven Central" "::error"
 REPO1_CODES=500 \
   run "proceeds when Central does not answer" 0 "inconclusive" "::error"
