@@ -103,31 +103,26 @@ jobs:
             exit 1
           fi
 
+          # Not registered unless the helper positively says so. Every way of not getting an
+          # answer — no helper, or a helper that failed — leaves this value and registers,
+          # which is the fail-open behaviour this guard is built around.
+          registered=false
           helper=.octopus-base-helper/.github/scripts/release-log-has-version.sh
-          if [ -f "$helper" ]; then
-            # In an `if` condition, because the helper still refuses unusable ARGUMENTS with a
-            # non-zero exit — an empty repository or module name trips `${1:?}` — and a bare
-            # assignment under `set -e` would kill the step before it writes an answer, which is
-            # the very failure this guard exists to prevent. Safe only because the version, the
-            # one input that must stop the release, is already validated above.
-            #
-            # The failure branch reassigns rather than trusting what the substitution captured:
-            # a helper that failed midway can still have printed something first.
-            if ! registered="$(bash "$helper" "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"; then
-              registered=false
-              echo "::warning title=Duplicate check failed::The release-log helper exited non-zero, so this release is registered without checking whether it already is."
-            fi
-          else
-            registered=false
-            echo "::warning title=Duplicate check skipped::The release-log helper could not be fetched, so this release is registered without checking whether it already is."
-          fi
 
-          # An answer that is neither true nor false means the helper is broken. Fail open on
-          # that too: a step output is a single line, so anything else would be truncated into
-          # the gate below and read as "not registered" anyway — better to say so out loud.
-          if [ "$registered" != "true" ] && [ "$registered" != "false" ]; then
-            echo "::warning title=Unusable answer from the release-log helper::It printed \"${registered}\" instead of true or false; registering."
-            registered=false
+          # The call sits in an `elif` condition because the helper still refuses unusable
+          # ARGUMENTS with a non-zero exit — an empty repository or module name trips `${1:?}`
+          # — and a bare assignment under `set -e` would kill the step before it writes an
+          # answer, which is the very failure this guard exists to prevent. Safe only because
+          # the version, the one input that must stop the release, is validated above.
+          #
+          # It captures into `answer` rather than into `registered`, so a helper that printed
+          # something before failing cannot leave that text in the value written below.
+          if [ ! -f "$helper" ]; then
+            echo "::warning title=Duplicate check skipped::The release-log helper could not be fetched, so this release is registered without checking whether it already is."
+          elif ! answer="$(bash "$helper" "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"; then
+            echo "::warning title=Duplicate check failed::The release-log helper exited non-zero, so this release is registered without checking whether it already is."
+          else
+            registered="$answer"
           fi
           echo "registered=${registered}" >> "$GITHUB_OUTPUT"
 

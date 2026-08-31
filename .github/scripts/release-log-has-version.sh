@@ -59,7 +59,7 @@ if raw="$(gh api "repos/${repo}/contents/${module}.txt" --jq '.content' 2>/dev/n
     # caller's `set -e`, on a path whose whole purpose is to fail open. Parameter expansion
     # would also be failure-proof, but `${raw//...}` is quadratic — on bash 3.2 a 59 KB
     # payload takes ~3 minutes — and a hang on a fail-open path is worse than a failure.
-    encoded="$(printf '%s' "$raw" | LC_ALL=C tr -d '\n')" || encoded="$raw"
+    encoded="$(LC_ALL=C tr -d '\n' <<<"$raw")" || encoded="$raw"
 fi
 
 # It also returns an empty payload for files it will not inline (over ~1 MB), which decodes to
