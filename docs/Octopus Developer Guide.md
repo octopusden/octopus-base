@@ -296,6 +296,12 @@ Everything short of "all coordinates published" lets the release run, and says w
 
 That asymmetry is deliberate: the preflight can only ever save a build that was going to fail,
 so it must never become a new reason a valid release does not run. It is skipped when
-`publish-to-nexus: false` (nothing goes to Central) and when `resume-deployment-id` is set (the
-version is already staged on purpose). Under `dry-run: true` it reports its verdict as a warning
-without failing.
+`publish-to-nexus: false` (nothing goes to Central), when `resume-deployment-id` is set (the
+version is already staged on purpose), and when the `octopus-base` helper scripts are not on
+disk — the fetch that brings them is required for a real release, which cannot publish without
+them, and tolerated on a dry run, which uses them for nothing else. Under `dry-run: true` the
+check reports its verdict as a warning without failing.
+
+The coordinate listing has been exercised on Gradle 7.6.4, 8.14.3 and 9.4.1, on single- and
+multi-project builds, and with the configuration cache and configure-on-demand switched on in
+`gradle.properties` — the release passes both off as `-D` properties, which override the file.
