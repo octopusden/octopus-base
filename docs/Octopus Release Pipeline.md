@@ -389,7 +389,7 @@ the release state.
 |---|:---:|:---:|:---:|:---:|---|
 | Guard rejects the upload | — | — | — | — | Yes — nothing left anywhere. Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
-| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error says which of the two situations it is. The earlier release is intact. Release the next version — or, if the tag or release is missing, run the #189 recovery. |
+| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. Release the next version — or, if the tag or release is missing, run the #189 recovery. |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
