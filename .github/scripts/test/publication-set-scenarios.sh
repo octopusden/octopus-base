@@ -64,7 +64,7 @@ run() {
   local out; out="$(mktemp)"
   # Omitted rather than emptied when NO_MAX is set: the script's fallback fires on unset OR
   # empty, but only omitting it proves the fallback rather than the empty-string branch.
-  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}")
+  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}" "DRY_RUN=${DRY:-false}")
   [ "${NO_MAX:-}" = "1" ] || envs+=("MAX_ARTIFACT_MB=${MAX_MB:-8}")
   env "${envs[@]}" python3 "$SCRIPT" "$repo" >"$out" 2>&1
   local rc=$? ok=true
@@ -79,9 +79,16 @@ run() {
 
 G=org/octopusden/octopus
 
+# An empty publication set is now annotated rather than reported as fit, because "the inspector
+# looked and approved" and "the inspector saw nothing" were indistinguishable — including when
+# the fixture builder itself breaks, since this suite runs without `set -e`.
+echo "-- an empty publication set is not success --------------------------------"
+SETUP='true' \
+  run "annotates an empty set instead of calling it fit" 0 "Nothing to inspect"
+
 echo "-- a release publishes exactly one version --------------------------------"
 SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar' \
-  run "accepts a publication at the release version" 0 "Publication set is fit"
+  run "accepts a publication at the release version" 0 "client-2\.0\.105\.jar +[0-9]"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' \
   run "refuses Gradle's unspecified version" 1 "carries version 'unspecified'"
 SETUP='jar "$repo" "$G" client 0.0.0 client-0.0.0.jar' \
@@ -90,14 +97,16 @@ SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar
 jar "$repo" "$G" legacy unspecified legacy-unspecified.jar' \
   run "refuses when only ONE of several publications is adrift" 1 "legacy"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' VERSION='' \
-  run "checks nothing when no release version is known" 0 "Publication set is fit" "carries version"
+  run "checks nothing when no release version is known" 0 "Inspected 1 artifact" "carries version"
 # A padded value must compare equal to the artifact's version, or every publication reads as
 # adrift and no release could ever pass.
 SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar' VERSION='  2.0.105
 ' \
-  run "trims the release version before comparing" 0 "Publication set is fit" "carries version"
+  run "trims the release version before comparing" 0 "Inspected 1 artifact" "carries version"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' \
   run "says which release version it expected" 1 "This release is 2.0.105"
+SETUP='jar "$repo" "$G" client 0.105 client-0.105.jar' \
+  run "refuses a version that is a substring of the release version" 1 "carries version '0.105'"
 SETUP='pom "$repo" "$G" bom unspecified' \
   run "refuses a POM-only publication at another version" 1 "carries version 'unspecified'"
 SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar
@@ -108,17 +117,17 @@ echo "-- artifacts unfit for Central (pre-existing rules) ----------------------
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' \
   run "refuses a shadow/uber artifact" 1 "shadow/uber"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
-  run "accepts an allowlisted shadow artifact" 0 "Explicitly allowed: automation"
+  run "accepts an allowlisted shadow artifact" 0 "automation-2\.0\.105-all\.jar +[0-9]" "unfit for Maven Central"
 SETUP='jar "$repo" "$G" app 2.0.105 app-2.0.105.jar BOOT-INF/classes/x.class' \
   run "refuses a Spring Boot executable jar" 1 "BOOT-INF"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' \
   run "refuses an oversized artifact" 1 "exceeds 8 MB"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' MAX_MB=16 \
-  run "accepts it under a raised limit" 0 "Publication set is fit"
+  run "accepts it under a raised limit" 0 "big-2\.0\.105\.jar +[0-9]" "exceeds"
 # The limit is a ceiling, not a floor: at exactly the limit the artifact passes. Without this
 # the comparison could be flipped to >= and nothing would notice.
 SETUP='jar "$repo" "$G" edge 2.0.105 edge-2.0.105.jar; sized "$repo/$G/edge/2.0.105/edge-2.0.105.jar" 4' MAX_MB=4 \
-  run "accepts an artifact exactly at the limit" 0 "Publication set is fit" "exceeds"
+  run "accepts an artifact exactly at the limit" 0 "edge-2\.0\.105\.jar +[0-9]" "exceeds"
 # MAX_ARTIFACT_MB unset, so the script's own 8 MB fallback decides — the workflow passes the
 # input explicitly, so this is the only place that default is ever exercised.
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' NO_MAX=1 \
@@ -129,6 +138,14 @@ echo "-- the version refusal comes first ---------------------------------------
 # rather than the artifact being unsuitable.
 SETUP='jar "$repo" "$G" automation unspecified automation-unspecified-all.jar' \
   run "reports the version, not the shadow classifier" 1 "carries version 'unspecified'" "shadow/uber"
+
+echo "-- a dry run has no upload to save, so it must not fail -------------------"
+SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \
+  run "warns instead of refusing under dry-run" 0 "a real release would stop here" "::error"
+SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \
+  run "still names the offending coordinate under dry-run" 0 "carries version 'unspecified'"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' DRY=true \
+  run "keeps refusing a fat jar under dry-run, as it always has" 1 "shadow/uber"
 
 echo
 echo "passed=$pass failed=$fail"

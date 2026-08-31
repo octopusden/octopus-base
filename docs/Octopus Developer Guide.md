@@ -256,6 +256,12 @@ Before uploading, the release inspects what would reach Central and **fails** on
   `unspecified` reached Central this way before the later check existed, and Central keeps them
   permanently.
 
+  Under `dry-run: true` this one reports and continues rather than failing. A dry run has no
+  upload to save, so it has nothing to gain from failing — and consumer repositories run a dry
+  release as a required merge check, so a refusal there would turn a green check red on nothing
+  but an `octopus-base` ref bump. The fat-jar and size rules below keep failing under dry-run, as
+  they always have.
+
 - a shadow/uber artifact (`-all` classifier);
 - a Spring Boot executable jar, detected by a `BOOT-INF/` entry inside the archive — its file
   name is indistinguishable from a library's;
@@ -270,6 +276,7 @@ If the guard fails your release, pick one:
 
 | Situation | Fix |
 |---|---|
+| A publication carries a version other than the release version | Set the version for every project that declares a publication. There is no allowlist for this one, deliberately: `fat-jar-publication-allowlist` says an artifact may be a fat jar, which says nothing about it carrying a foreign version, and `unspecified` is a defect rather than a choice |
 | The module is a deployable nobody depends on | Stop publishing it |
 | The whole repository is a deployable | `publish-to-nexus: false` |
 | A consumer really resolves this fat jar from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner | Add its artifactId to `fat-jar-publication-allowlist` |

@@ -29,6 +29,13 @@ repo = Path(sys.argv[1])
 allowed = {a.strip() for a in os.environ.get("FAT_JAR_ALLOWLIST", "").split(",") if a.strip()}
 max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
 release_version = os.environ.get("BUILD_VERSION", "").strip()
+# A dry run publishes nothing, so there is no upload for this refusal to save and no reason for
+# it to fail. That is not symmetry for its own sake: consumer repositories run a dry release as
+# a required merge check, and the fat-jar rules below have always run there — so those are
+# already green everywhere, while a NEW refusal firing under dry-run would turn a green required
+# check red on nothing but an octopus-base ref bump, with no Portal step afterwards to refuse
+# the upload the argument for this check rests on.
+dry_run = os.environ.get("DRY_RUN", "").strip().lower() == "true"
 
 published, offenders, wrong_version = [], [], []
 
@@ -75,6 +82,15 @@ for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in
     if reasons and artifact_id not in allowed:
         offenders.append((artifact_id, path.name, size_mb, "; ".join(reasons)))
 
+if not published:
+    print(
+        "::warning title=Nothing to inspect::The publication set is empty, so nothing was "
+        "checked. This step only runs when the repository is supposed to publish to Maven "
+        "Central, so an empty set means the build produced no publication — or produced it "
+        "somewhere other than the inspected repository.",
+        flush=True,
+    )
+
 print(f"Inspected {len(published)} artifact(s) that would be published to Maven Central "
       f"at version {release_version or '(unknown)'} (size limit {max_mb:g} MB):")
 for artifact_id, name, size_mb in published:
@@ -83,7 +99,8 @@ if allowed:
     print(f"Explicitly allowed: {', '.join(sorted(allowed))}")
 
 if wrong_version:
-    print(f"\n::error::Artifact(s) would be published at a version other than {release_version}", flush=True)
+    level, verb = ("warning", "would be") if dry_run else ("error", "would be")
+    print(f"\n::{level}::Artifact(s) {verb} published at a version other than {release_version}", flush=True)
     for coordinate, version in sorted(set(wrong_version)):
         print(f"  {coordinate} carries version '{version}'", file=sys.stderr)
     print(
@@ -93,7 +110,9 @@ if wrong_version:
         "publication, or stop publishing the module.",
         file=sys.stderr,
     )
-    sys.exit(1)
+    if not dry_run:
+        sys.exit(1)
+    print("(dry run — a real release would stop here.)")
 
 if offenders:
     print("\n::error::Artifact(s) unfit for Maven Central would be published", flush=True)

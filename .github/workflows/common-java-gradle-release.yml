@@ -601,7 +601,7 @@ jobs:
             exit 1
           fi
 
-          python3 "$inspector" "$GUARD_REPO"
+          DRY_RUN="${DRY_RUN}" python3 "$inspector" "$GUARD_REPO"
 
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
