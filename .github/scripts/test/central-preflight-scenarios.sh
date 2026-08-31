@@ -14,6 +14,9 @@
 #
 # Usage: bash .github/scripts/test/central-preflight-scenarios.sh   (from the repo root)
 
+# The script under test runs under the SAME interpreter as this suite ($BASH), not whatever
+# `bash` resolves to on PATH: parameter expansion differs between bash 3.2 and bash 5, and a
+# suite that silently ran the newer one would not be testing the interpreter it was invoked with.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$here/../central-preflight.sh"
@@ -43,7 +46,7 @@ run() {
     GITHUB_REPOSITORY="${REPO-octopusden/octopus-external-systems-client}" \
     REPO1_CODES="${REPO1_CODES:-404}" \
     TAG_STATE="${TAG_STATE:-no}" RELEASE_STATE="${RELEASE_STATE:-no}" \
-    bash "$SCRIPT" >"$out" 2>&1
+    "${BASH:-bash}" "$SCRIPT" >"$out" 2>&1
   rc=$?
 
   [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }

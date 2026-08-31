@@ -18,8 +18,21 @@ while [ $# -gt 0 ]; do
 done
 S="${STATE_DIR:?}"
 echo "GET $url" >> "$S/calls.log"
+# The URL shape is asserted, not just matched loosely: a group path built with a
+# backslash-escaped replacement (`${g//./\/}`) yields org\/octopusden on the bash 3.2 that
+# ships with macOS while working on the runner's bash 5, so a stub that matched *maven2*
+# would pass a URL that can only ever 404 in real life. Reject anything that is not a
+# well-formed repo1 coordinate path.
 case "$url" in
-  *repo1.maven.org*|*/maven2/*)
+  https://repo1.maven.org/maven2/*)
+    case "$url" in
+      *\\*|*//*/maven2//*|*' '*)
+        echo "stub curl: malformed repo1 URL: $url" >&2; exit 97 ;;
+    esac
+    # <group path>/<artifact>/<version>/<artifact>-<version>.pom, at least one group segment.
+    if ! printf '%s' "$url" | grep -qE '^https://repo1\.maven\.org/maven2(/[A-Za-z0-9_.-]+)+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.+-]+/[A-Za-z0-9_.+-]+\.pom$'; then
+      echo "stub curl: repo1 URL is not a coordinate path: $url" >&2; exit 97
+    fi
     : > "$out"
     i=$(cat "$S/repo1_i" 2>/dev/null || echo 0); i=$((i+1)); echo "$i" > "$S/repo1_i"
     echo "${REPO1_CODES:-404}" | awk -v n="$i" '{ if (NF>=n) print $n; else print $NF }'

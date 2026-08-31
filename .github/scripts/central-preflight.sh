@@ -104,7 +104,10 @@ echo "::group::Asking Maven Central about $BUILD_VERSION (${#COORDS[@]} coordina
 declare -a PRESENT=() ABSENT=() UNKNOWN=()
 for ga in "${COORDS[@]}"; do
   grp="${ga%%:*}"; art="${ga##*:}"
-  url="$REPO1/${grp//./\/}/$art/$BUILD_VERSION/$art-$BUILD_VERSION.pom"
+  # ${grp//.//} rather than ${grp//./\/}: a backslash-escaped replacement is stripped by
+  # bash 5 but kept literally by bash 3.2, which would build .../org\/octopusden/... and
+  # 404 every coordinate. This form means the same thing to every bash.
+  url="$REPO1/${grp//.//}/$art/$BUILD_VERSION/$art-$BUILD_VERSION.pom"
   code=$(curl "${NET[@]}" -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
   case "$code" in
     200) echo "  PRESENT  $ga"; PRESENT+=("$ga") ;;
