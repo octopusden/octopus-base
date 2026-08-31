@@ -35,7 +35,7 @@ run() {
   if [ "${NO_COORDS_FILE:-}" = "1" ]; then
     coords="$RUNNER_TEMP/absent.txt"
   else
-    printf '%s\n' "${COORDS-org.octopusden.octopus:client:2.0.105}" > "$coords"
+    printf '%s\n' "${COORDS-org.octopusden.octopus:client}" > "$coords"
   fi
 
   local out="$STATE_DIR/out.txt" rc ok=true
@@ -67,8 +67,8 @@ run() {
   fi
 }
 
-TWO_COORDS='org.octopusden.octopus:client:2.0.105
-org.octopusden.octopus:teamcity-client:2.0.105'
+TWO_COORDS='org.octopusden.octopus:client
+org.octopusden.octopus:teamcity-client'
 
 echo "-- the version is free ---------------------------------------------------"
 REPO1_CODES=404 \
@@ -107,14 +107,15 @@ NO_COORDS_FILE=1 \
   run "proceeds when the publication set could not be listed" 0 "preflight skipped" "::error"
 COORDS="" \
   run "proceeds on an empty coordinate list" 0 "preflight skipped" "::error"
-COORDS="org.octopusden.octopus:client:2.0.104" WANT_REPO1_CALLS=0 \
-  run "ignores publications at another version" 0 "No publication at version 2.0.105"
 COORDS='not-a-coordinate
-org.octopusden.octopus:client:2.0.105' REPO1_CODES=404 WANT_REPO1_CALLS=1 \
-  run "ignores an unparsable line and checks the rest" 0 "Ignoring 'not-a-coordinate'"
-COORDS='org.octopusden.octopus:client:2.0.105
-org.octopusden.octopus:client:2.0.105' REPO1_CODES=404 WANT_REPO1_CALLS=1 \
-  run "asks about a duplicated coordinate once" 0 "the version is free"
+org.octopusden.octopus:client' REPO1_CODES=404 WANT_REPO1_CALLS=1 \
+  run "ignores an unusable line and checks the rest" 0 "Ignoring 'not-a-coordinate'"
+COORDS="org.octopusden.octopus:client:2.0.105" WANT_REPO1_CALLS=0 \
+  run "refuses a coordinate that still carries a version" 0 "Ignoring 'org.octopusden.octopus:client:2.0.105'"
+COORDS='org.octopusden.octopus:../../evil' WANT_REPO1_CALLS=0 \
+  run "refuses a coordinate that could escape the repo1 path" 0 "Ignoring"
+COORDS="" \
+  run "proceeds when every coordinate was unusable" 0 "preflight skipped"
 
 echo "-- dry run reports, never fails ------------------------------------------"
 DRY=true REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \

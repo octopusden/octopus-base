@@ -13,9 +13,10 @@
 #
 # Inputs (env):
 #   BUILD_VERSION      version this release would publish (required)
-#   COORDS_FILE        file listing the publications, one `group:artifact:version` per
-#                      line, as produced by the coordinate listing in the release
-#                      workflow (required; may be absent or empty — see below)
+#   COORDS_FILE        file listing the publications this release would upload, one
+#                      `group:artifact` per line, as produced by the coordinate listing in
+#                      the release workflow, which already filters to the release version
+#                      and deduplicates (required; may be absent or empty — see below)
 #   DRY_RUN            "true" => never fail, report only
 #   GITHUB_REPOSITORY  owner/repo, for the "is it recorded on our side" lookup (optional)
 #   GH_TOKEN           token for that lookup (optional)
@@ -45,7 +46,7 @@ COORDS_FILE="${COORDS_FILE:-}"
 DRY_RUN="${DRY_RUN:-false}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}"
 
-REPO1="${REPO1:-https://repo1.maven.org/maven2}"
+REPO1="https://repo1.maven.org/maven2"
 PREFLIGHT_BUDGET="${PREFLIGHT_BUDGET:-90}"
 # HEAD, not GET: only the status code is read, so there is no reason to pull every POM body
 # down — and the workflow comment and developer guide both describe this as a HEAD.
@@ -71,57 +72,46 @@ stop() { # <title> <message>
 }
 
 if [ -z "$COORDS_FILE" ] || [ ! -s "$COORDS_FILE" ]; then
-  echo "::warning title=Central preflight skipped::The publication coordinates could not be listed, so whether $BUILD_VERSION is already on Maven Central is unknown. Continuing — a version that is already there will be rejected at the close step, as it was before this check existed."
+  echo "::warning title=Central preflight skipped::No publication at $BUILD_VERSION was listed — either the listing failed, or this build declares none at that version. Either way there is nothing to ask Central about. Continuing — a version that is already there will be rejected at the close step, as it was before this check existed."
   exit 0
 fi
 
-# Only publications at the version being released can answer the question. A coordinate
-# at another version is not evidence either way, and asking repo1 about it would answer a
-# different question — so drop it, loudly.
+# The pattern is strict on purpose: these values are interpolated into a URL, so a
+# coordinate carrying anything but the characters a Maven group or artifact id may hold —
+# a version still attached, a path traversal, a shell metacharacter — is refused rather
+# than sent. The listing is expected to be already filtered to the release version and
+# deduplicated, so neither is redone here.
 declare -a COORDS=()
 while IFS= read -r line; do
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
   [ -n "$line" ] || continue
-  grp="${line%%:*}"; rest="${line#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
-  if [ -z "$grp" ] || [ -z "$art" ] || [ -z "$ver" ] || [ "$rest" = "$line" ]; then
-    echo "::warning title=Unparsable publication coordinate::Ignoring '$line'."
+  if [[ ! "$line" =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$ ]]; then
+    echo "::warning title=Unusable publication coordinate::Ignoring '$line'."
     continue
   fi
-  if [ "$ver" != "$BUILD_VERSION" ]; then
-    echo "  skip $grp:$art:$ver (not the version being released)"
-    continue
-  fi
-  COORDS+=("$grp:$art")
+  COORDS+=("$line")
 done < "$COORDS_FILE"
 
 if [ "${#COORDS[@]}" -eq 0 ]; then
-  echo "::warning title=Central preflight skipped::No publication at version $BUILD_VERSION was found in the listed coordinates, so there is nothing to check. Continuing."
+  echo "::warning title=Central preflight skipped::None of the listed coordinates was usable, so there is nothing to ask Central about. Continuing."
   exit 0
 fi
-
-# Deduplicated with a read loop rather than `mapfile` so this suite behaves
-# identically when run locally on the bash 3.2 that ships with macOS.
-declare -a UNIQUE=()
-while IFS= read -r ga; do
-  [ -n "$ga" ] || continue
-  UNIQUE+=("$ga")
-done < <(printf '%s\n' "${COORDS[@]}" | sort -u)
-COORDS=("${UNIQUE[@]}")
 
 echo "::group::Asking Maven Central about $BUILD_VERSION (${#COORDS[@]} coordinate(s))"
 declare -a PRESENT=() ABSENT=() UNKNOWN=()
 sweep_start=$SECONDS
 budget_spent=false
-for ga in "${COORDS[@]}"; do
-  # Out of budget: the remaining coordinates are recorded as unanswered rather than asked
-  # about. That lands in the inconclusive branch below, which lets the release run — the
-  # same outcome as any other unanswered question, reached without spending more time.
-  if [ "$budget_spent" = true ] || (( SECONDS - sweep_start >= PREFLIGHT_BUDGET )); then
+for i in "${!COORDS[@]}"; do
+  ga="${COORDS[$i]}"
+  # Out of budget: every coordinate left is recorded as unanswered rather than asked about.
+  # That lands in the inconclusive branch below, which lets the release run — the same
+  # outcome as any other unanswered question, reached without spending more time.
+  if (( SECONDS - sweep_start >= PREFLIGHT_BUDGET )); then
     budget_spent=true
-    echo "  skipped  $ga (the ${PREFLIGHT_BUDGET}s budget for this check is spent)"
-    UNKNOWN+=("$ga")
-    continue
+    echo "  skipped  ${COORDS[*]:$i} (the ${PREFLIGHT_BUDGET}s budget for this check is spent)"
+    UNKNOWN+=("${COORDS[@]:$i}")
+    break
   fi
   grp="${ga%%:*}"; art="${ga##*:}"
   # ${grp//.//} rather than ${grp//./\/}: a backslash-escaped replacement is stripped by

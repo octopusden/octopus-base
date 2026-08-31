@@ -499,16 +499,26 @@ jobs:
           # where the convention plugin and java-gradle-plugin create their publications —
           # including the plugin marker publications. Written to a file rather than stdout so
           # Gradle's own chatter cannot be mistaken for a coordinate.
+          #
+          # Gradle already knows which version it would publish, so it does the filtering:
+          # only publications at the release version reach the file, and the set collapses
+          # duplicates. A publication at any other version is reported and dropped — it is
+          # not evidence either way, and asking Central about it would answer a different
+          # question.
           cat > "$RUNNER_TEMP/list-publications.init.gradle" <<'GRADLE'
           def out = new File(System.getenv('OCTOPUS_COORDS_FILE'))
+          def want = System.getenv('OCTOPUS_RELEASE_VERSION')
           gradle.projectsEvaluated { g ->
               def seen = new LinkedHashSet<String>()
               g.rootProject.allprojects.each { proj ->
                   def publishing = proj.extensions.findByName('publishing')
                   if (publishing == null) return
                   publishing.publications.each { pub ->
-                      if (pub instanceof org.gradle.api.publish.maven.MavenPublication) {
-                          seen << "${pub.groupId}:${pub.artifactId}:${pub.version}".toString()
+                      if (!(pub instanceof org.gradle.api.publish.maven.MavenPublication)) return
+                      if (pub.version == want) {
+                          seen << "${pub.groupId}:${pub.artifactId}".toString()
+                      } else {
+                          println "skipping ${pub.groupId}:${pub.artifactId}:${pub.version} - not the version being released ($want)"
                       }
                   }
               }
@@ -524,7 +534,7 @@ jobs:
           # run. Both are set as `-D` properties rather than command-line flags on purpose:
           # an unknown property is ignored by older Gradle versions, while an unknown flag
           # would fail the invocation on the consumers still on Gradle 7.
-          OCTOPUS_COORDS_FILE="$coords" ./gradlew help -q \
+          OCTOPUS_COORDS_FILE="$coords" OCTOPUS_RELEASE_VERSION="$BUILD_VERSION" ./gradlew help -q \
             --init-script "$RUNNER_TEMP/list-publications.init.gradle" \
             -Dorg.gradle.configureondemand=false \
             -Dorg.gradle.configuration-cache=false \

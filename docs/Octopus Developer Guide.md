@@ -260,7 +260,8 @@ ref — check what the repository publishes today and add the exception in the s
 Maven Central versions are immutable, so a version that is already there can never be published
 again. Before building, the release asks Central whether it already holds the version — one HEAD
 per publication, against coordinates read from Gradle's own publication model at configuration
-time — and refuses to start when **every** coordinate is already published.
+time, filtered there to the publications actually at the release version — and refuses to start
+when **every** coordinate is already published.
 
 The requests are serial, so the sweep is bounded as a whole (90s by default): whatever is still
 unanswered when the budget runs out counts as unanswered, which lets the release run. A repo1
@@ -288,8 +289,9 @@ Everything short of "all coordinates published" lets the release run, and says w
 - a **partial** overlap — some coordinates published, some free — is reported as a warning, not a
   stop. It does not prove this release cannot publish, and blocking it would risk stopping a
   workable release over a publication that the real upload does not send;
-- an unanswered repo1, an unlistable publication set, or publications at another version leave
-  the question open, so the release proceeds exactly as it did before the check existed.
+- an unanswered repo1, an unlistable publication set, or a build that declares no publication
+  at the release version leaves the question open, so the release proceeds exactly as it did
+  before the check existed.
 
 That asymmetry is deliberate: the preflight can only ever save a build that was going to fail,
 so it must never become a new reason a valid release does not run. It is skipped when
