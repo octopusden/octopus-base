@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Fake gh for tag-and-release.sh tests. Only the calls that script makes are answered; anything
+# else is a test bug and fails loudly, so a new API call cannot slip in untested.
+#
+# Every call is appended to $CALL_LOG, one line per invocation, which is what lets the scenarios
+# assert ORDER — that the asset is attached before the release is published, not after. That
+# ordering is not cosmetic: GitHub's immutable releases refuse an asset added after publication.
+#
+# State (env):
+#   REF_STATE      exists | absent | error      the tag ref lookup
+#   REF_SHA        commit the existing tag points at
+#   REF_CREATE     ok | refused | error         creating the ref
+#   REL_STATE      published | draft | absent | error
+#   REL_ASSETS     newline-separated asset names already on the release
+#   ASSETS_READ    ok | error                   listing those assets
+#   UPLOAD         ok | error
+#   GRAPHQL_REF    id | empty                   what wait-for-tag-ref.sh sees
+set -u
+log() { [ -n "${CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$CALL_LOG"; return 0; }
+
+case "${1:-} ${2:-}" in
+  "api graphql")
+    log "graphql"
+    [ "${GRAPHQL_REF:-id}" = "empty" ] || echo "REF_kwDO"
+    exit 0 ;;
+esac
+
+if [ "${1:-}" = "api" ] && [[ "${2:-}" == repos/*/git/ref/tags/* ]]; then
+  log "ref-lookup ${2}"
+  case "${REF_STATE:-absent}" in
+    exists) echo '{"ref":"refs/tags/x"}'; exit 0 ;;
+    absent) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+    *)      echo 'gh: Internal Server Error (HTTP 500)' >&2; exit 1 ;;
+  esac
+fi
+
+if [ "${1:-}" = "api" ] && [[ "${2:-}" == repos/*/commits/* ]]; then
+  log "commit-lookup ${2}"
+  printf '%s\n' "${REF_SHA:?REF_SHA must be set when REF_STATE=exists}"
+  exit 0
+fi
+
+if [ "${1:-}" = "api" ] && [[ "${2:-}" == repos/*/git/refs ]]; then
+  log "ref-create $*"
+  case "${REF_CREATE:-ok}" in
+    ok)      echo "refs/tags/created"; exit 0 ;;
+    refused) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+    *)       echo 'gh: Internal Server Error (HTTP 500)' >&2; exit 1 ;;
+  esac
+fi
+
+if [ "${1:-}" = "release" ]; then
+  case "${2:-}" in
+    view)
+      if [[ "$*" == *--json\ isDraft* ]]; then
+        log "draft-query"
+        [ "${REL_STATE:-absent}" = "draft" ] && echo "true" || echo "false"
+        exit 0
+      fi
+      if [[ "$*" == *--json\ assets* ]]; then
+        log "assets-query"
+        if [ "${ASSETS_READ:-ok}" != "ok" ]; then
+          echo 'gh: Internal Server Error (HTTP 500)' >&2; exit 1
+        fi
+        printf '%s' "${REL_ASSETS:-}" | sed '/^$/d'
+        exit 0
+      fi
+      log "release-view"
+      case "${REL_STATE:-absent}" in
+        published|draft) echo "release ${3:-}"; exit 0 ;;
+        absent)          echo 'release not found' >&2; exit 1 ;;
+        *)               echo 'gh: Internal Server Error (HTTP 500)' >&2; exit 1 ;;
+      esac ;;
+    create)
+      # --verify-tag must be present on every path: without it gh would create the tag itself at
+      # the default branch head, which is the stale-code release the script exists to prevent.
+      [[ "$*" == *--verify-tag* ]] || { echo "stub gh: release create without --verify-tag: $*" >&2; exit 99; }
+      if [[ "$*" == *--draft* ]]; then log "create-draft"; else log "create-published"; fi
+      exit 0 ;;
+    edit)
+      [[ "$*" == *--draft=false* ]] || { echo "stub gh: unexpected release edit: $*" >&2; exit 99; }
+      log "publish"
+      exit 0 ;;
+    upload)
+      log "upload ${4:-${3:-}}"
+      [ "${UPLOAD:-ok}" = "ok" ] && exit 0
+      echo 'gh: could not upload asset (HTTP 502)' >&2
+      exit 1 ;;
+  esac
+fi
+
+echo "stub gh: unexpected invocation: $*" >&2
+exit 99
