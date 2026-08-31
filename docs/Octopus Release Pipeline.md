@@ -17,6 +17,45 @@ failure runbooks in [Administrator Troubleshooting](Octopus%20Administrator%20Tr
 
 ---
 
+## The short version
+
+If you have never touched this pipeline, this section is the whole thing.
+
+Releasing a component means doing **two** separate things, in two different places:
+
+1. **Put the artifacts on Maven Central**, so other projects can depend on them.
+2. **Write down that you did**, so the rest of the org knows: a git tag, a GitHub Release, and a
+   line in a shared list called `octopus-release-log`.
+
+The catch is that these two are not one operation, and they behave differently when something
+goes wrong. Maven Central has **no undo** — a version that lands there stays there forever, and
+the same version can never be uploaded twice. The bookkeeping, by contrast, can be redone as many
+times as you like.
+
+```mermaid
+flowchart LR
+    subgraph publish ["IRREVERSIBLE - Maven Central"]
+        direction LR
+        B["build<br/>+ sign"] --> S["staging"] --> C["close<br/>validate"] --> P["publish<br/>wait for PUBLISHED"]
+    end
+    subgraph record ["REVERSIBLE - record of the release"]
+        direction LR
+        T["tag<br/>vX.Y.Z"] --> R["GitHub<br/>Release"] --> L["registration<br/>repository_dispatch"]
+    end
+    P -->|"only if green"| T
+```
+
+The second half runs **only if the first half finished green**. That one gate causes the failure
+this pipeline is known for: if the upload succeeds and the run dies a minute later, the version is
+on Central, nothing records it, and the next release computes the same version and is refused
+because it already exists. Nothing in the pipeline can repair that on its own.
+
+So when a release goes red, the first question is never "what broke" but **which side of the line
+it broke on**. Everything else in this document follows from that; if you only need to know what a
+given failure left behind, skip to [Failure shapes](#failure-shapes).
+
+---
+
 ## Vocabulary
 
 These words are used precisely throughout. Several of them are routinely confused, and the
@@ -75,34 +114,6 @@ _Avoid_: logging, recording to the log.
 
 ---
 
-## The shape: two transactions, not one
-
-A release is two transactions against two systems, and only the first is irreversible.
-
-```mermaid
-flowchart LR
-    subgraph publish ["irreversible - Maven Central"]
-        direction LR
-        B[build + sign] --> S[staging] --> C[close<br/>validate] --> P[publish<br/>wait for PUBLISHED]
-    end
-    subgraph record ["reversible - record of the release"]
-        direction LR
-        T[tag<br/>vX.Y.Z] --> R[GitHub Release] --> L[registration<br/>repository_dispatch]
-    end
-    P -->|success only| T
-```
-
-Everything left of the boundary is permanent: a version that reaches Maven Central can never be
-withdrawn or republished. Everything right of it is bookkeeping that can be redone any number of
-times.
-
-The right half runs **only if the left half finished green** — `tag-and-release` and
-`register-release-in-log` are gated on the publish job succeeding. This single gate is the origin
-of the pipeline's characteristic failure: if the upload succeeds but the run dies afterwards, the
-version is on Central and nothing records it. See [Failure shapes](#failure-shapes).
-
----
-
 ## Entry points
 
 A consumer repository has two workflows that reach this pipeline.
@@ -116,6 +127,24 @@ It calls `common-check-and-register-release.yml`, which polls Maven Central for 
 then registers the release.
 
 Both funnel into `common-register-release.yml`, the shared tail that fires the dispatch.
+
+```mermaid
+flowchart TD
+    D["repository_dispatch: release<br/>sent by the TeamCity metarunner"] --> RY["consumer<br/>release.yml"]
+    RY --> GR["octopus-base<br/>common-java-gradle-release.yml"]
+    GR --> J1["prepare-build-publish-release<br/>build, publish to Central"]
+    J1 --> J2["tag-and-release<br/>tag + GitHub Release"]
+    J2 -.->|"route A: only when<br/>register-release-immediately"| RR
+    GR -.->|"when the run completes,<br/>whatever the outcome"| WR["workflow_run"]
+    WR --> CY["consumer<br/>check-and-register.yml"]
+    CY -->|"route B: only on<br/>conclusion == success"| CR["octopus-base<br/>common-check-and-register-release.yml"]
+    CR --> POLL["poll repo1 for the artifact<br/>45 attempts x 120s"]
+    POLL --> RR["common-register-release.yml<br/>the shared tail"]
+    RR --> LOG["repository_dispatch: register-release<br/>to octopus-release-log"]
+```
+
+Route A is off by default. Route B is how most components register, which is why a release that
+fails **after** publishing never registers: route B is gated on the release run succeeding.
 
 > `common-check-and-register-release.yml` reads `github.event.workflow_run.*` but declares no
 > `workflow_run` trigger of its own. It is silently coupled to being called from a
@@ -164,6 +193,37 @@ coordinate guard checks. **Leaving it blank silently disables that guard**, with
 
 All deadlines are environment-overridable, which is how the offline scenario suite runs them in
 seconds.
+
+The states being waited on are Sonatype's, not ours. Which wait a run dies in decides how the
+failure is classified, and therefore what an operator may do next:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> PENDING: upload, then close
+    PENDING --> VALIDATING
+    VALIDATING --> VALIDATED
+    VALIDATING --> FAILED
+    VALIDATED --> PUBLISHING: our publish call - irreversible
+    PUBLISHING --> PUBLISHED
+    PUBLISHED --> [*]: resolvable on repo1
+
+    note right of VALIDATING
+        VALIDATE_DEADLINE 1800s
+        giving up here = resumable
+    end note
+    note right of PUBLISHING
+        PUBLISH_DEADLINE 2700s
+        giving up here = resumable,
+        and Central may still finish
+        minutes later - published,
+        untagged, unregistered
+    end note
+    note right of FAILED
+        deterministic: a FAILED deployment
+        can be neither published nor resumed
+    end note
+```
 
 **Phase 3** parses `.purls[]` from the deployment status and refuses to publish if the version
 does not match `BUILD_VERSION`, if any group falls outside the staging profile's namespace, or if
@@ -256,7 +316,26 @@ then registers. This is the default route for most components.
 
 Both routes end in `common-register-release.yml`, which checks whether the version is already in
 the log and, if not, POSTs a `repository_dispatch` to `octopusden/octopus-release-log`. The
-receiving workflow there creates `<component>.txt` if it does not exist and prepends the version.
+receiving workflow there creates the component's file if it does not exist and prepends the
+version.
+
+That last point is worth seeing, because it is counter-intuitive: **the file is created by the
+receiving side**, so a 404 when reading it is the ordinary first-release case and not an error.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant R as release run
+    participant L as octopus-release-log
+    R->>L: GET contents/component.txt
+    L-->>R: 404 - a component released for the first time has no file
+    Note over R: cannot tell whether it is registered,<br/>so register anyway - fail open
+    R->>L: repository_dispatch, event_type register-release
+    L->>L: create component.txt if missing,<br/>prepend the version, commit
+```
+
+The dispatch is asynchronous and the run does not wait for it. Nothing downstream tells the
+release whether the entry landed.
 
 **The duplicate check is an optimisation, not a guarantee, and it is deliberately fail-open.**
 Registration is asynchronous, so two callers can both read the log before either dispatch lands;
