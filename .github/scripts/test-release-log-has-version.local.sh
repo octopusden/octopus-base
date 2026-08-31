@@ -41,6 +41,13 @@ case "${GH_MODE:-ok}" in
     # alphabet check alone lets it through, and BSD base64 decodes the whole quads it has and
     # reports success — yielding a TRUNCATED log that still contains whole version lines.
     truncated) printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | sed 's/.$//' ;;
+    # Output on stdout AND a non-zero exit — a truncated response or a proxy error. The payload
+    # is perfectly good base64 of the real log, so a script that read the substitution's output
+    # without checking the exit status would find the version in it and skip registration.
+    partial)   printf '%s' "$LOG_TEXT" | base64 | tr -d '\n'; exit 1 ;;
+    # Stands in for `gh` not being installed at all: an absent command and a command exiting
+    # 127 are indistinguishable to the caller of a command substitution.
+    notfound)  echo "bash: gh: command not found" >&2; exit 127 ;;
     # Wrapped across lines like the real contents API, so a script that forgot to strip the
     # newlines before decoding fails here rather than in production.
     *)         printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | fold -w 16 ;;
@@ -123,6 +130,21 @@ check "false, rc 0" "false|0" "$(LOG_TEXT=$'2.0.150\n' run 2.0.15)"
 # A log that gained CRLF endings must still match, or the guard would silently never fire.
 echo "case: CRLF log"
 check "true, rc 0" "true|0" "$(LOG_TEXT=$'2.0.16\r\n2.0.15\r\n' run 2.0.15)"
+
+# The last line of a file need not end in a newline. Asked about the final version, so a
+# reader that dropped an unterminated last line would answer "not registered" and re-register
+# the version most likely to be the one just released.
+echo "case: log without a trailing newline"
+check "true, rc 0" "true|0" "$(LOG_TEXT=$'2.0.16\n2.0.15' run 2.0.15)"
+
+# Output on stdout and a non-zero exit at the same time. The version IS in the payload, so
+# this answers false only if the exit status is what decides.
+echo "case: lookup prints a log and still fails"
+check "false, rc 0" "false|0" "$(GH_MODE=partial run 2.0.15)"
+
+# No `gh` at all — nothing to read the log with, so nothing is known, so register.
+echo "case: gh is not installed"
+check "false, rc 0" "false|0" "$(GH_MODE=notfound run 2.0.15)"
 
 echo "--- passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
