@@ -105,7 +105,18 @@ jobs:
 
           helper=.octopus-base-helper/.github/scripts/release-log-has-version.sh
           if [ -f "$helper" ]; then
-            registered="$(bash "$helper" "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"
+            # In an `if` condition, because the helper still refuses unusable ARGUMENTS with a
+            # non-zero exit — an empty repository or module name trips `${1:?}` — and a bare
+            # assignment under `set -e` would kill the step before it writes an answer, which is
+            # the very failure this guard exists to prevent. Safe only because the version, the
+            # one input that must stop the release, is already validated above.
+            #
+            # The failure branch reassigns rather than trusting what the substitution captured:
+            # a helper that failed midway can still have printed something first.
+            if ! registered="$(bash "$helper" "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"; then
+              registered=false
+              echo "::warning title=Duplicate check failed::The release-log helper exited non-zero, so this release is registered without checking whether it already is."
+            fi
           else
             registered=false
             echo "::warning title=Duplicate check skipped::The release-log helper could not be fetched, so this release is registered without checking whether it already is."
