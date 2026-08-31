@@ -10,9 +10,7 @@ Add one only when all three are true:
 2. **Surprising without context** — a future reader will look at the code and wonder why.
 3. **The result of a real trade-off** — there were alternatives and one was picked for reasons.
 
-If any is missing, skip it. An easy-to-reverse decision will simply be reversed; an unsurprising
-one raises no questions; and where there was no alternative, there is nothing to record beyond
-"we did the obvious thing".
+If any is missing, skip it.
 
 These are not a spec. They do not describe how something works — that is what
 [Octopus Release Pipeline](../Octopus%20Release%20Pipeline.md) and the other guides are for. They
