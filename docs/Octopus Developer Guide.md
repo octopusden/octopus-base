@@ -112,17 +112,27 @@ It is also recommended to develop a signle image family from single repository. 
 
 Image tagging should follow the template:
 
-`${DOCKER_REGISTRY_HOST}/${REPOSITORY_OWNER}/${REPOSITORY_NAME}:${BRANCH_OR_RELEASE_TAG}`
+`${DOCKER_REGISTRY_HOST}/${REPOSITORY_OWNER}/${DOCKER_IMAGE}:${BRANCH_OR_RELEASE_VERSION}`
 
 where:
 - *DOCKER_REGISTRY_HOST*: the registry to deploy image to. Currently `ghcr.io`.
-- *REPOSITORY_OWNER*: the owner of the source repository, that is: **octopusden** always.
-- *REPOSITORY_NAME*: the short repository name the image is build from.
-- *BRANCH_OR_RELEASE_TAG*: the branch image is build from for development versions (short name, without `/refs/...` prefixes), or version tag for releases:
+- *REPOSITORY_OWNER*: **octopusden** always — the shared release workflow hardcodes it in the
+  push target, even though it logs in as the repository's own owner.
+- *DOCKER_IMAGE*: the `docker-image` input of the release workflow. It defaults to nothing and is
+  **not** derived from the repository name, so a repository whose image should match its name has
+  to say so explicitly.
+- *BRANCH_OR_RELEASE_VERSION*: the branch the image is built from for development versions (short
+  name, without `/refs/...` prefixes), or the release version:
     - **Have to be free from extra garbage and spaces**. This means:
-        - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
+        - Use `X.Y.Z` format for release versions, where *X, Y* and *Z* are integers. **Do NOT**
+          use extra prefixes like `v.`, `ver.` and so on. Note this is the *image* tag; the git
+          tag the release creates deliberately does carry a `v` prefix (`v2.0.1`).
         - **Do NOT** use space characters in branch names.
-    - The most recent release have to be pushed with `latest` tag suffix in this position also.
+
+The shared release workflow pushes the image under exactly one image tag — the version. It does
+**not** push a `latest` image tag; if a repository needs one, that is a manual convention, not
+something the pipeline provides. (The git tag is a separate thing, always created, and unlike the
+image tag it carries the `v` prefix.)
 
 # Functional Tests In Gradle And CI
 
@@ -138,7 +148,11 @@ where:
 
 ## GitHub Actions reusable workflows
 
-- `common-java-gradle-build` and `common-java-gradle-release` are shared across repositories.
+- `common-java-gradle-build` and `common-java-gradle-release` are shared across repositories, as
+  are their Maven equivalents and `common-check-and-register-release`, `common-register-release`
+  and `common-docker-build-deploy`. Everything matching `common-*.yml` is public API; see
+  [`.github/README.md`](../.github/README.md) for the full contract and
+  [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for what the release ones do.
 - Release workflow should not assume repository-specific task names.
 - Use `skip-extra-tasks` in `common-java-gradle-release` only for tasks that really exist in the target repository.
 
@@ -178,9 +192,14 @@ In practice this is unrestrictive. Releasing the default-branch head, the tip of
 `.github/workflows` are unchanged relative to some branch head all work. What is refused is a
 release of an older commit that heads no branch and whose workflow files have since changed —
 re-releasing a historical commit after a workflow change landed. Cut it from a branch tip
-instead, or see the token options in the `octopus-base` issue this check links to in its error.
+instead, or see the token options in
+[Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md#release-refused-with-built-commit-cannot-be-tagged).
 
 ## Maven Central publishing
+
+> This section describes the **Gradle** release workflow. The Maven one publishes through the
+> OSSRH path and has none of `publish-to-nexus`, the publication guard or `resume-deployment-id`;
+> see [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for the differences.
 
 Publish to Central only what other projects consume as a **Maven dependency**. Deployables
 and internal tooling do not belong there:
@@ -194,7 +213,8 @@ and internal tooling do not belong there:
 Set `publish-to-nexus: false` **and** remove the `MavenPublication` from the build script: the
 input guards the pipeline, the build-script change is what stops a manual
 `./gradlew publishToSonatype`. The release still builds, pushes the docker image and creates the
-GitHub release — only the Sonatype publish and its secret check are skipped. Pair it with
+GitHub release — the Sonatype publish, its secret check, the helper fetch and the publication
+guard described below are skipped. Pair it with
 `register-release-immediately: true`, or the release-log gate waits for an artifact that will
 never appear.
 

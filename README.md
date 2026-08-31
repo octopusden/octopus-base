@@ -10,7 +10,9 @@ Octopus project basic stuff - workflow templates, documentation, etc
 - [Octopus Infrastructure Administrator Guide](docs/Octopus%20Infrastructure%20Administrator%20Guide.md)
 - [Octopus JVM Style Guidelines](docs/Octopus%20JVM%20Style%20Guidelines.md)
 - [Octopus Kotlin Style Guide](docs/Octopus%20Kotlin%20Style%20Guide.md)
+- [Octopus Release Pipeline](docs/Octopus%20Release%20Pipeline.md)
 - [Octopus Tech Debt Register](docs/Octopus%20Tech%20Debt%20Register.md)
+- [Architecture Decision Records](docs/adr/) — why things work the way they do
 
 ## Release octopus-base
 
