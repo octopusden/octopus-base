@@ -119,9 +119,11 @@ A release fails early, before the build, with `Built commit cannot be tagged` an
 workflow file names. Nothing was published.
 
 On repositories still using the older `OctopusCallGitHubAction` metarunner the symptom looks
-completely different: that metarunner only polls for the release tag to appear, so a refused
+completely different: that metarunner only polls for the GitHub *release* to appear — not the tag — so a refused
 release shows up as a wait of `OCTOPUS_RELEASE_TIMEOUT` minutes ending in
-`Number of attempts exceeded`, with no hint of the real cause. The newer
+`Number of attempts exceeded`, with no hint of the real cause. The distinction matters beyond
+this failure: the pipeline has paths that create the tag and then fail before the release, and
+those look identical to a refused release from the metarunner's side. The newer
 `CallGitHubRelease.main.kts` reports the failing run and its reason directly. If you see the
 timeout, open the GitHub Actions run for that release and read the failed step.
 
@@ -151,8 +153,9 @@ with `workflow` scope, or a GitHub App with `Workflows: write`. The Actions `GIT
 never have it, and no personal token has it by default — a classic PAT with `repo` scope alone is
 refused exactly like the workflow is.
 
-At the time of writing the org has **not** decided to provision such a credential; that is the
-open question in the `octopus-base` issue linked from the failing step's error message. So treat
+At the time of writing the org has **not** decided to provision such a credential; that is an
+open question in `octopus-base` — the failing step's error message states the rule and the two
+workable remedies, but carries no issue link. So treat
 "create the tag manually" as requiring an administrator to mint a suitable token first. Do not
 plan a release around this recovery — prefer options 1 and 2 above.
 
