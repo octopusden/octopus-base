@@ -1,0 +1,29 @@
+name: Test release-log-has-version script
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/release-log-has-version.sh'
+      - '.github/scripts/test-release-log-has-version.local.sh'
+      - '.github/workflows/test-release-log-has-version.yml'
+      - '.github/workflows/common-register-release.yml'
+  workflow_dispatch:
+
+# Same shape as test-wait-for-tag-ref.yml — synthetic cases with explicit assertions, no real
+# repository and no network — but the cases are NOT copied in here. They live in the local
+# runner and CI executes that same file, because the runner builds its own stub `gh` and needs
+# nothing a runner has that a laptop does not. A second copy could only drift out of step with
+# the first, and this guard has already shipped one silent regression.
+
+jobs:
+  test:
+    name: test release-log-has-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The cases run the script under `bash -e`, the way Actions invokes a `run:` block. That
+      # is the whole point: the implementation this replaced was correct under any other shell
+      # and died on the first 404 under that one.
+      - name: Run cases
+        run: bash .github/scripts/test-release-log-has-version.local.sh
