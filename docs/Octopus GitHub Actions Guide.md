@@ -42,7 +42,7 @@ name: Gradle Release
 
 on:
   repository_dispatch:
-    types: release
+    types: [ release ]
 
 jobs:
   build:

@@ -129,9 +129,10 @@ where:
           tag the release creates deliberately does carry a `v` prefix (`v2.0.1`).
         - **Do NOT** use space characters in branch names.
 
-The shared release workflow pushes exactly one tag, the version. It does **not** push `latest`;
-if a repository needs a `latest` tag, that is a manual convention, not something the pipeline
-provides.
+The shared release workflow pushes the image under exactly one image tag — the version. It does
+**not** push a `latest` image tag; if a repository needs one, that is a manual convention, not
+something the pipeline provides. (The git tag is a separate thing, always created, and unlike the
+image tag it carries the `v` prefix.)
 
 # Functional Tests In Gradle And CI
 
