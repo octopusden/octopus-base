@@ -42,7 +42,7 @@ flowchart LR
         direction LR
         T["tag<br/>vX.Y.Z"] --> R["GitHub<br/>Release"] --> L["registration<br/>repository_dispatch"]
     end
-    PF -->|"only if the version is free"| B
+    PF -->|"unless every coordinate<br/>is already published"| B
     P -->|"only if green"| T
 ```
 
@@ -158,19 +158,30 @@ The job checks out (the default ref for `public`, `commit-hash` for `hybrid`), v
 built commit can be tagged **before** building anything, sets up Java, asks Maven Central whether
 this version is already published, and only then runs `./gradlew build`.
 
-**The Central preflight** (`.github/scripts/central-preflight.sh`, added in #198) lists the
-coordinates the upload would send — from Gradle's publication model at *configuration* time, no
-compilation — and HEADs each one on repo1. It stops the release on exactly one verdict: **every**
-coordinate is already published, which means the close step provably cannot succeed. Everything
-else warns and proceeds — a partial overlap, an unanswered repo1, an unlistable publication set,
-an exhausted budget, a missing helper. The asymmetry is deliberate: the check can only ever save a
-build that was going to fail, so it must never become a new reason a valid release does not run.
-It is the exact opposite of the taggability check beside it, which fails closed.
+**The Central preflight** stops the release on exactly one verdict: **every** coordinate the
+upload would send is already published, which means the close step provably cannot succeed.
+Everything else warns and proceeds — a partial overlap, an unanswered repo1, an unlistable
+publication set, either ceiling running out, a missing helper. The asymmetry is deliberate: the
+check can only ever save a build that was going to fail, so it must never become a new reason a
+valid release does not run. It is the exact opposite of the taggability check beside it, which
+fails closed.
+
+It is three files, and they fail in different ways — worth knowing, because the way this check
+breaks is by quietly doing nothing rather than by going red:
+
+| File | Does |
+|---|---|
+| `central-preflight-step.sh` | Runs the listing under a **300s** ceiling, then hands the result over. The listing pays cold daemon start and full configuration, so this is the larger of the two costs — about all of the ~13s measured on the canary. |
+| `list-publications.init.gradle` | Produces the coordinates from Gradle's publication model at *configuration* time — no compilation. Filters to the release version and applies `-Pnexus=true`, so the set matches what the real upload sends. |
+| `central-preflight.sh` | HEADs each coordinate on repo1 within a **90s** budget for the sweep as a whole, and decides. |
+
+Both ceilings fall open: exceeding either is a warning, never a failure.
 
 > When it does stop, it separates the two situations Sonatype's identical error string conflates:
-> the previous release published *and* was tagged (release the next version), versus published but
-> never recorded (that is [#189](https://github.com/octopusden/octopus-base/issues/189) — a
-> recovery, not a re-dispatch). In dry-run every stop degrades to a warning.
+> the previous release published *and* was tagged — release the next version, after checking the
+> release log, since the tag does not prove the entry exists — versus published but never recorded
+> (that is [#189](https://github.com/octopusden/octopus-base/issues/189) — a recovery, not a
+> re-dispatch). In dry-run every stop degrades to a warning.
 
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
@@ -389,7 +400,7 @@ the release state.
 |---|:---:|:---:|:---:|:---:|---|
 | Guard rejects the upload | — | — | — | — | Yes — nothing left anywhere. Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
-| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. Release the next version — or, if the tag or release is missing, run the #189 recovery. |
+| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. If the tag or release is missing, run the #189 recovery. Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
