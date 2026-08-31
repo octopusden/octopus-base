@@ -1,13 +1,11 @@
 # Octopus Release Pipeline
 
-How a component gets released: what runs, in what order, what each part guarantees, and what
-state a failure leaves behind.
-
-This describes the **shared** pipeline in `octopus-base` — the `common-*` reusable workflows a
-consumer repository calls. It is a reference for the pipeline as a whole; task-oriented recipes
-live in the [Developer Guide](Octopus%20Developer%20Guide.md) (what to publish to Maven Central,
-how to keep a repository or a module off it, which commit a hybrid release can be cut from) and
-failure runbooks in [Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md).
+What runs when a component is released, in what order, what each part guarantees, and what state
+a failure leaves behind — for the **shared** pipeline, the `common-*` reusable workflows a consumer
+repository calls. Task-oriented recipes live in the
+[Developer Guide](Octopus%20Developer%20Guide.md) (what to publish to Maven Central, how to keep a
+repository or a module off it, which commit a hybrid release can be cut from) and failure runbooks
+in [Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md).
 
 > **Gradle and Maven are not the same pipeline.** Everything below describes
 > `common-java-gradle-release.yml` unless stated otherwise. `common-java-maven-release.yml`
@@ -83,14 +81,11 @@ This is what has a *deployment state* — `PENDING`, `VALIDATING`, `VALIDATED`, 
 `PUBLISHED`, `FAILED`. It belongs to Sonatype, not to us.
 _Avoid_: publication, upload.
 
-**Deployment state**
-: The state above. Distinct from the release state, and this distinction matters: a deployment
-can reach `PUBLISHED` while the release is recorded nowhere.
-
 **Release state**
-: Ours, and not a single value. It is four independent facts in four systems: the version is on
-Maven Central; a `vX.Y.Z` tag exists; a GitHub Release exists; a line exists in the release log.
-Any combination is reachable, and the pipeline cannot always reconcile them.
+: Ours, and — unlike a deployment state — not a single value. It is four independent facts in four
+systems: the version is on Maven Central; a `vX.Y.Z` tag exists; a GitHub Release exists; a line
+exists in the release log. Any combination is reachable, the pipeline cannot always reconcile
+them, and a deployment can reach `PUBLISHED` while the release is recorded nowhere.
 
 **Publish classification**
 : The pipeline's own verdict on a failed publish — `published`, `deterministic`, `transient`,
@@ -388,8 +383,6 @@ the caller adds a second approval gate.
 ---
 
 ## Behaviour that surprises people
-
-Collected because each has cost someone time.
 
 - **`docker-image` pushes to a hardcoded owner** — `ghcr.io/octopusden/<image>:<version>` — while
   the login uses the repository's own owner.
