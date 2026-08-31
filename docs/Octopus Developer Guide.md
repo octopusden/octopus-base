@@ -304,8 +304,9 @@ when **every** coordinate is already published.
 
 Both halves are bounded, because a check whose whole justification is being cheaper than the
 build it replaces must not be able to become expensive. The coordinate listing gets 300s — it
-pays cold daemon start and full configuration; measured at 9s on the canary. The HEAD sweep
-gets 90s in total, and whatever is still unanswered when that runs out counts as unanswered,
+pays cold daemon start and full configuration, and is essentially the whole cost: on the canary
+the sweep measured 0.09s and 0.07s against step totals of 9s and 13s. The HEAD sweep gets 90s in
+total, and whatever is still unanswered when that runs out counts as unanswered,
 which lets the release run. Exceeding either is a warning, never a failure.
 
 That case used to surface at the very end, at `closeSonatypeStagingRepository`, after a full
