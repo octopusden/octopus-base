@@ -274,3 +274,54 @@ The allowlist keeps a legitimate exception explicit and reviewed instead of sile
 The guard runs in dry-run too, so `dry-run: true` rehearses it before a real release. Callers
 pin `octopus-base` by tag, so the guard starts applying to a repository only when it bumps that
 ref — check what the repository publishes today and add the exception in the same PR as the bump.
+
+### The already-published preflight
+
+Maven Central versions are immutable, so a version that is already there can never be published
+again. Before building, the release asks Central whether it already holds the version — one HEAD
+per publication, against coordinates read from Gradle's own publication model at configuration
+time, filtered there to the publications actually at the release version — and refuses to start
+when **every** coordinate is already published.
+
+Both halves are bounded, because a check whose whole justification is being cheaper than the
+build it replaces must not be able to become expensive. The coordinate listing gets 300s — it
+pays cold daemon start and full configuration; measured at 9s on the canary. The HEAD sweep
+gets 90s in total, and whatever is still unanswered when that runs out counts as unanswered,
+which lets the release run. Exceeding either is a warning, never a failure.
+
+That case used to surface at the very end, at `closeSonatypeStagingRepository`, after a full
+build, sign, stage and upload, as:
+
+```
+Deployment reached an unexpected status: Failed
+  - Component with package url: 'pkg:maven/<group>/<artifact>@<version>' already exists
+```
+
+The preflight replaces that with a statement of the situation and what to do about it. Two
+situations look identical in Sonatype's message and are not:
+
+| What the preflight finds | What it means | What to do |
+|---|---|---|
+| Published, and tag + GitHub release exist | The previous release published and was tagged; this dispatch resolved a stale version | Release the next version — but check `octopus-release-log` for the published version first. Registration is a separate job (`register-release-immediately`, off by default) and then a separate run gated on the release having succeeded, so the entry can be missing while the tag and release are present; #189 records a version left exactly like that. From internal CI, the manual release build takes its version from the last **finished** compile build, which can predate the previous release's bump |
+| Published, but the tag or release is missing | An earlier run published and died before recording it | Recovery, not a re-dispatch — see `octopus-base#189`. Tag the commit that run **built** (its log names it; the current head usually is not it), create the release, register it in `octopus-release-log` |
+
+Everything short of "all coordinates published" lets the release run, and says why in the log:
+
+- a **partial** overlap — some coordinates published, some free — is reported as a warning, not a
+  stop. It does not prove this release cannot publish, and blocking it would risk stopping a
+  workable release over a publication that the real upload does not send;
+- an unanswered repo1, an unlistable publication set, or a build that declares no publication
+  at the release version leaves the question open, so the release proceeds exactly as it did
+  before the check existed.
+
+That asymmetry is deliberate: the preflight can only ever save a build that was going to fail,
+so it must never become a new reason a valid release does not run. It is skipped when
+`publish-to-nexus: false` (nothing goes to Central), when `resume-deployment-id` is set (the
+version is already staged on purpose), and when the `octopus-base` helper scripts are not on
+disk — the fetch that brings them is required for a real release, which cannot publish without
+them, and tolerated on a dry run, which uses them for nothing else. Under `dry-run: true` the
+check reports its verdict as a warning without failing.
+
+The coordinate listing has been exercised on Gradle 7.6.4, 8.14.3 and 9.4.1, on single- and
+multi-project builds, and with the configuration cache and configure-on-demand switched on in
+`gradle.properties` — the release passes both off as `-D` properties, which override the file.

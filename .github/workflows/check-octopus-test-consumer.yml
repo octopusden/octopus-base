@@ -60,6 +60,16 @@ jobs:
         working-directory: gradle-quality-plugin
         run: ./gradlew build test --no-daemon --stacktrace
 
+      # The preflight's Gradle half cannot be stubbed, and it is the half that decides
+      # whether the check does anything at all: a silently empty coordinate file disables
+      # the preflight without failing anything. Runs here rather than in workflow-lint
+      # because this is the job that already has Java and Gradle. The fixture is this
+      # repository's own plugin build, so the marker publication that java-gradle-plugin
+      # creates in its own afterEvaluate is really exercised.
+      - name: Publication listing against a real build
+        shell: bash
+        run: bash .github/scripts/test/list-publications-fixture.sh
+
   quality:
     name: quality
     runs-on: ubuntu-latest
@@ -131,6 +141,18 @@ jobs:
       - name: Released-version resolution scenarios
         shell: bash
         run: bash .github/scripts/test/resolve-released-version-scenarios.sh
+      # The preflight's contract is asymmetric and easy to break by accident: only a
+      # fully published version may stop a release, and every inconclusive answer must
+      # let it run. These scenarios pin both halves.
+      - name: Central preflight scenarios
+        shell: bash
+        run: bash .github/scripts/test/central-preflight-scenarios.sh
+      # The step body around the preflight: a coordinate listing that fails, stalls or
+      # writes nothing must leave the release running and say so. Driven by a fake Gradle
+      # wrapper, so those paths are reachable without a build.
+      - name: Preflight step scenarios
+        shell: bash
+        run: bash .github/scripts/test/preflight-step-scenarios.sh
 
   security:
     name: security
