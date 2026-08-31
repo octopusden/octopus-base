@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#
+# Scenario tests for .github/scripts/central-preflight.sh.
+#
+# Maven Central and the GitHub API are replaced by the stubs in ./preflight (put on
+# PATH), so every verdict — including the ones that need a specific mix of published and
+# free coordinates, or a lookup that fails without saying 404 — runs offline and
+# deterministically.
+#
+# The property under test is asymmetric and worth stating: the ONLY outcome that may stop
+# a release is "every coordinate the upload would send is already on Central". Everything
+# inconclusive must proceed, because this check exists to save a doomed build, never to
+# become a new way for a workable release not to run.
+#
+# Usage: bash .github/scripts/test/central-preflight-scenarios.sh   (from the repo root)
+
+set -uo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT="$here/../central-preflight.sh"
+[ -f "$SCRIPT" ] || { echo "central-preflight.sh not found next to the test dir"; exit 1; }
+
+pass=0; fail=0
+
+# run <name> <expected-rc> <must-match> [<must-not-match>]
+# Scenario knobs are passed by the caller as environment variables (see the stubs).
+run() {
+  local name="$1" erc="$2" want="$3" nowant="${4:-}"
+  export STATE_DIR RUNNER_TEMP
+  STATE_DIR="$(mktemp -d)"; RUNNER_TEMP="$(mktemp -d)"
+
+  local coords="$RUNNER_TEMP/coords.txt"
+  if [ "${NO_COORDS_FILE:-}" = "1" ]; then
+    coords="$RUNNER_TEMP/absent.txt"
+  else
+    printf '%s\n' "${COORDS-org.octopusden.octopus:client:2.0.105}" > "$coords"
+  fi
+
+  local out="$STATE_DIR/out.txt" rc ok=true
+  PATH="$here/preflight:$PATH" env \
+    BUILD_VERSION="${VERSION:-2.0.105}" \
+    COORDS_FILE="$coords" \
+    DRY_RUN="${DRY:-false}" \
+    GITHUB_REPOSITORY="${REPO-octopusden/octopus-external-systems-client}" \
+    REPO1_CODES="${REPO1_CODES:-404}" \
+    TAG_STATE="${TAG_STATE:-no}" RELEASE_STATE="${RELEASE_STATE:-no}" \
+    bash "$SCRIPT" >"$out" 2>&1
+  rc=$?
+
+  [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }
+  [ -n "$want" ] && ! grep -qE "$want" "$out" && { ok=false; echo "  missing: $want"; }
+  [ -n "$nowant" ] && grep -qE "$nowant" "$out" && { ok=false; echo "  unexpected: $nowant"; }
+  if [ -n "${WANT_REPO1_CALLS:-}" ]; then
+    local n; n=$(grep -c 'maven2' "$STATE_DIR/calls.log" 2>/dev/null || echo 0)
+    [ "$n" = "$WANT_REPO1_CALLS" ] || { ok=false; echo "  repo1 calls=$n expected=$WANT_REPO1_CALLS"; }
+  fi
+  if $ok; then echo "PASS  $name"; pass=$((pass+1)); else
+    echo "FAIL  $name"; fail=$((fail+1)); sed 's/^/    | /' "$out"
+  fi
+}
+
+TWO_COORDS='org.octopusden.octopus:client:2.0.105
+org.octopusden.octopus:teamcity-client:2.0.105'
+
+echo "-- the version is free ---------------------------------------------------"
+REPO1_CODES=404 \
+  run "starts the release when Central holds nothing" 0 "the version is free" "::error"
+COORDS="$TWO_COORDS" REPO1_CODES="404 404" WANT_REPO1_CALLS=2 \
+  run "checks every coordinate, not just the first" 0 "the version is free" "::error"
+
+echo "-- the version is fully published (the only stopping verdict) -------------"
+REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
+  run "stops when published and already recorded (#195)" 1 "Version already released" "octopus-base#189"
+REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
+  run "classifies the stop as deterministic" 1 "RELEASE_PUBLISH_CLASS=deterministic"
+REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
+  run "says the retry cannot help" 1 "RELEASE_PUBLISH_RETRYABLE=false"
+REPO1_CODES=200 TAG_STATE=no RELEASE_STATE=no \
+  run "stops with the recovery when published but unrecorded (#189)" 1 "published but not recorded.*|octopus-base#189"
+REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=no \
+  run "treats a tag without a release as unrecorded" 1 "octopus-base#189"
+REPO1_CODES=200 TAG_STATE=fail RELEASE_STATE=yes \
+  run "does not read a failed tag lookup as absent" 1 "could not be determined" "published but not recorded"
+COORDS="$TWO_COORDS" REPO1_CODES="200 200" TAG_STATE=yes RELEASE_STATE=yes \
+  run "stops only after every coordinate answers present" 1 "all 2 coordinate"
+
+echo "-- inconclusive: must proceed --------------------------------------------"
+COORDS="$TWO_COORDS" REPO1_CODES="200 404" \
+  run "proceeds on a partial overlap, saying why" 0 "partially on Maven Central" "::error"
+REPO1_CODES=500 \
+  run "proceeds when Central does not answer" 0 "inconclusive" "::error"
+COORDS="$TWO_COORDS" REPO1_CODES="200 000" \
+  run "proceeds when one coordinate is unanswered, even with another published" 0 "inconclusive" "::error"
+NO_COORDS_FILE=1 \
+  run "proceeds when the publication set could not be listed" 0 "preflight skipped" "::error"
+COORDS="" \
+  run "proceeds on an empty coordinate list" 0 "preflight skipped" "::error"
+COORDS="org.octopusden.octopus:client:2.0.104" WANT_REPO1_CALLS=0 \
+  run "ignores publications at another version" 0 "No publication at version 2.0.105"
+COORDS='not-a-coordinate
+org.octopusden.octopus:client:2.0.105' REPO1_CODES=404 WANT_REPO1_CALLS=1 \
+  run "ignores an unparsable line and checks the rest" 0 "Ignoring 'not-a-coordinate'"
+COORDS='org.octopusden.octopus:client:2.0.105
+org.octopusden.octopus:client:2.0.105' REPO1_CODES=404 WANT_REPO1_CALLS=1 \
+  run "asks about a duplicated coordinate once" 0 "the version is free"
+
+echo "-- dry run reports, never fails ------------------------------------------"
+DRY=true REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
+  run "warns instead of stopping under dry-run" 0 "a real release would stop here" "::error"
+
+echo "-- no GitHub context -----------------------------------------------------"
+REPO='' REPO1_CODES=200 \
+  run "still stops without a repository to ask about the tag" 1 "could not be determined"
+
+echo
+echo "passed=$pass failed=$fail"
+[ "$fail" -eq 0 ]

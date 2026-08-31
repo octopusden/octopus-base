@@ -131,6 +131,12 @@ jobs:
       - name: Released-version resolution scenarios
         shell: bash
         run: bash .github/scripts/test/resolve-released-version-scenarios.sh
+      # The preflight's contract is asymmetric and easy to break by accident: only a
+      # fully published version may stop a release, and every inconclusive answer must
+      # let it run. These scenarios pin both halves.
+      - name: Central preflight scenarios
+        shell: bash
+        run: bash .github/scripts/test/central-preflight-scenarios.sh
 
   security:
     name: security

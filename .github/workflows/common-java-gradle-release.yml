@@ -424,6 +424,122 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v5
 
+      # The release helpers live in octopus-base, but this reusable workflow runs
+      # against the CONSUMER's checkout — so fetch them from the very commit THIS
+      # workflow file comes from (`job.workflow_sha`), keeping script and workflow
+      # versions in lockstep.
+      #
+      # Fetched here, before the build, because the Central preflight below is the
+      # first helper user. Everything that follows — the fat-jar guard, the upload, the
+      # Portal publish — therefore also runs with the helpers already on disk: a failure
+      # in the fetch itself can no longer happen after artifacts are staged, where it
+      # would leave an orphaned deployment that nothing can classify and invite a plain
+      # re-run that uploads the version twice.
+      #
+      # It cannot move any earlier: the checkout of the consumer's own repository cleans
+      # its target directory, so a helper fetched before it would be wiped.
+      #
+      # The guard requires a full commit SHA: an empty or non-SHA ref would make
+      # actions/checkout silently resolve a branch/tag (its default branch), i.e. run
+      # a different script than the pinned workflow — the very skew this prevents.
+      - name: Resolve Portal publish helper ref
+        id: helper-ref
+        if: ${{ inputs.publish-to-nexus }}
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
+
+      - name: Fetch Portal publish helper
+        if: ${{ inputs.publish-to-nexus }}
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-helper
+          sparse-checkout: .github/scripts
+
+      # Maven Central versions are immutable, so a version that is already there can
+      # never be published again — and until this step existed the release found that out
+      # only at the very end, at `closeSonatypeStagingRepository`, after a full build,
+      # sign, stage and upload, reported as "Deployment reached an unexpected status:
+      # Failed" with `already exists` buried underneath (#195).
+      #
+      # Ask Maven Central up front instead. The coordinates come from Gradle's own
+      # publication model, listed at CONFIGURATION time — no compilation, no signing, no
+      # network beyond the repo1 HEADs — so this costs seconds against a build of minutes.
+      # `-Pnexus=true` and the version properties are passed exactly as the real upload
+      # passes them, because some consumers shape their publications on those: without
+      # them this could inspect a different artifact set than the one that gets uploaded.
+      #
+      # Everything here is deliberately fail-open — see the helper's header. This step can
+      # only save a build that was going to fail anyway, so an unlistable publication set
+      # or an unreachable repo1 warns and continues rather than blocking a release that
+      # would have succeeded. Skipped when resuming a deployment: there the version is
+      # already staged on purpose.
+      - name: Preflight — is this version already on Maven Central?
+        if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          coords="$RUNNER_TEMP/publication-coords.txt"
+          rm -f "$coords"
+
+          # projectsEvaluated fires after every project's `afterEvaluate` has run, which is
+          # where the convention plugin and java-gradle-plugin create their publications —
+          # including the plugin marker publications. Written to a file rather than stdout so
+          # Gradle's own chatter cannot be mistaken for a coordinate.
+          cat > "$RUNNER_TEMP/list-publications.init.gradle" <<'GRADLE'
+          def out = new File(System.getenv('OCTOPUS_COORDS_FILE'))
+          gradle.projectsEvaluated { g ->
+              def seen = new LinkedHashSet<String>()
+              g.rootProject.allprojects.each { proj ->
+                  def publishing = proj.extensions.findByName('publishing')
+                  if (publishing == null) return
+                  publishing.publications.each { pub ->
+                      if (pub instanceof org.gradle.api.publish.maven.MavenPublication) {
+                          seen << "${pub.groupId}:${pub.artifactId}:${pub.version}".toString()
+                      }
+                  }
+              }
+              out.withWriter('UTF-8') { w -> seen.each { w.writeLine(it) } }
+          }
+          GRADLE
+
+          # `help` is the cheapest task that still configures the whole project tree.
+          # Two things are pinned off, both because they would skip configuration and take
+          # the listing with it: configure-on-demand would leave unbuilt subprojects
+          # unevaluated, so their publications would silently go unchecked, and a
+          # configuration-cache HIT skips configuration entirely, so the hook would never
+          # run. Both are set as `-D` properties rather than command-line flags on purpose:
+          # an unknown property is ignored by older Gradle versions, while an unknown flag
+          # would fail the invocation on the consumers still on Gradle 7.
+          OCTOPUS_COORDS_FILE="$coords" ./gradlew help -q \
+            --init-script "$RUNNER_TEMP/list-publications.init.gradle" \
+            -Dorg.gradle.configureondemand=false \
+            -Dorg.gradle.configuration-cache=false \
+            -Pnexus=true -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" \
+            > "$RUNNER_TEMP/list-publications.log" 2>&1 \
+            || echo "::warning title=Publication listing failed::Could not list the publication coordinates (see below); the preflight will report that it could not check."
+
+          if [ -s "$coords" ]; then
+            echo "Publications this release would publish:"
+            sed 's/^/  /' "$coords"
+          else
+            tail -n 40 "$RUNNER_TEMP/list-publications.log" || true
+          fi
+
+          COORDS_FILE="$coords" bash .octopus-base-helper/.github/scripts/central-preflight.sh
+
       # gradle build
       - name: Gradle build
         if: inputs.docker-image == ''
@@ -451,41 +567,6 @@ jobs:
         env:
           DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
-
-      # The publish helper lives in octopus-base, but this reusable workflow runs
-      # against the CONSUMER's checkout — so fetch the script from the very commit
-      # THIS workflow file comes from (`job.workflow_sha`), keeping script and
-      # workflow versions in lockstep.
-      #
-      # Both steps deliberately run BEFORE the upload: once artifacts are staged a
-      # failure here would leave an orphaned deployment that nothing can classify,
-      # and the operator's natural plain re-run would upload the version twice.
-      #
-      # The guard requires a full commit SHA: an empty or non-SHA ref would make
-      # actions/checkout silently resolve a branch/tag (its default branch), i.e. run
-      # a different script than the pinned workflow — the very skew this prevents.
-      - name: Resolve Portal publish helper ref
-        id: helper-ref
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
-        env:
-          HELPER_SHA: ${{ job.workflow_sha }}
-        run: |
-          set -euo pipefail
-          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
-            exit 1
-          fi
-          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
-          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
-
-      - name: Fetch Portal publish helper
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
-        uses: actions/checkout@v4
-        with:
-          repository: octopusden/octopus-base
-          ref: ${{ steps.helper-ref.outputs.sha }}
-          path: .octopus-base-helper
-          sparse-checkout: .github/scripts
 
       # Maven Central is for artifacts other projects consume as a DEPENDENCY. A Spring Boot
       # executable jar or a shadow/uber jar there is usually unintended — Gradle module metadata

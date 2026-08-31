@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Fake curl for central-preflight.sh tests. Only the repo1 lookup the script makes is
+# answered; anything else is a test bug and fails loudly.
+#
+#   REPO1_CODES  space-separated HTTP codes, consumed one per call, last one repeating.
+#                A sequence is what lets a scenario say "first coordinate published,
+#                second free" — the partial case the script must NOT stop on.
+set -u
+out=/dev/null; url=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w|-H|--connect-timeout|--max-time) shift 2 ;;
+    -sS|-s|-S) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+S="${STATE_DIR:?}"
+echo "GET $url" >> "$S/calls.log"
+case "$url" in
+  *repo1.maven.org*|*/maven2/*)
+    : > "$out"
+    i=$(cat "$S/repo1_i" 2>/dev/null || echo 0); i=$((i+1)); echo "$i" > "$S/repo1_i"
+    echo "${REPO1_CODES:-404}" | awk -v n="$i" '{ if (NF>=n) print $n; else print $NF }'
+    ;;
+  *)
+    echo "stub curl: unexpected URL: $url" >&2
+    exit 99
+    ;;
+esac
