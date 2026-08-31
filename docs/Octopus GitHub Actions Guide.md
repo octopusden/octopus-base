@@ -33,9 +33,11 @@ strict `X.Y.Z`.
 
 ## Calling the shared release workflow
 
-A consumer does not write the release steps. It calls the reusable workflow, and everything —
-checkout, build, signing, publication, tagging, registration — happens inside it. A complete
-release caller is about fifteen lines:
+A consumer does not write the release steps. It calls the reusable workflow, and checkout, build,
+signing, publication and tagging all happen inside it. **Registration is the exception**: with the
+defaults it does *not* run here — `register-release-immediately` is `false`, so the release log
+entry is made by a second, separate caller shown below. Setting that input to `true` moves
+registration into this run instead. A complete release caller is about fifteen lines:
 
 ```yaml
 name: Gradle Release
@@ -59,8 +61,10 @@ Two things about the calling job are easy to get wrong:
 
 - **Do not set `runs-on:`.** The runner and the `Prod` environment are set inside the reusable
   workflow. Declaring `environment:` in the caller adds a second approval gate.
-- **`secrets: inherit` is required.** `OCTOPUS_GITHUB_TOKEN` reaches the registration step only
-  through it, and nothing at the contract level will tell you if it is missing.
+- **`secrets: inherit` is required — on whichever caller registers.** `OCTOPUS_GITHUB_TOKEN`
+  reaches the registration step only through it, and nothing at the contract level will tell you
+  if it is missing. With the defaults that caller is the `workflow_run` one below, so both need
+  it: this one for Sonatype and GPG, that one for the registration token.
 
 Registration is a separate caller, triggered by the release workflow finishing:
 
