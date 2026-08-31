@@ -42,10 +42,15 @@ run() {
   } > "$ws/gradlew"
   chmod +x "$ws/gradlew"
 
+  # Unset and empty are different inputs here, and it is the UNSET one that used to exit 1
+  # under `set -u`. So the assignment is OMITTED rather than emptied — `env -u VAR VAR=x`
+  # would set it again, the assignment being processed after the -u.
+  local -a envs=(-u BUILD_VERSION -u HELPER_DIR)
+  [ "${UNSET_BUILD_VERSION:-}" = "1" ] || envs+=("BUILD_VERSION=${VERSION:-2.0.105}")
+  [ "${UNSET_HELPER_DIR:-}" = "1" ] || envs+=("HELPER_DIR=${HELPER_OVERRIDE:-$scripts}")
+
   local out="$STATE_DIR/out.txt" rc ok=true
-  ( cd "$ws" && PATH="$here/preflight:$PATH" env \
-      BUILD_VERSION="${VERSION:-2.0.105}" \
-      HELPER_DIR="${HELPER_OVERRIDE:-$scripts}" \
+  ( cd "$ws" && PATH="$here/preflight:$PATH" env "${envs[@]}" \
       LISTING_TIMEOUT="${TIMEOUT:-300}" \
       DRY_RUN=false GITHUB_REPOSITORY= \
       REPO1_CODES="${REPO1_CODES:-404}" \
@@ -110,6 +115,16 @@ GRADLEW='printf "" > "$OCTOPUS_COORDS_FILE"' \
 echo "-- an incomplete helper checkout ------------------------------------------"
 HELPER_OVERRIDE="$(mktemp -d)" GRADLEW="$WRITES_ONE" \
   run "proceeds when the helper directory is missing its scripts" 0 "preflight skipped" "::error"
+
+echo "-- inputs the caller always sets, and must not stop a release anyway ------"
+# Neither is reachable from the workflow — HELPER_DIR is a literal there and BUILD_VERSION is
+# a job-level env, so it is set-but-possibly-empty. That was equally true of the
+# `BUILD_VERSION:?` that came out of central-preflight.sh, and it came out because "only the
+# preflight's verdict may stop a release" is worth being literally true.
+UNSET_HELPER_DIR=1 GRADLEW="$WRITES_ONE" WANT_REPO1_CALLS=0 \
+  run "proceeds when no helper directory is passed" 0 "No helper directory was passed" "::error"
+UNSET_BUILD_VERSION=1 GRADLEW="$WRITES_ONE" WANT_REPO1_CALLS=0 \
+  run "proceeds when BUILD_VERSION is not even set" 0 "preflight skipped" "::error"
 
 echo
 echo "passed=$pass failed=$fail"

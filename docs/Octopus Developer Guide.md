@@ -282,7 +282,7 @@ situations look identical in Sonatype's message and are not:
 
 | What the preflight finds | What it means | What to do |
 |---|---|---|
-| Published, and tag + GitHub release exist | The previous release finished correctly; this dispatch resolved a stale version | Release the next version. From internal CI, the manual release build takes its version from the last **finished** compile build, which can predate the previous release's bump |
+| Published, and tag + GitHub release exist | The previous release published and was tagged; this dispatch resolved a stale version | Release the next version — but check `octopus-release-log` for the published version first. Registration is a separate job (`register-release-immediately`, off by default) and then a separate run gated on the release having succeeded, so the entry can be missing while the tag and release are present; #189 records a version left exactly like that. From internal CI, the manual release build takes its version from the last **finished** compile build, which can predate the previous release's bump |
 | Published, but the tag or release is missing | An earlier run published and died before recording it | Recovery, not a re-dispatch — see `octopus-base#189`. Tag the commit that run **built** (its log names it; the current head usually is not it), create the release, register it in `octopus-release-log` |
 
 Everything short of "all coordinates published" lets the release run, and says why in the log:

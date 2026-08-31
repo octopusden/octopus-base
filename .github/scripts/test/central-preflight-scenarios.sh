@@ -92,7 +92,7 @@ COORDS="$TWO_COORDS" REPO1_CODES="404 404" WANT_REPO1_CALLS=2 \
 
 echo "-- the version is fully published (the only stopping verdict) -------------"
 REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
-  run "stops when published and already recorded (#195)" 1 "Version already released" "octopus-base#189"
+  run "stops when published and already recorded (#195)" 1 "Version already released" "Version published but not recorded"
 REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
   run "classifies the stop as deterministic" 1 "RELEASE_PUBLISH_CLASS=deterministic"
 REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
@@ -113,6 +113,10 @@ REPO1_CODES=500 \
   run "proceeds when Central does not answer" 0 "inconclusive" "::error"
 COORDS="$TWO_COORDS" REPO1_CODES="200 000" \
   run "proceeds when one coordinate is unanswered, even with another published" 0 "inconclusive" "::error"
+COORDS="$TWO_COORDS" REPO1_CODES="000 200" WANT_REPO1_CALLS=1 \
+  run "stops asking once the verdict is already inconclusive" 0 "already inconclusive" "::error"
+REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
+  run "does not call a tagged release complete without the log" 1 "octopus-release-log"
 COORDS="$TWO_COORDS" BUDGET=0 WANT_REPO1_CALLS=0 \
   run "stops asking once its time budget is spent, and proceeds" 0 "budget for this check is spent" "::error"
 COORDS="$TWO_COORDS" BUDGET=0 \

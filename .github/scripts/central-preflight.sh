@@ -136,7 +136,15 @@ for i in "${!COORDS[@]}"; do
     # Anything else answers nothing: a 5xx, a rate limit, a proxy error or an empty
     # body from a dropped connection all look alike here, and none of them is
     # evidence that the version is free.
-    *)   echo "  unknown  $ga (HTTP ${code:-none})"; UNKNOWN+=("$ga") ;;
+    # One unanswered coordinate already fixes the verdict as inconclusive — the branch below
+    # is checked before any other — so every further request is provably wasted. In an outage
+    # that is the difference between one timeout and one per publication.
+    *)   echo "  unknown  $ga (HTTP ${code:-none})"; UNKNOWN+=("$ga")
+         if [ $((i + 1)) -lt "${#COORDS[@]}" ]; then
+           echo "  skipped  ${COORDS[*]:$((i + 1))} (the verdict is already inconclusive)"
+           UNKNOWN+=("${COORDS[@]:$((i + 1))}")
+         fi
+         break ;;
   esac
 done
 echo "::endgroup::"
@@ -189,7 +197,7 @@ fi
 case "$recorded" in
   yes)
     stop "Version already released" \
-      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)) and already recorded here: tag ${tag} and its GitHub release exist. Nothing to do — this release would rebuild the same version and be rejected at the close step. Release the next version instead. If the dispatch came from internal CI, the version it resolved is stale: the compile build that produces the next version had not finished when the release was triggered."
+      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), with tag ${tag} and its GitHub release in place. This release would rebuild the same version and be rejected at the close step, so release the next version instead. If the dispatch came from internal CI, the version it resolved is stale: the compile build that produces the next version had not finished when the release was triggered. Before moving on, check that octopus-release-log has an entry for ${BUILD_VERSION}: registration is a separate job, off by default and then a separate run gated on the release having succeeded, so it can be missing while the tag and release are present — octopus-base#189 records a version left exactly like that."
     ;;
   no)
     stop "Version published but not recorded" \

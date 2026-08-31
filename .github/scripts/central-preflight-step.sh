@@ -22,9 +22,19 @@
 
 set -uo pipefail
 
-: "${HELPER_DIR:?HELPER_DIR is required}"
+# Defaulted, not required: `${VAR:?}` and an unset variable under `set -u` both exit 1, and
+# this script is not allowed to exit 1 for any reason but the preflight's verdict. Every one
+# of these has a caller that always sets it, which is precisely what was said of the
+# `BUILD_VERSION:?` that was removed from central-preflight.sh for the same reason.
+HELPER_DIR="${HELPER_DIR:-}"
+BUILD_VERSION="${BUILD_VERSION:-}"
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
 LISTING_TIMEOUT="${LISTING_TIMEOUT:-300}"
+
+if [ -z "$HELPER_DIR" ]; then
+  echo "::warning title=Central preflight skipped::No helper directory was passed to the preflight step, so whether ${BUILD_VERSION:-the release version} is already on Maven Central could not be checked. Continuing."
+  exit 0
+fi
 
 # The same rule as the step that calls this one: a helper that is not on disk means the check
 # cannot run, which is never a reason to stop a release. Checked before the listing so a
