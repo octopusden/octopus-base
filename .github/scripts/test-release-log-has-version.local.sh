@@ -30,7 +30,13 @@ case "${GH_MODE:-ok}" in
     missing)   echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
     transport) echo "gh: HTTP 502" >&2; exit 1 ;;
     null)      echo "null" ;;
-    garbage)   echo "this is not base64 %%%" ;;
+    # The real log's base64 with spaces shot through it — outside the alphabet, so not a
+    # payload any decoder should accept. BSD base64 strips the spaces, decodes it and reports
+    # SUCCESS; GNU errors out. A script that decoded before checking the syntax would
+    # therefore find the version in it on one platform and not the other, and skip a
+    # registration that never happened. Garbage that decodes to nothing in particular would
+    # pass on both platforms for the wrong reason, which is what this fixture replaced.
+    garbage)   printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | fold -w4 | paste -sd' ' - ;;
     # Wrapped across lines like the real contents API, so a script that forgot to strip the
     # newlines before decoding fails here rather than in production.
     *)         printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | fold -w 16 ;;
@@ -56,8 +62,12 @@ export LOG_TEXT=$'2.0.16\n2.0.15\n2.0.14\n'
 
 # The regression. A module released for the first time has no file in the log; the lookup
 # 404s, and the answer must be "not registered", not a dead step.
+#
+# Asked about a version the fixture log DOES contain: with a version that is absent anyway,
+# "no log file" and "version not in the log" collapse into the same answer and the case would
+# still pass with the lookup stubbed out entirely.
 echo "case: module has no log file yet"
-check "false, rc 0" "false|0" "$(GH_MODE=missing run 2.0.1)"
+check "false, rc 0" "false|0" "$(GH_MODE=missing run 2.0.15)"
 
 echo "case: version already in the log"
 check "true, rc 0" "true|0" "$(run 2.0.15)"
@@ -79,6 +89,19 @@ check "false, rc 0" "false|0" "$(GH_MODE=garbage run 2.0.15)"
 # register nothing. This is the one case that must stop the release.
 echo "case: empty version"
 check "rc 1" "|1" "$(run '')"
+
+# Same failure, harder to see: whitespace matches a blank line just as well.
+echo "case: blank version"
+check "rc 1" "|1" "$(run ' ')"
+
+# And the shape that reads as registered while naming a version that is not: `grep -F` splits
+# its pattern on newlines, so 2.0.15 matching the log would answer for 2.0.99 as well.
+echo "case: multi-line version"
+check "rc 1" "|1" "$(run $'2.0.99\n2.0.15')"
+
+# A version starting with a dash must be compared as text, not read as a grep option.
+echo "case: version that looks like an option"
+check "false, rc 0" "false|0" "$(run '-v')"
 
 # Whole-line match: 2.0.15 is not present in a log that only contains 12.0.15.
 echo "case: a longer version is not a match"

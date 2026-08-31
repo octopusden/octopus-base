@@ -33,11 +33,19 @@ repo=${1:?usage: release-log-has-version.sh <release-log-repo> <module> <version
 module=${2:?usage: release-log-has-version.sh <release-log-repo> <module> <version>}
 version=${3-}
 
-# An empty version would match any blank line in the log and read as "already registered", so
-# a caller that failed to resolve its version would silently register nothing at all. This is
-# the one condition that must stop the release rather than fail open.
-if [ -z "$version" ]; then
-    echo "::error title=No version to register::The caller passed an empty release version." >&2
+# A version that is empty, blank, or spans more than one line means the caller failed to
+# resolve it, and each shape breaks the check in its own way:
+#
+#   empty / blank  matches a blank line in the log and reads as "already registered", so
+#                  nothing is registered at all;
+#   multi-line     is worse — `grep -F` splits its pattern on newlines into SEVERAL patterns,
+#                  so a match on any one of them reports the whole version as registered.
+#                  Asking about $'2.0.99\n2.0.15' against a log holding 2.0.15 answers "true",
+#                  and 2.0.99 is then never recorded.
+#
+# This is the one condition that must stop the release rather than fail open.
+if [[ ! "$version" =~ ^[^[:space:]]+$ ]]; then
+    echo "::error title=No usable version to register::The caller passed \"${version}\" as the release version, which is empty, blank, or spans more than one line." >&2
     exit 1
 fi
 
@@ -46,28 +54,34 @@ fi
 # would make that ordinary case abort the script under `set -e`.
 encoded=""
 if raw="$(gh api "repos/${repo}/contents/${module}.txt" --jq '.content' 2>/dev/null)"; then
-    # The contents API returns base64 wrapped across lines. Stripped with parameter
-    # expansion rather than a pipeline: every command substitution here is one more way
-    # for the step to die on a path that is supposed to fail open.
-    encoded="${raw//$'\n'/}"
+    # The contents API returns base64 wrapped across lines. `|| fallback` rather than a bare
+    # assignment: a command substitution that fails would otherwise abort the script under a
+    # caller's `set -e`, on a path whose whole purpose is to fail open. Parameter expansion
+    # would also be failure-proof, but `${raw//...}` is quadratic — on bash 3.2 a 59 KB
+    # payload takes ~3 minutes — and a hang on a fail-open path is worse than a failure.
+    encoded="$(printf '%s' "$raw" | tr -d '\n')" || encoded="$raw"
 fi
 
 # It also returns an empty payload for files it will not inline (over ~1 MB), which decodes to
 # garbage rather than failing; treat that as unreadable.
 log=""
 if [ -n "$encoded" ] && [ "$encoded" != "null" ]; then
-    # Keep the decoded text only if decoding actually succeeded: base64 can emit valid bytes
-    # before reporting malformed input, and searching that partial text could produce a match
-    # that skips registration — again the opposite of the intended fail-open.
-    if decoded="$(base64 -d <<<"$encoded" 2>/dev/null)"; then
+    # Two things must hold before the text is searched.
+    #
+    # First the payload has to LOOK like base64. Decoders disagree about malformed input —
+    # GNU coreutils errors out, BSD/macOS decodes what it can and reports success — so
+    # without a syntax check the outcome would depend on which coreutils the runner ships,
+    # and on BSD the partial bytes would be searched. Checking first makes it the same
+    # everywhere.
+    #
+    # Second the decode itself has to succeed. Searching partially decoded bytes could
+    # produce a match that skips registration — the opposite of the intended fail-open.
+    if [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] && decoded="$(base64 -d <<<"$encoded" 2>/dev/null)"; then
         # Strip CR so the whole-line match still works if the log ever gains CRLF endings;
-        # without it the guard would silently never match.
-        #
-        # Not `tr -d '\r'`: base64 implementations disagree about malformed input — GNU
-        # coreutils errors out, BSD/macOS decodes what it can and succeeds — so `decoded`
-        # can hold arbitrary bytes, and `tr` then fails with "Illegal byte sequence" and
-        # takes the step down with it. Parameter expansion cannot fail.
-        log="${decoded//$'\r'/}"
+        # without it the guard would silently never match. `|| fallback` because `tr` fails
+        # with "Illegal byte sequence" on bytes that are not text in the current locale, and
+        # a bare assignment would take the step down with it.
+        log="$(tr -d '\r' <<<"$decoded")" || log="$decoded"
     else
         echo "Release log for ${module} could not be decoded; registering." >&2
     fi
@@ -81,7 +95,8 @@ fi
 
 # Whole-line, fixed-string: a substring match would read 2.0.15 as present in a log that only
 # contains 12.0.15, and skip a registration that never happened.
-if grep -qxF "$version" <<<"$log"; then
+# `--` so a version that begins with a dash is compared as text rather than read as an option.
+if grep -qxF -- "$version" <<<"$log"; then
     echo "::notice title=Already registered::${module} ${version} is already in the release log; skipping." >&2
     echo true
 else

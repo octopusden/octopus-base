@@ -42,19 +42,27 @@ jobs:
       # helper, so it is fetched from the pinned version of this workflow. A full
       # commit SHA is required: an empty or non-SHA ref would make actions/checkout
       # silently fall back to a default branch and run a different script version.
+      #
+      # Neither this step nor the fetch may FAIL the job, though. Registration is
+      # deliberately fail-open (see below), and a job that dies before the guard runs
+      # produces exactly the outcome the guard exists to prevent — release published,
+      # never recorded. So an unpinnable helper leaves the sha empty, the fetch is
+      # skipped, and the guard falls back to registering.
       - name: Resolve release-log helper ref
         id: helper-ref
         env:
           HELPER_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
-          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=Cannot pin the release-log helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Refusing to run an unpinned helper."
-            exit 1
+          if [[ "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Release-log helper not pinned::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the duplicate check is skipped and this release is registered unconditionally."
           fi
-          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Fetch release-log helper
+        if: ${{ steps.helper-ref.outputs.sha != '' }}
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: octopusden/octopus-base
@@ -87,8 +95,29 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release-version }}
         run: |
           set -euo pipefail
-          registered="$(bash .octopus-base-helper/.github/scripts/release-log-has-version.sh \
-            "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"
+          # Checked here as well as inside the helper. The helper must stand alone — its tests
+          # call it directly — and this step must still refuse an unusable version on the
+          # fallback path below, where the helper is not there to refuse it.
+          if [[ ! "${RELEASE_VERSION}" =~ ^[^[:space:]]+$ ]]; then
+            echo "::error title=No usable version to register::The caller passed \"${RELEASE_VERSION}\" as the release version, which is empty, blank, or spans more than one line."
+            exit 1
+          fi
+
+          helper=.octopus-base-helper/.github/scripts/release-log-has-version.sh
+          if [ -f "$helper" ]; then
+            registered="$(bash "$helper" "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"
+          else
+            registered=false
+            echo "::warning title=Duplicate check skipped::The release-log helper could not be fetched, so this release is registered without checking whether it already is."
+          fi
+
+          # An answer that is neither true nor false means the helper is broken. Fail open on
+          # that too: a step output is a single line, so anything else would be truncated into
+          # the gate below and read as "not registered" anyway — better to say so out loud.
+          if [ "$registered" != "true" ] && [ "$registered" != "false" ]; then
+            echo "::warning title=Unusable answer from the release-log helper::It printed \"${registered}\" instead of true or false; registering."
+            registered=false
+          fi
           echo "registered=${registered}" >> "$GITHUB_OUTPUT"
 
       - name: Launch action using REST
