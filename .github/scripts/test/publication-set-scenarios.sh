@@ -91,11 +91,27 @@ SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar' \
   run "accepts a publication at the release version" 0 "client-2\.0\.105\.jar +[0-9]"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' \
   run "refuses Gradle's unspecified version" 1 "carries version 'unspecified'"
+SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' \
+  run "surfaces the refusal as an Actions error annotation" 1 "^::error::"
+SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \
+  run "surfaces the dry-run report as a warning annotation" 0 "^::warning::"
 SETUP='jar "$repo" "$G" client 0.0.0 client-0.0.0.jar' \
   run "refuses any other version" 1 "carries version '0.0.0'"
 SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar
 jar "$repo" "$G" legacy unspecified legacy-unspecified.jar' \
-  run "refuses when only ONE of several publications is adrift" 1 "legacy"
+  run "refuses when only ONE of several publications is adrift" 1 "legacy carries version"
+# Every offender must be named, not just the first: an operator fixing one and re-running would
+# otherwise discover the next one a build at a time.
+SETUP='jar "$repo" "$G" alpha unspecified alpha-unspecified.jar
+jar "$repo" "$G" beta 0.0.0 beta-0.0.0.jar' \
+  run "names every adrift publication, not just the first" 1 "alpha carries version"
+SETUP='jar "$repo" "$G" alpha unspecified alpha-unspecified.jar
+jar "$repo" "$G" beta 0.0.0 beta-0.0.0.jar' \
+  run "names the second adrift publication too" 1 "beta carries version"
+# The allowlist says an artifact may be a fat jar. It says nothing about the version, and
+# `unspecified` is a defect rather than a choice — so it must not exempt this refusal.
+SETUP='jar "$repo" "$G" automation unspecified automation-unspecified-all.jar' ALLOWLIST=automation \
+  run "the fat-jar allowlist does not exempt a foreign version" 1 "carries version 'unspecified'"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' VERSION='' \
   run "checks nothing when no release version is known" 0 "Inspected 1 artifact" "carries version"
 # A padded value must compare equal to the artifact's version, or every publication reads as
@@ -118,8 +134,18 @@ SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' \
   run "refuses a shadow/uber artifact" 1 "shadow/uber"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
   run "accepts an allowlisted shadow artifact" 0 "automation-2\.0\.105-all\.jar +[0-9]" "unfit for Maven Central"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST='other, automation' \
+  run "tolerates spaces in the allowlist, as YAML writes it" 0 "Explicitly allowed" "unfit for Maven Central"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.zip' \
+  run "refuses a shadow distribution ZIP, not only a jar" 1 "shadow/uber"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.tar.gz' \
+  run "refuses a shadow distribution tarball" 1 "shadow/uber"
 SETUP='jar "$repo" "$G" app 2.0.105 app-2.0.105.jar BOOT-INF/classes/x.class' \
   run "refuses a Spring Boot executable jar" 1 "BOOT-INF"
+# The probe must match the DIRECTORY, not the prefix: an entry merely starting with those
+# letters is not a Spring Boot layout.
+SETUP='jar "$repo" "$G" lib 2.0.105 lib-2.0.105.jar BOOT-INFRASTRUCTURE/x.txt' \
+  run "accepts a jar whose entry merely starts with those letters" 0 "lib-2\.0\.105\.jar +[0-9]" "BOOT-INF"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' \
   run "refuses an oversized artifact" 1 "exceeds 8 MB"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' MAX_MB=16 \
