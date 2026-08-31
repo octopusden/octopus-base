@@ -48,8 +48,8 @@ flowchart LR
 
 The second half runs **only if the first half finished green**. That one gate causes the failure
 this pipeline is known for: if the upload succeeds and the run dies a minute later, the version is
-on Central, nothing records it, and the next release computes the same version and is refused
-because it already exists. Nothing in the pipeline can repair that on its own.
+on Central, nothing records it, and the next release computes the same version and is refused —
+since #198, before it builds anything. Nothing in the pipeline can repair that on its own.
 
 So when a release goes red, the first question is never "what broke" but **which side of the line
 it broke on**. Everything else in this document follows from that; if you only need to know what a
@@ -177,9 +177,13 @@ breaks is by quietly doing nothing rather than by going red:
 
 | File | Does |
 |---|---|
-| `central-preflight-step.sh` | Runs the listing under a **300s** ceiling, then hands the result over. The listing pays cold daemon start and full configuration, so this is the larger of the two costs — about all of the ~13s measured on the canary. |
-| `list-publications.init.gradle` | Produces the coordinates from Gradle's publication model at *configuration* time — no compilation. Filters to the release version and applies `-Pnexus=true`, so the set matches what the real upload sends. |
+| `central-preflight-step.sh` | Runs the listing under a **300s** ceiling, passing `-Pnexus=true` and the version properties so the set matches what the real upload sends, then hands the result over. |
+| `list-publications.init.gradle` | Produces the coordinates from Gradle's publication model at *configuration* time — no compilation — and filters them to the release version. |
 | `central-preflight.sh` | HEADs each coordinate on repo1 within a **90s** budget for the sweep as a whole, and decides. |
+
+The listing is essentially the whole cost: on the canary the repo1 sweep measured **0.09s** and
+**0.07s** in two runs, against step totals of 9s and 13s (octopus-test runs 33390083635 and
+33393050098, one publication each). Which is why it gets the larger ceiling.
 
 Both ceilings fall open: exceeding either is a warning, never a failure.
 
@@ -207,8 +211,10 @@ The upload itself is `./gradlew publishToSonatype closeSonatypeStagingRepository
 > Central. Publication is driven through the Portal API instead, below.
 
 `staging-profile-id` (default `org.octopusden`) is bound to the publishing plugin through an
-injected init script. It has a second, undocumented effect: it is also the namespace the
-coordinate guard checks. **Leaving it blank disables the namespace half of that guard** — the
+injected init script. It has two further, undocumented effects: it is the namespace the
+coordinate guard checks, and it filters the Portal deployment search (`portal-publish.sh:135`
+appends `&profile_id=` only when it is set; blank leaves the search unfiltered, which is benign
+because the key-suffix match still pins the deployment). **Leaving it blank disables the namespace half of that guard** — the
 version comparison and the "no coordinates at all" check still run, and the script says so with a
 `::warning::` annotation rather than failing.
 
@@ -413,8 +419,8 @@ the release state.
 | Registration fails | yes | yes | yes | no | No. The entry must be added by hand. |
 
 The rows marked **No** are the same underlying state: the artifacts are permanent, the record is
-absent, and the next release computes the same version and dies on `already exists` — which the
-classifier correctly calls `deterministic`, because it is. Recovery is manual: create the tag on
+absent, and the next release computes the same version — which the preflight now stops before
+the build, classified `deterministic`, rather than letting it die at the close step. Recovery is manual: create the tag on
 the commit that was actually built, create the release, and dispatch the registration. Tracking
 issue: octopus-base#189.
 
@@ -440,12 +446,16 @@ the caller adds a second approval gate.
 - **`docker-image` pushes to a hardcoded owner** — `ghcr.io/octopusden/<image>:<version>` — while
   the login uses the repository's own owner.
 - **`publish-to-nexus: false` still produces a tag and a GitHub release.** What it skips is the
-  Sonatype publish, its secret check, the Portal helper fetch and the fat-jar publication guard.
+  Sonatype publish, its secret check, the Portal helper fetch and its ref resolution, the Central
+  preflight, the staging-profile init script, the Portal publish and the publication guard.
   Pair it with `register-release-immediately: true`, or route B waits 90 minutes for an artifact
   that will never appear.
 - **The public and hybrid version formats disagree.** `public` enforces strict `X.Y.Z`; `hybrid`
-  accepts anything matching `[A-Za-z0-9._+-]+`; registration then requires strict `X.Y.Z`. A
-  non-semver hybrid version publishes and tags fine and fails only at registration.
+  accepts anything matching `[A-Za-z0-9._+-]+`; **route B's version resolution** then requires
+  strict `X.Y.Z`. Registration itself does not — the shared tail accepts any non-blank
+  single-line value — so a non-semver hybrid version publishes and tags fine and then fails when
+  the artifact-check workflow tries to resolve it, while `register-release-immediately: true`
+  puts it in the log without complaint.
 - **`increment-version-level` advertises pre-release levels that cannot work** — the version
   parser rejects anything that is not `vX.Y.Z`.
 - **`skip-extra-tasks` appends, it does not replace.** In hybrid flow the effective value is
