@@ -172,6 +172,13 @@ jobs:
       - name: Maven build retry scenarios
         shell: bash
         run: bash .github/scripts/test/maven-build-retry-scenarios.sh
+      # The step that runs after the artifacts are immutable, where every wrong answer is
+      # permanent: a tag that outlived its release, a draft left by an interrupted attempt, a
+      # lookup that failed for a reason other than 404. None of these were reachable from a test
+      # while this logic was two inline step bodies.
+      - name: Tag and release scenarios
+        shell: bash
+        run: bash .github/scripts/test/tag-and-release-scenarios.sh
 
   security:
     name: security
