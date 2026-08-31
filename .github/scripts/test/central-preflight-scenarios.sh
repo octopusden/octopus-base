@@ -34,13 +34,22 @@ run() {
   local coords="$RUNNER_TEMP/coords.txt"
   if [ "${NO_COORDS_FILE:-}" = "1" ]; then
     coords="$RUNNER_TEMP/absent.txt"
+  elif [ "${UNTERMINATED:-}" = "1" ]; then
+    # No trailing newline: `read` returns non-zero on the last line, so a loop that tests
+    # only its exit status silently drops that coordinate.
+    printf '%s' "${COORDS-org.octopusden.octopus:client}" > "$coords"
   else
     printf '%s\n' "${COORDS-org.octopusden.octopus:client}" > "$coords"
   fi
 
+  # Computed rather than expanded inline: "empty on purpose" and "unset, use the default"
+  # are different things, and a nested parameter expansion cannot express both.
+  local bv="${VERSION:-2.0.105}"
+  [ "${NO_VERSION:-}" = "1" ] && bv=""
+
   local out="$STATE_DIR/out.txt" rc ok=true
   PATH="$here/preflight:$PATH" env \
-    BUILD_VERSION="${VERSION:-2.0.105}" \
+    BUILD_VERSION="$bv" \
     COORDS_FILE="$coords" \
     DRY_RUN="${DRY:-false}" \
     PREFLIGHT_BUDGET="${BUDGET:-90}" \
@@ -56,7 +65,10 @@ run() {
   [ -n "$want" ] && ! grep -qE "$want" "$out" && { ok=false; echo "  missing: $want"; }
   [ -n "$nowant" ] && grep -qE "$nowant" "$out" && { ok=false; echo "  unexpected: $nowant"; }
   if [ -n "${WANT_REPO1_CALLS:-}" ]; then
-    local n; n=$(grep -c 'maven2' "$STATE_DIR/calls.log" 2>/dev/null || echo 0)
+    # No `|| echo 0`: with the file present and no match, grep -c prints 0 and exits 1, so
+    # the fallback would fire too and n would become two lines.
+    local n=0
+    [ -f "$STATE_DIR/calls.log" ] && n=$(grep -c 'maven2' "$STATE_DIR/calls.log")
     [ "$n" = "$WANT_REPO1_CALLS" ] || { ok=false; echo "  repo1 calls=$n expected=$WANT_REPO1_CALLS"; }
   fi
   # Only the status code is read, so a body must never be requested. Asserted on every
@@ -118,6 +130,16 @@ COORDS='org.octopusden.octopus:../../evil' WANT_REPO1_CALLS=0 \
   run "refuses a coordinate that could escape the repo1 path" 0 "Ignoring"
 COORDS=":" \
   run "proceeds when every coordinate was unusable" 0 "preflight skipped"
+
+echo "-- inputs that used to stop the release ----------------------------------"
+# The two paths the review found unpinned. Both are guarded upstream and neither is
+# reachable from the release workflow today; they are pinned because "no verdict other than
+# all-published may stop a release" is the property this whole step is built on, and an
+# unpinned exception to it is one refactor away from becoming real.
+NO_VERSION=1 WANT_REPO1_CALLS=0 \
+  run "proceeds when no release version was passed" 0 "No release version was passed" "::error"
+COORDS='org.octopusden.octopus:client' UNTERMINATED=1 REPO1_CODES=404 WANT_REPO1_CALLS=1 \
+  run "reads a final line with no trailing newline" 0 "the version is free" "::error"
 
 echo "-- dry run reports, never fails ------------------------------------------"
 DRY=true REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \

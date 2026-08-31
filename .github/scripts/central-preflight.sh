@@ -41,7 +41,14 @@
 
 set -uo pipefail
 
-: "${BUILD_VERSION:?BUILD_VERSION is required}"
+# Fail open even here. An empty version means nothing can be checked, and the release
+# workflow guards it for both flows long before this point — but "the only verdict that may
+# stop a release is that every coordinate is published" is worth being literally true rather
+# than nearly true, so a broken invocation warns and gets out of the way.
+if [ -z "${BUILD_VERSION:-}" ]; then
+  echo "::warning title=Central preflight skipped::No release version was passed to the preflight, so there is nothing to ask Central about. Continuing."
+  exit 0
+fi
 COORDS_FILE="${COORDS_FILE:-}"
 DRY_RUN="${DRY_RUN:-false}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}"
@@ -82,7 +89,11 @@ fi
 # than sent. The listing is expected to be already filtered to the release version and
 # deduplicated, so neither is redone here.
 declare -a COORDS=()
-while IFS= read -r line; do
+# `|| [ -n "$line" ]` so a final line with no trailing newline is still read. The producer
+# always terminates its lines, so this is insurance — but it insures in the direction that
+# matters: silently dropping one FREE coordinate would turn a partial overlap into "every
+# coordinate is published" and stop a release that would have run.
+while IFS= read -r line || [ -n "$line" ]; do
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
   [ -n "$line" ] || continue

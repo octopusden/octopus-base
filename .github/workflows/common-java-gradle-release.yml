@@ -447,9 +447,19 @@ jobs:
         if: ${{ inputs.publish-to-nexus }}
         env:
           HELPER_SHA: ${{ job.workflow_sha }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
           if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            # A real release must not proceed unpinned. A dry run reports no ref and the
+            # fetch below is skipped for want of one — which is NOT the same as letting it
+            # run with an empty ref: actions/checkout would then silently resolve its
+            # default branch, i.e. run an unpinned helper, the very skew this guard exists
+            # to prevent.
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning title=Publish helper not pinned::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Skipping the helper fetch; the Central preflight will report that it could not check. A real release would stop here."
+              exit 0
+            fi
             echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
             exit 1
           fi
@@ -457,7 +467,7 @@ jobs:
           echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
 
       - name: Fetch Portal publish helper
-        if: ${{ inputs.publish-to-nexus }}
+        if: ${{ inputs.publish-to-nexus && steps.helper-ref.outputs.sha != '' }}
         # A real release cannot proceed without these helpers: the publish step is one of
         # them. A dry run can — nothing downstream of it uses them except the preflight,
         # which is fail-open by design. So a transient failure fetching octopus-base must
@@ -520,13 +530,20 @@ jobs:
           # run. Both are set as `-D` properties rather than command-line flags on purpose:
           # an unknown property is ignored by older Gradle versions, while an unknown flag
           # would fail the invocation on the consumers still on Gradle 7.
-          OCTOPUS_COORDS_FILE="$coords" OCTOPUS_RELEASE_VERSION="$BUILD_VERSION" ./gradlew help -q \
+          # `timeout` because this is the dominant and, until now, the only unbounded cost in
+          # the step: the HEAD sweep has its own budget, but `gradlew help` pays cold daemon
+          # start, full configuration and any configuration-time dependency resolution. A
+          # non-zero exit already falls open; without a ceiling there is no answer for a
+          # stall, which is the one failure that would make this check cost more than the
+          # build it exists to save. 300s is far above the observed cost (9s on the canary,
+          # ~32s cold locally) and still bounded.
+          OCTOPUS_COORDS_FILE="$coords" OCTOPUS_RELEASE_VERSION="$BUILD_VERSION" timeout 300 ./gradlew help -q \
             --init-script "$helper/list-publications.init.gradle" \
             -Dorg.gradle.configureondemand=false \
             -Dorg.gradle.configuration-cache=false \
             -Pnexus=true -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" \
             > "$RUNNER_TEMP/list-publications.log" 2>&1 \
-            || echo "::warning title=Publication listing failed::Could not list the publication coordinates (see below); the preflight will report that it could not check."
+            || echo "::warning title=Publication listing failed::Could not list the publication coordinates within 300s, or it exited non-zero (see below); the preflight will report that it could not check."
 
           if [ -s "$coords" ]; then
             echo "Publications this release would publish:"
