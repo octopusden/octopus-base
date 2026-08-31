@@ -59,7 +59,7 @@ if raw="$(gh api "repos/${repo}/contents/${module}.txt" --jq '.content' 2>/dev/n
     # caller's `set -e`, on a path whose whole purpose is to fail open. Parameter expansion
     # would also be failure-proof, but `${raw//...}` is quadratic — on bash 3.2 a 59 KB
     # payload takes ~3 minutes — and a hang on a fail-open path is worse than a failure.
-    encoded="$(printf '%s' "$raw" | tr -d '\n')" || encoded="$raw"
+    encoded="$(printf '%s' "$raw" | LC_ALL=C tr -d '\n')" || encoded="$raw"
 fi
 
 # It also returns an empty payload for files it will not inline (over ~1 MB), which decodes to
@@ -76,12 +76,18 @@ if [ -n "$encoded" ] && [ "$encoded" != "null" ]; then
     #
     # Second the decode itself has to succeed. Searching partially decoded bytes could
     # produce a match that skips registration — the opposite of the intended fail-open.
-    if [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] && decoded="$(base64 -d <<<"$encoded" 2>/dev/null)"; then
+    # The length test is not redundant with the alphabet test: a payload truncated mid-way is
+    # still all-alphabet, and BSD base64 decodes as many whole quads as it can and reports
+    # SUCCESS, so a truncated log would be searched — and a version whose line survived the
+    # truncation would answer "already registered" for a log that never decoded.
+    if [ $(( ${#encoded} % 4 )) -eq 0 ] \
+        && [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+        && decoded="$(base64 -d <<<"$encoded" 2>/dev/null)"; then
         # Strip CR so the whole-line match still works if the log ever gains CRLF endings;
         # without it the guard would silently never match. `|| fallback` because `tr` fails
         # with "Illegal byte sequence" on bytes that are not text in the current locale, and
         # a bare assignment would take the step down with it.
-        log="$(tr -d '\r' <<<"$decoded")" || log="$decoded"
+        log="$(LC_ALL=C tr -d '\r' <<<"$decoded")" || log="$decoded"
     else
         echo "Release log for ${module} could not be decoded; registering." >&2
     fi

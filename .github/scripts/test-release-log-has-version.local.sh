@@ -37,6 +37,10 @@ case "${GH_MODE:-ok}" in
     # registration that never happened. Garbage that decodes to nothing in particular would
     # pass on both platforms for the wrong reason, which is what this fixture replaced.
     garbage)   printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | fold -w4 | paste -sd' ' - ;;
+    # A payload cut short mid-quad. Every character is still in the base64 alphabet, so an
+    # alphabet check alone lets it through, and BSD base64 decodes the whole quads it has and
+    # reports success — yielding a TRUNCATED log that still contains whole version lines.
+    truncated) printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | sed 's/.$//' ;;
     # Wrapped across lines like the real contents API, so a script that forgot to strip the
     # newlines before decoding fails here rather than in production.
     *)         printf '%s' "$LOG_TEXT" | base64 | tr -d '\n' | fold -w 16 ;;
@@ -81,6 +85,11 @@ check "false, rc 0" "false|0" "$(GH_MODE=transport run 2.0.15)"
 
 echo "case: file too large to inline (content null)"
 check "false, rc 0" "false|0" "$(GH_MODE=null run 2.0.15)"
+
+# 2.0.16 is the first line of the fixture log, so it survives the truncation intact: if the
+# truncated payload were decoded and searched, this would answer "true".
+echo "case: content is truncated mid-quad"
+check "false, rc 0" "false|0" "$(GH_MODE=truncated run 2.0.16)"
 
 echo "case: content is not decodable"
 check "false, rc 0" "false|0" "$(GH_MODE=garbage run 2.0.15)"
