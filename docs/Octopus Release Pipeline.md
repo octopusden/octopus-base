@@ -28,7 +28,8 @@ Releasing a component means doing **two** separate things, in two different plac
 The catch is that these two are not one operation, and they behave differently when something
 goes wrong. Maven Central has **no undo** — a version that lands there stays there forever, and
 the same version can never be uploaded twice. The bookkeeping, by contrast, can be redone as many
-times as you like.
+times as you like — with one caveat: once a repository turns on GitHub's immutable releases, a
+published Release and its tag stop being freely deletable either.
 
 ```mermaid
 flowchart LR
@@ -36,7 +37,7 @@ flowchart LR
         direction LR
         B["build<br/>+ sign"] --> S["staging"] --> C["close<br/>validate"] --> P["publish<br/>wait for PUBLISHED"]
     end
-    subgraph record ["REVERSIBLE - record of the release"]
+    subgraph record ["REPAIRABLE - record of the release"]
         direction LR
         T["tag<br/>vX.Y.Z"] --> R["GitHub<br/>Release"] --> L["registration<br/>repository_dispatch"]
     end
@@ -259,7 +260,7 @@ over; the script has a `fail_transient` helper but no code path reaches it.
 |---|:---:|---|
 | `published` | no | Success — everything is `PUBLISHED` and resolvable on repo1. |
 | `deterministic` | no | Validation errors, 401/403, a `FAILED` deployment, wrong version or namespace, more than one staging repository. Retrying cannot help. |
-| `transient` | **yes** | Unambiguous infrastructure signals (5xx, timeout, reset) **before anything was staged**. The only retryable class. |
+| `transient` | **yes** | Unambiguous infrastructure signals (5xx, timeout, connection reset or refused) **before anything was staged**. The only retryable class. |
 | `resumable` | no | A staging repository or deployment already exists, so a plain re-run would upload the version a second time. Finish it with `resume-deployment-id` instead. |
 | `unknown` | unknown | Nothing matched. There is no evidence a retry will help. |
 
@@ -366,7 +367,8 @@ the release state.
 
 | Failure | Central | tag | Release | log | Recoverable by the pipeline? |
 |---|:---:|:---:|:---:|:---:|---|
-| Guard or validation rejects the upload | — | — | — | — | Yes — nothing happened. Fix and re-dispatch. |
+| Guard rejects the upload | — | — | — | — | Yes — nothing left anywhere. Fix and re-dispatch. |
+| Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
 | Version already on Central | published earlier | — | — | — | The run is red but the earlier release is intact. Release the next version. |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
@@ -400,9 +402,10 @@ the caller adds a second approval gate.
 
 - **`docker-image` pushes to a hardcoded owner** — `ghcr.io/octopusden/<image>:<version>` — while
   the login uses the repository's own owner.
-- **`publish-to-nexus: false` still produces a tag and a GitHub release.** Only the Sonatype path
-  and its secret check are skipped. Pair it with `register-release-immediately: true`, or route B
-  waits 90 minutes for an artifact that will never appear.
+- **`publish-to-nexus: false` still produces a tag and a GitHub release.** What it skips is the
+  Sonatype publish, its secret check, the Portal helper fetch and the fat-jar publication guard.
+  Pair it with `register-release-immediately: true`, or route B waits 90 minutes for an artifact
+  that will never appear.
 - **The public and hybrid version formats disagree.** `public` enforces strict `X.Y.Z`; `hybrid`
   accepts anything matching `[A-Za-z0-9._+-]+`; registration then requires strict `X.Y.Z`. A
   non-semver hybrid version publishes and tags fine and fails only at registration.

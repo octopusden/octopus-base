@@ -119,8 +119,8 @@ A release fails early, before the build, with `Built commit cannot be tagged` an
 workflow file names. Nothing was published.
 
 On repositories still using the older `OctopusCallGitHubAction` metarunner the symptom looks
-completely different: that metarunner only polls for the GitHub *release* to appear — not the tag — so a refused
-release shows up as a wait of `OCTOPUS_RELEASE_TIMEOUT` minutes ending in
+completely different: that metarunner only polls for the GitHub *release* to appear — not the
+tag — so a refused release shows up as a wait of `OCTOPUS_RELEASE_TIMEOUT` minutes ending in
 `Number of attempts exceeded`, with no hint of the real cause. The distinction matters beyond
 this failure: the pipeline has paths that create the tag and then fail before the release, and
 those look identical to a refused release from the metarunner's side. The newer
