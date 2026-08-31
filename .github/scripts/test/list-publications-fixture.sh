@@ -38,8 +38,12 @@ list() {
       -Pnexus=true -PbuildVersion="$built" -Pversion="$built" "$@" ) > "$tmp/log" 2>&1
 }
 
-check() { # <name> <condition-description> <test-expression-result>
-  if [ "$3" = "0" ]; then echo "PASS  $1"; pass=$((pass+1)); else
+# check <name> <what-it-means-if-it-failed>
+# Reads the exit status of the command that ran immediately before the call, so a check
+# reads as `<condition>; check "name" "meaning"` with no status threading at the call site.
+check() {
+  local rc=$?
+  if [ "$rc" = "0" ]; then echo "PASS  $1"; pass=$((pass+1)); else
     echo "FAIL  $1 ($2)"; fail=$((fail+1))
     echo "--- coords:"; sed 's/^/    /' "$tmp/coords"
     echo "--- log tail:"; tail -n 25 "$tmp/log" | sed 's/^/    /'
@@ -49,21 +53,51 @@ check() { # <name> <condition-description> <test-expression-result>
 echo "-- publications at the release version ------------------------------------"
 list 9.9.9-fixture 9.9.9-fixture
 grep -qxF 'org.octopusden.octopus:octopus-quality-plugin' "$tmp/coords"; check \
-  "lists the library publication" "main publication missing" "$?"
+  "lists the library publication" "main publication missing"
 grep -qxF 'org.octopusden.octopus-quality:org.octopusden.octopus-quality.gradle.plugin' "$tmp/coords"; check \
-  "lists the plugin marker publication" "marker publication missing — a hook that runs before java-gradle-plugin's afterEvaluate would do this" "$?"
+  "lists the plugin marker publication" "marker publication missing — a hook that runs before java-gradle-plugin's afterEvaluate would do this"
 ! grep -q ':.*:' "$tmp/coords"; check \
-  "writes group:artifact, with no version attached" "a line carries a version, which central-preflight.sh would refuse" "$?"
+  "writes group:artifact, with no version attached" "a line carries a version, which central-preflight.sh would refuse"
 [ "$(sort -u "$tmp/coords" | wc -l)" = "$(wc -l < "$tmp/coords")" ]; check \
-  "writes no duplicates" "the coordinate set is not deduplicated" "$?"
+  "writes no duplicates" "the coordinate set is not deduplicated"
+
+echo "-- a multi-project build --------------------------------------------------"
+# Generated rather than reusing the plugin build, which is single-project: with only a root
+# project, `allprojects` and `[rootProject]` are the same thing, so the traversal the release
+# workflow depends on is untested. On a real consumer that difference means every subproject's
+# publications go unchecked — silently, because the check fails open.
+multi="$tmp/multi"
+mkdir -p "$multi/sub"
+cat > "$multi/settings.gradle" <<'G'
+rootProject.name = 'fixture-root'
+include 'sub'
+G
+cat > "$multi/build.gradle" <<'G'
+allprojects {
+    apply plugin: 'maven-publish'
+    group = "org.fixture.${project.name}"
+    version = project.property('fixtureVersion')
+    publishing { publications { register(project.name, MavenPublication) { } } }
+}
+G
+: > "$tmp/coords"
+( cd "$FIXTURE" && OCTOPUS_COORDS_FILE="$tmp/coords" OCTOPUS_RELEASE_VERSION=7.7.7 \
+    ./gradlew --project-dir "$multi" help -q --init-script "$INIT" \
+    -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
+    -PfixtureVersion=7.7.7 ) > "$tmp/log" 2>&1
+
+grep -qxF 'org.fixture.fixture-root:fixture-root' "$tmp/coords"; check \
+  "lists the root project's publication" "root publication missing"
+grep -qxF 'org.fixture.sub:sub' "$tmp/coords"; check \
+  "lists a SUBPROJECT's publication" "subproject publication missing — a hook that walks only the root project would do this, and every subproject of every consumer would go unchecked"
 
 echo "-- publications at another version ----------------------------------------"
 # The build is at 9.9.9-fixture; the release claims to be releasing 1.2.3. Nothing matches.
 list 1.2.3 9.9.9-fixture
 [ ! -s "$tmp/coords" ]; check \
-  "lists nothing when no publication is at that version" "coordinates were written for a version this build is not at" "$?"
+  "lists nothing when no publication is at that version" "coordinates were written for a version this build is not at"
 grep -q "not the version being released" "$tmp/log"; check \
-  "says which publications it dropped and why" "the skipped publications were not reported" "$?"
+  "says which publications it dropped and why" "the skipped publications were not reported"
 
 echo
 echo "passed=$pass failed=$fail"

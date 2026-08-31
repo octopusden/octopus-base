@@ -46,6 +46,8 @@ run() {
     PREFLIGHT_BUDGET="${BUDGET:-90}" \
     GITHUB_REPOSITORY="${REPO-octopusden/octopus-external-systems-client}" \
     REPO1_CODES="${REPO1_CODES:-404}" \
+    EXPECT_COORDS="${COORDS-org.octopusden.octopus:client}" \
+    EXPECT_VERSION="${VERSION:-2.0.105}" \
     TAG_STATE="${TAG_STATE:-no}" RELEASE_STATE="${RELEASE_STATE:-no}" \
     "${BASH:-bash}" "$SCRIPT" >"$out" 2>&1
   rc=$?
@@ -84,7 +86,7 @@ REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
 REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=yes \
   run "says the retry cannot help" 1 "RELEASE_PUBLISH_RETRYABLE=false"
 REPO1_CODES=200 TAG_STATE=no RELEASE_STATE=no \
-  run "stops with the recovery when published but unrecorded (#189)" 1 "published but not recorded.*|octopus-base#189"
+  run "stops with the recovery when published but unrecorded (#189)" 1 "Version published but not recorded" "could not be determined"
 REPO1_CODES=200 TAG_STATE=yes RELEASE_STATE=no \
   run "treats a tag without a release as unrecorded" 1 "octopus-base#189"
 REPO1_CODES=200 TAG_STATE=fail RELEASE_STATE=yes \
@@ -114,7 +116,7 @@ COORDS="org.octopusden.octopus:client:2.0.105" WANT_REPO1_CALLS=0 \
   run "refuses a coordinate that still carries a version" 0 "Ignoring 'org.octopusden.octopus:client:2.0.105'"
 COORDS='org.octopusden.octopus:../../evil' WANT_REPO1_CALLS=0 \
   run "refuses a coordinate that could escape the repo1 path" 0 "Ignoring"
-COORDS="" \
+COORDS=":" \
   run "proceeds when every coordinate was unusable" 0 "preflight skipped"
 
 echo "-- dry run reports, never fails ------------------------------------------"
