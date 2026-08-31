@@ -1,8 +1,9 @@
 # Publish classification is emitted as log lines, not step outputs
 
-The publish helper classifies a failure as `published`, `deterministic`, `transient`, `resumable`
-or `unknown`, and prints the verdict as `RELEASE_PUBLISH_CLASS` / `RELEASE_PUBLISH_RETRYABLE`
-markers in the log rather than as step outputs. Step outputs of a reusable workflow are unreliable
+The release classifies a failure as `published`, `deterministic`, `transient`, `resumable` or
+`unknown` — the Portal helper for the Portal phases, a workflow step for the Gradle upload stage —
+and prints the verdict as `RELEASE_PUBLISH_CLASS` / `RELEASE_PUBLISH_RETRYABLE` markers in the log
+rather than as step outputs. Step outputs of a reusable workflow are unreliable
 on failed runs — and a classification exists precisely to describe a failed run, so the mechanism
 would be missing exactly when it is needed (#166, 2026-07-25).
 

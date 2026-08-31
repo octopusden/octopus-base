@@ -107,7 +107,7 @@ is described in [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md).
 
 Use reusable workflows from `octopus-base` to avoid copy-paste between repositories.
 
-Pin reusable workflow references to a released tag (for example `@v1.2.0`), not `@main`.
+Pin reusable workflow references to a released tag (for example `@v2.7.1`), not `@main`.
 This protects consumer repositories from unreviewed breaking changes.
 
 ### Quality gates workflow

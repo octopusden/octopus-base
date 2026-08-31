@@ -171,7 +171,9 @@ The upload itself is `./gradlew publishToSonatype closeSonatypeStagingRepository
 
 `staging-profile-id` (default `org.octopusden`) is bound to the publishing plugin through an
 injected init script. It has a second, undocumented effect: it is also the namespace the
-coordinate guard checks. **Leaving it blank silently disables that guard**, with only a warning.
+coordinate guard checks. **Leaving it blank disables the namespace half of that guard** — the
+version comparison and the "no coordinates at all" check still run, and the script says so with a
+`::warning::` annotation rather than failing.
 
 ### Publishing through the Central Portal
 
@@ -238,8 +240,20 @@ against the deployment state after a settling window, because a late 400 usually
 
 ### Publish classification
 
-The script emits its verdict as **log lines**, not step outputs, because reusable-workflow step
-outputs are unreliable on failed runs. Anything consuming them scrapes the log.
+The verdict travels as **log lines**, not step outputs, because reusable-workflow step outputs
+are unreliable on failed runs. Anything consuming them scrapes the log.
+
+Two different places emit it, and knowing which one spoke tells you which stage failed:
+
+| Emitter | Covers | Classes it can emit |
+|---|---|---|
+| `portal-publish.sh` | the Portal phases — search, validate, guard, publish, verify | `published`, `deterministic`, `resumable` |
+| step *Diagnose & classify Sonatype publish failure* | the Gradle upload/close stage, before the Portal | `deterministic`, `resumable`, `transient`, `unknown` |
+
+They are mutually exclusive. The script drops a marker file when it classifies, and the workflow
+step stays quiet if that marker is present — so exactly one `RELEASE_PUBLISH_CLASS` line appears
+per run. `transient` and `unknown` therefore only ever describe a failure *before* the Portal took
+over; the script has a `fail_transient` helper but no code path reaches it.
 
 | Class | Retryable | Meaning |
 |---|:---:|---|
@@ -403,8 +417,14 @@ the caller adds a second approval gate.
   can compute and publish the same version.
 - **A Maven dry-run compiles and tests nothing** — the only build is inside `mvn deploy`, which
   dry-run skips. The Gradle flow always runs `./gradlew build`.
-- **A stranded draft release is finished rather than treated as done**, on every path, because a
-  draft is invisible to the stamp lookup.
+- **A stranded draft release is finished rather than treated as done — but only on one of the two
+  Gradle paths.** A draft is invisible to the stamp lookup, so leaving one in place blocks
+  registration forever. The Gradle flow publishes a draft it finds when the tag *and* a release
+  both already exist; it does nothing about the more likely shape, a draft with no tag (GitHub
+  does not create the tag until a draft is published). On that path the tag gets created and
+  `gh release create` then fails with "release already exists".
+  **Maven:** every path publishes the draft — creation always ends `--draft=false`, and the
+  existing-release path calls `publish_if_draft`.
 - **Registration logic is not separately pinnable.** `common-register-release.yml` is reached
   through a local `uses:` path, so its version is whatever ships in the pinned `octopus-base`
   commit.

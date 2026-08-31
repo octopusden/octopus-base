@@ -35,7 +35,8 @@ workflow_dispatch (increment-version-level, target-ref)
   ├─ calculate-version    (tag calculation, dry-run support)
   │
   ├─ publish-quality-plugin (Sonatype publish, only after version calculated)
-  │    └─ ./gradlew build publishToSonatype closeAndRelease -Pversion=X.Y.Z
+  │    ├─ ./gradlew build publishToSonatype closeSonatypeStagingRepository -Pversion=X.Y.Z
+  │    └─ .github/scripts/portal-publish.sh   (Central Portal publish — IRREVERSIBLE)
   │
   ├─ create-release       (GitHub Release + tag, only after publish succeeds)
   │
