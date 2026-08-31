@@ -29,5 +29,28 @@ jobs:
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           
+      # The retry handler is not a convenience. Without it a single corrupted TLS record while
+      # Maven resolves a dependency fails the build, and this workflow runs in the octopus-test
+      # canary, which is a required check on every octopus-base pull request — so one packet
+      # blocks a merge. Observed on 2026-08-31: the parent POM download died with
+      # `(bad_record_mac) Received fatal alert: bad_record_mac` from repo.maven.apache.org,
+      # reddening octopus-test run 33423149904 and with it octopus-base#205's merge gate, while
+      # every release-smoke job in the same run passed.
+      #
+      # `standard` is Maven's own handler and retries only idempotent transfers; the count is
+      # deliberately small, because this covers a blip, not an outage — an unreachable Central
+      # should still fail fast rather than three times slowly. See TD-002.
+      #
+      # Not in tension with ADR 0004 ("only unambiguous infrastructure failures are marked
+      # retryable"), which governs a different layer: whether a failed RELEASE run may be
+      # re-dispatched against an immutable registry, where an over-eager retry wedges a
+      # component. This retries one idempotent GET of a dependency inside a build, before
+      # anything is staged — the case that ADR calls retryable. The release path deliberately
+      # gets no equivalent, because retrying an UPLOAD mid-publish does touch staging state;
+      # that decision is TD-002's next step, not this change's.
       - name: Maven build
-        run: mvn --batch-mode --update-snapshots package ${{ inputs.mvn-parameters }}
+        run: >-
+          mvn --batch-mode --update-snapshots
+          -Dmaven.wagon.http.retryHandler.class=standard
+          -Dmaven.wagon.http.retryHandler.count=3
+          package ${{ inputs.mvn-parameters }}
