@@ -71,7 +71,7 @@ on:
         type: string
         default: ''
       github-packages-publications:
-        description: 'Comma-separated Gradle publication names to publish to GitHub Packages (maven.pkg.github.com/OWNER/REPOSITORY). Blank = publish nothing. For an artifact that must stay resolvable by Maven coordinates but must not consume Maven Central quota — e.g. a shadow jar a TeamCity metarunner fetches. The build script must declare a publishing repository named GitHubPackages; this input only selects which publications are pushed to it. Note there is no anonymous read on that registry, so consumers need a token with read:packages.'
+        description: 'Comma-separated Gradle publication names to publish to GitHub Packages instead of Maven Central — for an artifact that must stay resolvable by Maven coordinates without spending Central quota, e.g. a shadow jar a TeamCity metarunner fetches. Requires a publishing repository named GitHubPackages in the build script. Blank = publish nothing there. That registry has no anonymous read, so consumers need a token with read:packages.'
         required: false
         type: string
         default: ''
@@ -651,6 +651,30 @@ jobs:
           print("\nPublication set is fit for Maven Central.")
           PY
 
+      # Derives publication routing from github-packages-publications, so no build script has to
+      # name publish tasks — a misspelled name there disables nothing and silently sends the fat
+      # jar to Central. Written unconditionally: with a blank input it disables nothing at all.
+      - name: Prepare publication routing init script
+        run: |
+          cat > "$RUNNER_TEMP/publication-routing.init.gradle" <<'GRADLE'
+          def wanted = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
+                  .split(',').collect { it.trim() }.findAll { it } as Set
+          gradle.projectsEvaluated { g ->
+              g.rootProject.allprojects.each { proj ->
+                  proj.tasks.withType(org.gradle.api.publish.maven.tasks.PublishToMavenRepository).all { t ->
+                      // Exactly the two wrong pairings: a selected publication anywhere but GitHub
+                      // Packages, and an unselected one going there.
+                      if (wanted.contains(t.publication?.name) != (t.repository?.name == 'GitHubPackages')) {
+                          t.enabled = false
+                          println "publication routing: disabled ${t.path}"
+                      }
+                  }
+              }
+          }
+          GRADLE
+        env:
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
       # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
@@ -681,9 +705,10 @@ jobs:
         if: ${{ !inputs.dry-run && inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         run: |
           set -o pipefail
-          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
+          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" --init-script "$RUNNER_TEMP/publication-routing.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -705,48 +730,26 @@ jobs:
           PUBLISH_LOG: ${{ runner.temp }}/publish.log
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
 
-      # Runs AFTER the Central publication has fully succeeded. Both registries refuse to
-      # re-publish an existing version, so publishing here first would leave an orphaned GitHub
-      # package behind whenever Central then failed — and that version could never be retried.
-      # With publish-to-nexus=false every Central step above is skipped and this one still runs,
-      # which is what lets a repository use GitHub Packages as its only Maven target.
+      # After Central: neither registry allows re-publishing a version, so a Central failure after
+      # this would strand the GitHub package with no way to retry it. Still runs when
+      # publish-to-nexus is false, so GitHub Packages can be a repository's only Maven target.
       #
-      # Same credentials as the ghcr.io login above — repository_owner plus the run's GITHUB_TOKEN —
-      # so a caller whose job narrows permissions below packages:write breaks both in the same way.
-      # repository_owner rather than github.actor: the actor varies by trigger (the dispatching user
-      # for repository_dispatch, the clicking user for workflow_dispatch) while the owner does not,
-      # and the registry authenticates on the token regardless.
-      #
-      # Both are passed explicitly. GITHUB_TOKEN is NOT an ambient environment variable — only
-      # secrets.GITHUB_TOKEN exists — and the names are deliberately not GITHUB_ACTOR/GITHUB_TOKEN:
-      # the former is a built-in holding a different value, and shadowing it would mislead.
+      # publishAll is safe because the routing init script has already disabled every publication
+      # not named in the input — otherwise two publications sharing one GAV collide on the POM.
+      # Credentials match the ghcr.io login: repository_owner is stable across triggers where
+      # github.actor is not, and GITHUB_TOKEN has to be passed explicitly because it is not an
+      # ambient variable.
       - name: Publish to GitHub Packages
         if: ${{ !inputs.dry-run && inputs.github-packages-publications != '' }}
         env:
-          PUBLICATIONS: ${{ inputs.github-packages-publications }}
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
           GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
           GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-
-          tasks=()
-          IFS=',' read -ra names <<< "$PUBLICATIONS"
-          for name in "${names[@]}"; do
-            name="${name// /}"
-            [ -z "$name" ] && continue
-            # Gradle derives the task name from the publication name with the first letter
-            # capitalised: publication "bootJava" -> publishBootJavaPublicationTo...Repository.
-            cap="$(tr '[:lower:]' '[:upper:]' <<< "${name:0:1}")${name:1}"
-            tasks+=("publish${cap}PublicationToGitHubPackagesRepository")
-          done
-
-          if [ "${#tasks[@]}" -eq 0 ]; then
-            echo "::error title=No publications resolved::github-packages-publications was set to '$PUBLICATIONS' but yielded no task names." >&2
-            exit 1
-          fi
-
-          printf 'Publishing to GitHub Packages: %s\n' "${tasks[*]}"
-          ./gradlew "${tasks[@]}" -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
+          ./gradlew publishAllPublicationsToGitHubPackagesRepository \
+            --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
+            -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
 
       # On a Sonatype publish failure, surface WHY (and whether a retry can help):
       #  (1) HTTP status + body of the account's staging profiles;
