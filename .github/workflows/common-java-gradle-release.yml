@@ -661,6 +661,9 @@ jobs:
           def wanted = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
                   .split(',').collect { it.trim() }.findAll { it } as Set
           gradle.projectsEvaluated { g ->
+              // An init script also applies to buildSrc and to included builds, which publish
+              // nothing — without this the check below fails there for want of the publication.
+              if (gradle.parent != null) { return }
               def selected = []
               g.rootProject.allprojects.each { proj ->
                   proj.tasks.withType(org.gradle.api.publish.maven.tasks.PublishToMavenRepository).all { t ->

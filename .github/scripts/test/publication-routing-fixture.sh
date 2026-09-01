@@ -52,8 +52,15 @@ done
 # — the regression being guarded against. `required = false` keeps it from failing the runs where
 # libJava is SUPPOSED to publish; the GitHub Packages assertions check the task never appears at
 # all, which is the condition that actually broke.
+#
+# The fixture also carries a buildSrc, because an init script applies to that build too and it
+# publishes nothing: without a guard the routing check fails there before the real build runs.
+# Every assertion below therefore exercises that path.
 fixture="$tmp/fixture"
-mkdir -p "$fixture/sub"
+mkdir -p "$fixture/sub" "$fixture/buildSrc/src/main/groovy"
+cat > "$fixture/buildSrc/build.gradle" <<'G'
+plugins { id 'groovy-gradle-plugin' }
+G
 cat > "$fixture/settings.gradle" <<'G'
 rootProject.name = 'routing-root'
 include 'sub'
