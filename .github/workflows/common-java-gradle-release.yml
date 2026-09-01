@@ -71,7 +71,7 @@ on:
         type: string
         default: ''
       github-packages-publications:
-        description: 'Comma-separated Gradle publication names to publish to GitHub Packages instead of Maven Central — for an artifact that must stay resolvable by Maven coordinates without spending Central quota, e.g. a shadow jar a TeamCity metarunner fetches. Requires a publishing repository named GitHubPackages in the build script. Blank = publish nothing there. That registry has no anonymous read, so consumers need a token with read:packages.'
+        description: 'Comma-separated Gradle publication names to send to GitHub Packages instead of Maven Central — for an artifact that must stay resolvable by Maven coordinates without spending Central quota, e.g. a shadow jar a TeamCity metarunner fetches. Needs a publishing repository named GitHubPackages. That registry has no anonymous read: consumers need a token with read:packages.'
         required: false
         type: string
         default: ''
@@ -651,9 +651,10 @@ jobs:
           print("\nPublication set is fit for Maven Central.")
           PY
 
-      # Derives publication routing from github-packages-publications, so no build script has to
-      # name publish tasks — a misspelled name there disables nothing and silently sends the fat
-      # jar to Central. Written unconditionally: with a blank input it disables nothing at all.
+      # Derives the routing from the input so no build script names publish tasks — a misspelled
+      # name there disabled nothing and silently sent the fat jar to Central. A blank input is a
+      # no-op, so this is written unconditionally.
+      # Covered by .github/scripts/test/publication-routing-fixture.sh.
       - name: Prepare publication routing init script
         run: |
           cat > "$RUNNER_TEMP/publication-routing.init.gradle" <<'GRADLE'
@@ -665,8 +666,8 @@ jobs:
                   proj.tasks.withType(org.gradle.api.publish.maven.tasks.PublishToMavenRepository).all { t ->
                       def toGitHub = t.repository?.name == 'GitHubPackages'
                       def want = wanted.contains(t.publication?.name)
-                      // Exactly the two wrong pairings: a selected publication anywhere but GitHub
-                      // Packages, and an unselected one going there.
+                      // The two wrong pairings: a selected publication anywhere else, and an
+                      // unselected one here.
                       if (want != toGitHub) {
                           t.enabled = false
                       } else if (want) {
@@ -679,9 +680,8 @@ jobs:
                   throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
                           "Check github-packages-publications against the publications this build declares.")
               }
-              // Depends only on the selected tasks. Disabling the others is not enough on its own:
-              // publishAllPublicationsToGitHubPackagesRepository would still drag their dependencies
-              // in, and signing an unpublished publication fails for want of a key in this step.
+              // Disabling the rest is not enough: publishAll...Repository would still drag their
+              // dependencies in, and signing an unpublished publication dies for want of a key here.
               g.rootProject.tasks.register('publishSelectedPublicationsToGitHubPackages') {
                   dependsOn selected
               }
@@ -746,13 +746,9 @@ jobs:
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
 
       # After Central: neither registry allows re-publishing a version, so a Central failure after
-      # this would strand the GitHub package with no way to retry it. Still runs when
-      # publish-to-nexus is false, so GitHub Packages can be a repository's only Maven target.
-      #
-      # The task comes from the routing init script and depends only on the selected publications.
-      # Credentials match the ghcr.io login: repository_owner is stable across triggers where
-      # github.actor is not, and GITHUB_TOKEN has to be passed explicitly because it is not an
-      # ambient variable.
+      # this would strand the GitHub package. Still runs when publish-to-nexus is false, so GitHub
+      # Packages can be a repository's only Maven target. Credentials match the ghcr.io login —
+      # repository_owner is stable across triggers where github.actor is not.
       - name: Publish to GitHub Packages
         if: ${{ !inputs.dry-run && inputs.github-packages-publications != '' }}
         env:

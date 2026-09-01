@@ -70,6 +70,13 @@ jobs:
         shell: bash
         run: bash .github/scripts/test/list-publications-fixture.sh
 
+      # Publishes to file:// repositories so the routing tasks really run. Neither a --dry-run nor
+      # an `enabled` check would do: disabling a publish task leaves its dependencies on the graph,
+      # which is how a signing task with no key reached a release and failed it after upload.
+      - name: Publication routing against a real build
+        shell: bash
+        run: bash .github/scripts/test/publication-routing-fixture.sh
+
   quality:
     name: quality
     runs-on: ubuntu-latest
