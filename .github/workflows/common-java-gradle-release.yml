@@ -660,15 +660,30 @@ jobs:
           def wanted = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
                   .split(',').collect { it.trim() }.findAll { it } as Set
           gradle.projectsEvaluated { g ->
+              def selected = []
               g.rootProject.allprojects.each { proj ->
                   proj.tasks.withType(org.gradle.api.publish.maven.tasks.PublishToMavenRepository).all { t ->
+                      def toGitHub = t.repository?.name == 'GitHubPackages'
+                      def want = wanted.contains(t.publication?.name)
                       // Exactly the two wrong pairings: a selected publication anywhere but GitHub
                       // Packages, and an unselected one going there.
-                      if (wanted.contains(t.publication?.name) != (t.repository?.name == 'GitHubPackages')) {
+                      if (want != toGitHub) {
                           t.enabled = false
-                          println "publication routing: disabled ${t.path}"
+                      } else if (want) {
+                          selected << t
                       }
                   }
+              }
+              def missing = wanted - selected.collect { it.publication.name }
+              if (missing) {
+                  throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
+                          "Check github-packages-publications against the publications this build declares.")
+              }
+              // Depends only on the selected tasks. Disabling the others is not enough on its own:
+              // publishAllPublicationsToGitHubPackagesRepository would still drag their dependencies
+              // in, and signing an unpublished publication fails for want of a key in this step.
+              g.rootProject.tasks.register('publishSelectedPublicationsToGitHubPackages') {
+                  dependsOn selected
               }
           }
           GRADLE
@@ -734,8 +749,7 @@ jobs:
       # this would strand the GitHub package with no way to retry it. Still runs when
       # publish-to-nexus is false, so GitHub Packages can be a repository's only Maven target.
       #
-      # publishAll is safe because the routing init script has already disabled every publication
-      # not named in the input — otherwise two publications sharing one GAV collide on the POM.
+      # The task comes from the routing init script and depends only on the selected publications.
       # Credentials match the ghcr.io login: repository_owner is stable across triggers where
       # github.actor is not, and GITHUB_TOKEN has to be passed explicitly because it is not an
       # ambient variable.
@@ -747,7 +761,7 @@ jobs:
           GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          ./gradlew publishAllPublicationsToGitHubPackagesRepository \
+          ./gradlew publishSelectedPublicationsToGitHubPackages \
             --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
 
