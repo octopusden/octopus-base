@@ -555,6 +555,54 @@ jobs:
           DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
 
+      # Derives the routing from the input so no build script names publish tasks — a misspelled
+      # name there disabled nothing and silently sent the fat jar to Central. A blank input is a
+      # no-op, so this is written unconditionally.
+      # Covered by .github/scripts/test/publication-routing-fixture.sh.
+      - name: Prepare publication routing init script
+        run: |
+          cat > "$RUNNER_TEMP/publication-routing.init.gradle" <<'GRADLE'
+          def wanted = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
+                  .split(',').collect { it.trim() }.findAll { it } as Set
+          gradle.projectsEvaluated { g ->
+              // An init script also applies to buildSrc and to included builds, which publish
+              // nothing — without this the check below fails there for want of the publication.
+              if (gradle.parent != null) { return }
+              def selected = []
+              g.rootProject.allprojects.each { proj ->
+                  proj.tasks.withType(org.gradle.api.publish.maven.tasks.AbstractPublishToMaven).all { t ->
+                      def want = wanted.contains(t.publication?.name)
+                      if (t instanceof org.gradle.api.publish.maven.tasks.PublishToMavenRepository) {
+                          def toGitHub = t.repository?.name == 'GitHubPackages'
+                          // The two wrong pairings: a selected publication anywhere else, and an
+                          // unselected one here.
+                          if (want != toGitHub) {
+                              t.enabled = false
+                          } else if (want) {
+                              selected << t
+                          }
+                      } else if (want) {
+                          // PublishToMavenLocal, which is how the Central guard sees what Central
+                          // would receive. A publication routed elsewhere is not Central's problem.
+                          t.enabled = false
+                      }
+                  }
+              }
+              def missing = wanted - selected.collect { it.publication.name }
+              if (missing) {
+                  throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
+                          "Check github-packages-publications against the publications this build declares.")
+              }
+              // Disabling the rest is not enough: publishAll...Repository would still drag their
+              // dependencies in, and signing an unpublished publication dies for want of a key here.
+              g.rootProject.tasks.register('publishSelectedPublicationsToGitHubPackages') {
+                  dependsOn selected
+              }
+          }
+          GRADLE
+        env:
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+
       # Maven Central is for artifacts other projects consume as a DEPENDENCY. A Spring Boot
       # executable jar or a shadow/uber jar there is usually unintended — Gradle module metadata
       # can pull the shadow variant into `from(components.java)` without anyone asking — and a
@@ -564,11 +612,16 @@ jobs:
       # immutable. Runs in dry-run too: that is where the check is cheapest to act on.
       # Signing is force-disabled for this invocation — the guard must not need the GPG key, and
       # unsigned artifacts are enough to inspect names, sizes and archive contents.
+      # The routing script is applied so a publication bound for GitHub Packages is not counted
+      # against Central; without it every such publication needs a fat-jar-publication-allowlist
+      # entry, which cannot be precise because it is keyed by artifactId and the thin and fat
+      # publications of one module share it.
       - name: Guard against publishing fat jars to Maven Central
         if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         env:
           FAT_JAR_ALLOWLIST: ${{ inputs.fat-jar-publication-allowlist }}
           MAX_ARTIFACT_MB: ${{ inputs.max-central-artifact-mb }}
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
         run: |
           set -euo pipefail
 
@@ -590,6 +643,7 @@ jobs:
             -Pnexus=true \
             -Dmaven.repo.local="$GUARD_REPO" \
             --init-script "$RUNNER_TEMP/no-signing.init.gradle" \
+            --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
 
           python3 - "$GUARD_REPO" <<'PY'
@@ -650,48 +704,6 @@ jobs:
               sys.exit(1)
           print("\nPublication set is fit for Maven Central.")
           PY
-
-      # Derives the routing from the input so no build script names publish tasks — a misspelled
-      # name there disabled nothing and silently sent the fat jar to Central. A blank input is a
-      # no-op, so this is written unconditionally.
-      # Covered by .github/scripts/test/publication-routing-fixture.sh.
-      - name: Prepare publication routing init script
-        run: |
-          cat > "$RUNNER_TEMP/publication-routing.init.gradle" <<'GRADLE'
-          def wanted = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
-                  .split(',').collect { it.trim() }.findAll { it } as Set
-          gradle.projectsEvaluated { g ->
-              // An init script also applies to buildSrc and to included builds, which publish
-              // nothing — without this the check below fails there for want of the publication.
-              if (gradle.parent != null) { return }
-              def selected = []
-              g.rootProject.allprojects.each { proj ->
-                  proj.tasks.withType(org.gradle.api.publish.maven.tasks.PublishToMavenRepository).all { t ->
-                      def toGitHub = t.repository?.name == 'GitHubPackages'
-                      def want = wanted.contains(t.publication?.name)
-                      // The two wrong pairings: a selected publication anywhere else, and an
-                      // unselected one here.
-                      if (want != toGitHub) {
-                          t.enabled = false
-                      } else if (want) {
-                          selected << t
-                      }
-                  }
-              }
-              def missing = wanted - selected.collect { it.publication.name }
-              if (missing) {
-                  throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
-                          "Check github-packages-publications against the publications this build declares.")
-              }
-              // Disabling the rest is not enough: publishAll...Repository would still drag their
-              // dependencies in, and signing an unpublished publication dies for want of a key here.
-              g.rootProject.tasks.register('publishSelectedPublicationsToGitHubPackages') {
-                  dependsOn selected
-              }
-          }
-          GRADLE
-        env:
-          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
 
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script

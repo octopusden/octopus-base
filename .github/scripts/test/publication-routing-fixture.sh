@@ -149,6 +149,25 @@ check "leaves an unrelated build alone" "the init script broke a build that name
 [ -f "$fixture/out-sonatype/org/fixture/routing-root/routing-root-fat/9.9.9-fixture/routing-root-fat-9.9.9-fixture-all.jar" ]; check \
   "disables nothing when no publications are named" "a publication was disabled despite a blank input"
 
+echo "-- the Central guard does not see a routed publication --------------------"
+# The guard publishes to mavenLocal and inspects what lands there, so a publication bound for
+# GitHub Packages must not appear — otherwise it needs a fat-jar-publication-allowlist entry, and
+# that list is keyed by artifactId, which the thin and fat publications of one module share.
+guard="$tmp/guard-m2"
+rm -rf "$guard"
+( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=fatJava \
+    ./gradlew --project-dir "$fixture" publishToMavenLocal -Dmaven.repo.local="$guard" \
+    --init-script "$INIT" \
+    -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
+) > "$tmp/log" 2>&1
+check "publishes to mavenLocal with a publication routed away" "the guard's own invocation broke"
+! find "$guard" -name '*-all.jar' 2>/dev/null | grep -q .; check \
+  "keeps a routed publication out of the guard's view" \
+  "the fat jar reached mavenLocal, so the guard counts it against Central and demands an allowlist entry"
+find "$guard" -name 'routing-root-9.9.9-fixture.jar' 2>/dev/null | grep -q .; check \
+  "still shows the Central-bound publication to the guard" \
+  "the thin jar vanished too, so the guard would inspect nothing and pass everything"
+
 echo
 echo "passed=$pass failed=$fail"
 rm -rf "$tmp"
