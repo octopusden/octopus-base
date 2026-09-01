@@ -70,6 +70,11 @@ on:
         required: false
         type: string
         default: ''
+      github-packages-publications:
+        description: 'Comma-separated Gradle publication names to publish to GitHub Packages (maven.pkg.github.com/OWNER/REPOSITORY). Blank = publish nothing. For an artifact that must stay resolvable by Maven coordinates but must not consume Maven Central quota — e.g. a shadow jar a TeamCity metarunner fetches. The build script must declare a publishing repository named GitHubPackages; this input only selects which publications are pushed to it. Note there is no anonymous read on that registry, so consumers need a token with read:packages.'
+        required: false
+        type: string
+        default: ''
     secrets:
       OSSRH_USERNAME:
         required: false
@@ -699,6 +704,49 @@ jobs:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           PUBLISH_LOG: ${{ runner.temp }}/publish.log
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+
+      # Runs AFTER the Central publication has fully succeeded. Both registries refuse to
+      # re-publish an existing version, so publishing here first would leave an orphaned GitHub
+      # package behind whenever Central then failed — and that version could never be retried.
+      # With publish-to-nexus=false every Central step above is skipped and this one still runs,
+      # which is what lets a repository use GitHub Packages as its only Maven target.
+      #
+      # Same credentials as the ghcr.io login above — repository_owner plus the run's GITHUB_TOKEN —
+      # so a caller whose job narrows permissions below packages:write breaks both in the same way.
+      # repository_owner rather than github.actor: the actor varies by trigger (the dispatching user
+      # for repository_dispatch, the clicking user for workflow_dispatch) while the owner does not,
+      # and the registry authenticates on the token regardless.
+      #
+      # Both are passed explicitly. GITHUB_TOKEN is NOT an ambient environment variable — only
+      # secrets.GITHUB_TOKEN exists — and the names are deliberately not GITHUB_ACTOR/GITHUB_TOKEN:
+      # the former is a built-in holding a different value, and shadowing it would mislead.
+      - name: Publish to GitHub Packages
+        if: ${{ !inputs.dry-run && inputs.github-packages-publications != '' }}
+        env:
+          PUBLICATIONS: ${{ inputs.github-packages-publications }}
+          GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
+          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          tasks=()
+          IFS=',' read -ra names <<< "$PUBLICATIONS"
+          for name in "${names[@]}"; do
+            name="${name// /}"
+            [ -z "$name" ] && continue
+            # Gradle derives the task name from the publication name with the first letter
+            # capitalised: publication "bootJava" -> publishBootJavaPublicationTo...Repository.
+            cap="$(tr '[:lower:]' '[:upper:]' <<< "${name:0:1}")${name:1}"
+            tasks+=("publish${cap}PublicationToGitHubPackagesRepository")
+          done
+
+          if [ "${#tasks[@]}" -eq 0 ]; then
+            echo "::error title=No publications resolved::github-packages-publications was set to '$PUBLICATIONS' but yielded no task names." >&2
+            exit 1
+          fi
+
+          printf 'Publishing to GitHub Packages: %s\n' "${tasks[*]}"
+          ./gradlew "${tasks[@]}" -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
 
       # On a Sonatype publish failure, surface WHY (and whether a retry can help):
       #  (1) HTTP status + body of the account's staging profiles;
