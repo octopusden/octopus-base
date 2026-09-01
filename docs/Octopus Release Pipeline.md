@@ -188,10 +188,14 @@ The listing is essentially the whole cost: on the canary the repo1 sweep measure
 Both ceilings fall open: exceeding either is a warning, never a failure.
 
 > When it does stop, it separates the two situations Sonatype's identical error string conflates:
-> the previous release published *and* was tagged — release the next version, after checking the
-> release log, since the tag does not prove the entry exists — versus published but never recorded
-> (that is [#189](https://github.com/octopusden/octopus-base/issues/189) — a recovery, not a
-> re-dispatch). In dry-run every stop degrades to a warning.
+> the previous release published **and fully recorded** — the tag `v<version>` *and* its GitHub
+> release both present — release the next version, after checking the release log, since neither of
+> those two proves the entry exists — versus published but **not** fully recorded, which includes a
+> tag whose GitHub release is missing (that is
+> [#189](https://github.com/octopusden/octopus-base/issues/189) — a recovery, not a re-dispatch).
+> A tag alone therefore routes to the recovery, not to the next version. When either lookup fails
+> for a reason other than a 404 the state stays unknown and the message says so. In dry-run every
+> stop degrades to a warning.
 
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
@@ -412,7 +416,7 @@ the release state.
 |---|:---:|:---:|:---:|:---:|---|
 | Guard rejects the upload | — | — | — | — | Nothing left on Central, in git or in the log. But a `docker-image` release has already pushed its image by this point — the push runs before the guard — and nothing cleans that up (#190). Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
-| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. If the tag or release is missing, run the #189 recovery. Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
+| Version already on Central | published earlier | varies | varies | varies | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. Nothing is built, so this run leaves nothing behind and the earlier release's artifacts are untouched; what varies is whether that release was recorded. If the tag or the GitHub release is missing, run the #189 recovery. Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
