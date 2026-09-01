@@ -344,7 +344,10 @@ while [ "${#pending[@]}" -gt 0 ]; do
   still=()
   for c in "${pending[@]}"; do
     grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
-    url="$REPO1/${grp//./\/}/$art/$ver/$art-$ver.pom"
+    # See central-preflight.sh: the escaped form survives only on bash 4.3+, which the
+    # runner has — this one is version-independent, so the scenario suite exercises the
+    # same URL locally as CI does.
+    url="$REPO1/${grp//.//}/$art/$ver/$art-$ver.pom"
     code=$(curl "${NET[@]}" -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
     if [ "$code" = "200" ]; then
       echo "  OK   $c"

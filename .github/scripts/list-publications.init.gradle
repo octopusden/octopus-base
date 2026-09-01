@@ -1,0 +1,37 @@
+// Lists the Maven publications this build would upload, so the release can ask Maven Central
+// whether the version is already there BEFORE building anything (octopus-base#195).
+//
+// Applied with --init-script by the release workflow's Central preflight step. Reads
+// OCTOPUS_COORDS_FILE (where to write) and OCTOPUS_RELEASE_VERSION (which version counts),
+// and writes one `group:artifact` per line.
+//
+// projectsEvaluated fires after every project's `afterEvaluate` has run, which is where the
+// convention plugin and java-gradle-plugin create their publications — including the plugin
+// marker publications. Written to a file rather than stdout so Gradle's own chatter cannot be
+// mistaken for a coordinate.
+//
+// Gradle does the filtering because it already knows which version it would publish: only
+// publications at the release version reach the file, and the set collapses duplicates. A
+// publication at any other version is reported and dropped — it is not evidence either way,
+// and asking Central about it would answer a different question.
+//
+// Covered by .github/scripts/test/list-publications-fixture.sh, which runs this against a
+// real java-gradle-plugin + maven-publish build.
+def out = new File(System.getenv('OCTOPUS_COORDS_FILE'))
+def want = System.getenv('OCTOPUS_RELEASE_VERSION')
+gradle.projectsEvaluated { g ->
+    def seen = new LinkedHashSet<String>()
+    g.rootProject.allprojects.each { proj ->
+        def publishing = proj.extensions.findByName('publishing')
+        if (publishing == null) return
+        publishing.publications.each { pub ->
+            if (!(pub instanceof org.gradle.api.publish.maven.MavenPublication)) return
+            if (pub.version == want) {
+                seen << "${pub.groupId}:${pub.artifactId}".toString()
+            } else {
+                println "skipping ${pub.groupId}:${pub.artifactId}:${pub.version} - not the version being released ($want)"
+            }
+        }
+    }
+    out.withWriter('UTF-8') { w -> seen.each { w.writeLine(it) } }
+}

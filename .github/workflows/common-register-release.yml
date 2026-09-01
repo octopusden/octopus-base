@@ -38,6 +38,38 @@ jobs:
           set -euo pipefail
           echo "OCTOPUS_MODULE_NAME=${OCTOPUS_REPOSITORY##*/}" >> "$GITHUB_ENV"
 
+      # This workflow runs against the caller's checkout, which has no copy of the
+      # helper, so it is fetched from the pinned version of this workflow. A full
+      # commit SHA is required: an empty or non-SHA ref would make actions/checkout
+      # silently fall back to a default branch and run a different script version.
+      #
+      # Neither this step nor the fetch may FAIL the job, though. Registration is
+      # deliberately fail-open (see below), and a job that dies before the guard runs
+      # produces exactly the outcome the guard exists to prevent — release published,
+      # never recorded. So an unpinnable helper leaves the sha empty, the fetch is
+      # skipped, and the guard falls back to registering.
+      - name: Resolve release-log helper ref
+        id: helper-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Release-log helper not pinned::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the duplicate check is skipped and this release is registered unconditionally."
+          fi
+
+      - name: Fetch release-log helper
+        if: ${{ steps.helper-ref.outputs.sha != '' }}
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-helper
+          sparse-checkout: .github/scripts
+
       # Both registration paths can be wired at the same time — the release workflow's
       # immediate registration and the separate artifact-check workflow — and each
       # release-log entry is a commit that triggers downstream post-processing, so
@@ -50,6 +82,11 @@ jobs:
       # Deliberately fail-open: if the log cannot be read, register anyway, because a
       # missing entry stalls the release pipeline while a duplicate one only repeats
       # bookkeeping.
+      #
+      # The lookup itself lives in a script so it can be tested — see
+      # .github/workflows/test-release-log-has-version.yml. It prints "true" only when the
+      # version is positively present in the log, and "false" for every unreadable or absent
+      # case, which is what keeps this guard fail-open.
       - name: Skip if already registered
         id: already-registered
         env:
@@ -57,40 +94,35 @@ jobs:
           RELEASE_LOG_REPOSITORY: ${{ inputs.release-log-repository }}
           RELEASE_VERSION: ${{ inputs.release-version }}
         run: |
-          set -uo pipefail
-          # An empty version would match any blank line in the log and read as "already
-          # registered", so a caller that failed to resolve its version would silently
-          # register nothing at all.
-          if [ -z "$RELEASE_VERSION" ]; then
-            echo "::error title=No version to register::The caller passed an empty release version."
+          set -euo pipefail
+          # Checked here as well as inside the helper. The helper must stand alone — its tests
+          # call it directly — and this step must still refuse an unusable version on the
+          # fallback path below, where the helper is not there to refuse it.
+          if [[ ! "${RELEASE_VERSION}" =~ ^[^[:space:]]+$ ]]; then
+            echo "::error title=No usable version to register::The caller passed \"${RELEASE_VERSION}\" as the release version, which is empty, blank, or spans more than one line."
             exit 1
           fi
+
+          # Not registered unless the helper positively says so. Every way of not getting an
+          # answer — no helper, or a helper that failed — leaves this value and registers,
+          # which is the fail-open behaviour this guard is built around.
           registered=false
-          encoded="$(gh api "repos/${RELEASE_LOG_REPOSITORY}/contents/${OCTOPUS_MODULE_NAME}.txt" \
-            --jq '.content' 2>/dev/null | tr -d '\n')"
-          # The contents API returns an empty payload for files it will not inline (over
-          # ~1 MB), which decodes to garbage rather than failing; treat it as unreadable.
-          log=""
-          if [ -n "$encoded" ] && [ "$encoded" != "null" ]; then
-            # Keep the decoded text only if decoding actually succeeded: base64 can emit
-            # valid bytes before reporting malformed input, and since this step omits
-            # set -e, that partial text would otherwise be searched — a match in it would
-            # skip registration, the opposite of the intended fail-open.
-            if decoded="$(base64 -d <<<"$encoded" 2>/dev/null)"; then
-              # Strip CR so the whole-line match still works if the log ever gains CRLF
-              # endings; without it the guard would silently never match.
-              log="$(tr -d '\r' <<<"$decoded")"
-            else
-              echo "Release log could not be decoded; registering."
-            fi
-          fi
-          if [ -n "$log" ]; then
-            if grep -qxF "$RELEASE_VERSION" <<<"$log"; then
-              registered=true
-              echo "::notice title=Already registered::${OCTOPUS_MODULE_NAME} ${RELEASE_VERSION} is already in the release log; skipping."
-            fi
+          helper=.octopus-base-helper/.github/scripts/release-log-has-version.sh
+
+          # The call sits in an `elif` condition because the helper still refuses unusable
+          # ARGUMENTS with a non-zero exit — an empty repository or module name trips `${1:?}`
+          # — and a bare assignment under `set -e` would kill the step before it writes an
+          # answer, which is the very failure this guard exists to prevent. Safe only because
+          # the version, the one input that must stop the release, is validated above.
+          #
+          # It captures into `answer` rather than into `registered`, so a helper that printed
+          # something before failing cannot leave that text in the value written below.
+          if [ ! -f "$helper" ]; then
+            echo "::warning title=Duplicate check skipped::The release-log helper could not be fetched, so this release is registered without checking whether it already is."
+          elif ! answer="$(bash "$helper" "${RELEASE_LOG_REPOSITORY}" "${OCTOPUS_MODULE_NAME}" "${RELEASE_VERSION}")"; then
+            echo "::warning title=Duplicate check failed::The release-log helper exited non-zero, so this release is registered without checking whether it already is."
           else
-            echo "Release log for ${OCTOPUS_MODULE_NAME} could not be read (new module, or a read failure); registering."
+            registered="$answer"
           fi
           echo "registered=${registered}" >> "$GITHUB_OUTPUT"
 

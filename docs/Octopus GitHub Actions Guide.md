@@ -1,5 +1,3 @@
-:exclamation: **NOTE:** _This article needs to be revised_
-
 ## GitHub Action
 
 ### Setup a workflow trigger
@@ -25,92 +23,95 @@ client_payload:
       type: string
     project_version:
       type: string
-      pattern: ^v([0-9]+)\.?([0-9]+)?\.?([0-9]+)?
+      pattern: ^([0-9]+)\.([0-9]+)\.([0-9]+)$
 ```
 
-## Jobs
+`project_version` carries **no** leading `v`: the release prepends one to build the tag, so a
+`v`-prefixed payload produces the tag `vv2.0.1`. Three components are also not optional in
+practice — a version like `2.0` publishes and tags but fails at registration, which requires
+strict `X.Y.Z`.
+
+## Calling the shared release workflow
+
+A consumer does not write the release steps. It calls the reusable workflow, and checkout, build,
+signing, publication and tagging all happen inside it. **Registration is the exception**: with the
+defaults it does *not* run here — `register-release-immediately` is `false`, so the release log
+entry is made by a second, separate caller shown below. Setting that input to `true` moves
+registration into this run instead. A complete release caller is about fifteen lines:
 
 ```yaml
+name: Gradle Release
+
+on:
+  repository_dispatch:
+    types: [ release ]
+
 jobs:
   build:
-    runs-on: ubuntu-latest
-    environment: Prod
-```
-Where 'environment: Prod' it is an environment is used to describe a general deployment target.
-
-## Steps
-
-In general block 'Steps' should contain the following operations:
-
-- Checkout and switch to a commit
-- Set up JDK
-- Build project
-- Publish artifacts to sonatype
-- Create a docker image and publish it to **ghcr.io**
-
-## Calculate a version on the GH side
-
-To get the version from the tag(when the version is no input parameter):
-```yaml
-  - uses: actions-ecosystem/action-get-latest-tag@v1
-    id: tag_version
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@v2.7.1
     with:
-      initial_version: v2.0.0
+      flow-type: hybrid
+      java-version: '11'
+      commit-hash: ${{ github.event.client_payload.commit }}
+      build-version: ${{ github.event.client_payload.project_version }}
+    secrets: inherit
 ```
-[More information about this action](https://github.com/marketplace/actions/actions-ecosystem-action-get-latest-tag)
 
-To upgrade the version:
+Two things about the calling job are easy to get wrong:
+
+- **Do not set `runs-on:`.** The runner and the `Prod` environment are set inside the reusable
+  workflow. Declaring `environment:` in the caller adds a second approval gate.
+- **`secrets: inherit` is required — on whichever caller registers.** `OCTOPUS_GITHUB_TOKEN`
+  reaches the registration step only through it, and nothing at the contract level will tell you
+  if it is missing. With the defaults that caller is the `workflow_run` one below, so both need
+  it: this one for Sonatype and GPG, that one for the registration token.
+
+Registration is a separate caller, triggered by the release workflow finishing:
+
 ```yaml
-  - uses: actions-ecosystem/action-bump-semver@v1
-    id: bump_semver
+name: Check for artifact and register release
+
+on:
+  workflow_run:
+    workflows: ["Gradle Release"]
+    types:
+      - completed
+
+jobs:
+  build:
+    uses: octopusden/octopus-base/.github/workflows/common-check-and-register-release.yml@v2.7.1
+    if: "${{ github.event.workflow_run.conclusion == 'success' }}"
     with:
-      current_version: ${{ steps.tag_version.outputs.tag }}
-      level: patch
-```
-[More information about this action](https://github.com/actions-ecosystem/action-bump-semver)
-
-## Publication
-
-Publication looks like a gradle task execution. Example:
-
-```yaml
-- name: Publish
-  run: ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository -Pversion=${{ github.event.client_payload.project_version }}
-  env:
-    MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-    MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-    ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-    ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-    BUILD_VERSION: ${{ github.event.client_payload.project_version }}
+      artifact-pattern: "octopus/octopus-external-systems-clients/jira-client/_VER_/jira-client-_VER_.jar"
+    secrets: inherit
 ```
 
-To publish to the docker registry:
-- login to **ghcr.io**
-```yaml
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v2
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-```
-- and push an image
-```yaml
-    - name: Push to docker registry
-      run: docker push ghcr.io/$GITHUB_REPOSITORY:${{ github.event.client_payload.project_version }}
-```
+`artifact-pattern` is relative to `https://repo1.maven.org/maven2/org/octopusden`, with `_VER_`
+as the version placeholder. Point it at a module that is actually published.
+
+Always pin to a released tag, never `@main`.
+
+## Version calculation, publication, tagging
+
+All of it is inside the reusable workflow — the version bump, the Sonatype upload, the Central
+Portal publication, the tag and the GitHub Release. A consumer configures it with inputs and
+never writes these steps.
+
+What runs, in what order, with what deadlines, and what state each kind of failure leaves behind
+is described in [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md).
 
 ## Examples
 
-- [Release workflow(non-docker)](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/release.yml)
-- [Release workflow(with docker)](https://github.com/octopusden/octopus-employee-service/blob/main/.github/workflows/buildAndRelease.yml)
+- [Release workflow (non-docker)](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/release.yml)
+- [Release workflow (with docker)](https://github.com/octopusden/octopus-employee-service/blob/main/.github/workflows/release.yml)
 - [Build workflow](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/build.yml)
+- [Registration workflow](https://github.com/octopusden/octopus-external-systems-client/blob/main/.github/workflows/check-and-register.yml)
 
 ## Reusable Quality and Security Gates (Gradle)
 
 Use reusable workflows from `octopus-base` to avoid copy-paste between repositories.
 
-Pin reusable workflow references to a released tag (for example `@v1.2.0`), not `@main`.
+Pin reusable workflow references to a released tag (for example `@v2.7.1`), not `@main`.
 This protects consumer repositories from unreviewed breaking changes.
 
 ### Quality gates workflow

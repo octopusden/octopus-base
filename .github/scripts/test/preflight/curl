@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Fake curl for central-preflight.sh tests. Only the repo1 lookup the script makes is
+# answered; anything else is a test bug and fails loudly.
+#
+#   REPO1_CODES     space-separated HTTP codes, consumed one per call, last one repeating.
+#                   A sequence is what lets a scenario say "first coordinate published,
+#                   second free" — the partial case the script must NOT stop on.
+#   EXPECT_COORDS   the `group:artifact` coordinates this scenario may ask about, space
+#                   separated, and EXPECT_VERSION the version they must be asked at. The
+#                   stub derives the ONE URL each of them maps to and rejects anything
+#                   else. Required: a repo1 request arriving without them is a test bug,
+#                   because it would be an unchecked URL.
+set -u
+out=/dev/null; url=""; method=GET
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w|-H|--connect-timeout|--max-time) shift 2 ;;
+    -I|--head) method=HEAD; shift ;;
+    -sS|-s|-S) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+S="${STATE_DIR:?}"
+echo "$method $url" >> "$S/calls.log"
+# The URL is compared against the exact one the coordinate under test maps to, not against
+# a generic shape. Shape-matching was not enough: it left the whole family of URL-assembly
+# errors invisible — group and artifact swapped, the version dropped from the filename, the
+# wrong version, or a group whose dots are never turned into slashes. Each of those keeps
+# every scenario green while 404ing every coordinate in real life, i.e. silently turning the
+# preflight into a no-op on every consumer. The backslash bug that prompted the first version
+# of this check was one spelling of that family, and closing it did not close the family.
+case "$url" in
+  https://repo1.maven.org/maven2/*)
+    if [ -z "${EXPECT_COORDS:-}" ] || [ -z "${EXPECT_VERSION:-}" ]; then
+      echo "stub curl: a repo1 request arrived but the scenario declared no EXPECT_COORDS/EXPECT_VERSION, so the URL is unchecked: $url" >&2
+      exit 96
+    fi
+    matched=false
+    for ga in $EXPECT_COORDS; do
+      grp="${ga%%:*}"; art="${ga##*:}"
+      want="https://repo1.maven.org/maven2/$(printf '%s' "$grp" | tr '.' '/')/$art/$EXPECT_VERSION/$art-$EXPECT_VERSION.pom"
+      if [ "$url" = "$want" ]; then matched=true; break; fi
+    done
+    if [ "$matched" != true ]; then
+      echo "stub curl: not the URL any expected coordinate maps to." >&2
+      echo "  requested: $url" >&2
+      for ga in $EXPECT_COORDS; do
+        grp="${ga%%:*}"; art="${ga##*:}"
+        echo "  expected:  https://repo1.maven.org/maven2/$(printf '%s' "$grp" | tr '.' '/')/$art/$EXPECT_VERSION/$art-$EXPECT_VERSION.pom" >&2
+      done
+      exit 97
+    fi
+    : > "$out"
+    i=$(cat "$S/repo1_i" 2>/dev/null || echo 0); i=$((i+1)); echo "$i" > "$S/repo1_i"
+    echo "${REPO1_CODES:-404}" | awk -v n="$i" '{ if (NF>=n) print $n; else print $NF }'
+    ;;
+  *)
+    echo "stub curl: unexpected URL: $url" >&2
+    exit 99
+    ;;
+esac

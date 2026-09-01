@@ -429,6 +429,104 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v5
 
+      # The release helpers live in octopus-base, but this reusable workflow runs
+      # against the CONSUMER's checkout — so fetch them from the very commit THIS
+      # workflow file comes from (`job.workflow_sha`), keeping script and workflow
+      # versions in lockstep.
+      #
+      # Fetched here, before the build, because the Central preflight below is the
+      # first helper user. Everything that follows — the fat-jar guard, the upload, the
+      # Portal publish — therefore also runs with the helpers already on disk: a failure
+      # in the fetch itself can no longer happen after artifacts are staged, where it
+      # would leave an orphaned deployment that nothing can classify and invite a plain
+      # re-run that uploads the version twice.
+      #
+      # It cannot move any earlier: the checkout of the consumer's own repository cleans
+      # its target directory, so a helper fetched before it would be wiped.
+      #
+      # The guard requires a full commit SHA: an empty or non-SHA ref would make
+      # actions/checkout silently resolve a branch/tag (its default branch), i.e. run
+      # a different script than the pinned workflow — the very skew this prevents.
+      - name: Resolve Portal publish helper ref
+        id: helper-ref
+        if: ${{ inputs.publish-to-nexus }}
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            # A real release must not proceed unpinned. A dry run reports no ref and the
+            # fetch below is skipped for want of one — which is NOT the same as letting it
+            # run with an empty ref: actions/checkout would then silently resolve its
+            # default branch, i.e. run an unpinned helper, the very skew this guard exists
+            # to prevent.
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning title=Publish helper not pinned::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Skipping the helper fetch; the Central preflight will report that it could not check. A real release would stop here."
+              exit 0
+            fi
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
+
+      - name: Fetch Portal publish helper
+        if: ${{ inputs.publish-to-nexus && steps.helper-ref.outputs.sha != '' }}
+        # A real release cannot proceed without these helpers: the publish step is one of
+        # them. A dry run can — nothing downstream of it uses them except the preflight,
+        # which is fail-open by design. So a transient failure fetching octopus-base must
+        # not fail a dry run that, before this step moved here, touched nothing outside the
+        # consumer's own checkout at this point in the job.
+        continue-on-error: ${{ inputs.dry-run }}
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-helper
+          sparse-checkout: .github/scripts
+
+      # Maven Central versions are immutable, so a version that is already there can
+      # never be published again — and until this step existed the release found that out
+      # only at the very end, at `closeSonatypeStagingRepository`, after a full build,
+      # sign, stage and upload, reported as "Deployment reached an unexpected status:
+      # Failed" with `already exists` buried underneath (#195).
+      #
+      # Ask Maven Central up front instead. The coordinates come from Gradle's own
+      # publication model, listed at CONFIGURATION time — no compilation, no signing, and one
+      # HEAD per publication under a bounded overall budget — so this costs seconds against a
+      # build of minutes, and stays cheap even when repo1 is having a bad day.
+      # `-Pnexus=true` and the version properties are passed exactly as the real upload
+      # passes them, because some consumers shape their publications on those: without
+      # them this could inspect a different artifact set than the one that gets uploaded.
+      #
+      # Everything here is deliberately fail-open — see the helper's header. This step can
+      # only save a build that was going to fail anyway, so an unlistable publication set
+      # or an unreachable repo1 warns and continues rather than blocking a release that
+      # would have succeeded. Skipped when resuming a deployment: there the version is
+      # already staged on purpose.
+      - name: Preflight — is this version already on Maven Central?
+        if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          # Everything this step does lives in central-preflight-step.sh, which is covered by
+          # .github/scripts/test/preflight-step-scenarios.sh. What CANNOT move there is the
+          # check that the helper checkout happened at all — a script cannot verify its own
+          # absence. If it did not happen (a tolerated failure on a dry run, see above), this
+          # step must still not fail: the whole check is an optimisation, and the release
+          # behaves exactly as it did before it existed.
+          helper=".octopus-base-helper/.github/scripts"
+          if [ ! -f "$helper/central-preflight-step.sh" ]; then
+            echo "::warning title=Central preflight skipped::The release helpers are not on disk, so whether $BUILD_VERSION is already on Maven Central could not be checked. Continuing."
+            exit 0
+          fi
+
+          HELPER_DIR="$helper" bash "$helper/central-preflight-step.sh"
+
       # gradle build
       - name: Gradle build
         if: inputs.docker-image == ''
@@ -456,41 +554,6 @@ jobs:
         env:
           DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
-
-      # The publish helper lives in octopus-base, but this reusable workflow runs
-      # against the CONSUMER's checkout — so fetch the script from the very commit
-      # THIS workflow file comes from (`job.workflow_sha`), keeping script and
-      # workflow versions in lockstep.
-      #
-      # Both steps deliberately run BEFORE the upload: once artifacts are staged a
-      # failure here would leave an orphaned deployment that nothing can classify,
-      # and the operator's natural plain re-run would upload the version twice.
-      #
-      # The guard requires a full commit SHA: an empty or non-SHA ref would make
-      # actions/checkout silently resolve a branch/tag (its default branch), i.e. run
-      # a different script than the pinned workflow — the very skew this prevents.
-      - name: Resolve Portal publish helper ref
-        id: helper-ref
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
-        env:
-          HELPER_SHA: ${{ job.workflow_sha }}
-        run: |
-          set -euo pipefail
-          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA, so the helper script cannot be pinned to this workflow version. Refusing to publish with an unpinned helper."
-            exit 1
-          fi
-          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
-          echo "Publish helper pinned to octopus-base@${HELPER_SHA}"
-
-      - name: Fetch Portal publish helper
-        if: ${{ !inputs.dry-run && inputs.publish-to-nexus }}
-        uses: actions/checkout@v4
-        with:
-          repository: octopusden/octopus-base
-          ref: ${{ steps.helper-ref.outputs.sha }}
-          path: .octopus-base-helper
-          sparse-checkout: .github/scripts
 
       # Maven Central is for artifacts other projects consume as a DEPENDENCY. A Spring Boot
       # executable jar or a shadow/uber jar there is usually unintended — Gradle module metadata
@@ -813,6 +876,31 @@ jobs:
       # is the default-branch head at dispatch time, frozen for the run, regardless of
       # what was checked out. A hybrid release of anything other than the current tip
       # therefore tagged code that was never built.
+      # This job otherwise has no checkout. The retry below is a script rather than an inline
+      # loop so it can be tested (see .github/workflows/test-wait-for-tag-ref.yml), and a script
+      # has to be fetched. Pinned to job.workflow_sha — the same commit as this workflow — so the
+      # helper can never drift from the logic that calls it. Same mechanism the publish helper
+      # already uses in the build job.
+      - name: Resolve tag-wait helper ref
+        id: tagwait-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the tag-wait helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch tag-wait helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.tagwait-ref.outputs.sha }}
+          path: .octopus-base-tagwait
+          sparse-checkout: .github/scripts
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -874,6 +962,11 @@ jobs:
               exit 1
             fi
             # Tag is correct but has no release: adopt it instead of creating a second one.
+            # The same wait applies here. This path is reached from the REST lookup above, and
+            # --verify-tag resolves the tag through GraphQL, so "REST sees it" does not mean
+            # "the release command will". Usually warm on this path — the tag predates the run —
+            # but the failure shape is identical, so it is not left to luck.
+            bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
             gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
             echo "Created release $TAG on the existing, correct tag $built_sha"
             exit 0
@@ -904,6 +997,24 @@ jobs:
             echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again, so do NOT re-dispatch the release. Recovery: create ${TAG} manually on ${built_sha} with a credential authorized to modify workflows, then use GitHub's 're-run failed jobs' on this run — that repeats only this job, which will adopt the tag and attach the release, and leaves the publish untouched." >&2
             exit 1
           fi
+          # Wait for the ref to become readable before creating the release. The create
+          # above returned success, so the tag exists — but `gh release create --verify-tag`
+          # performs its OWN lookup, and that read can miss a ref committed milliseconds
+          # earlier. Observed on octopus-api-gateway 2.0.19: the ref was created at the built
+          # commit, the very next command reported "tag v2.0.19 doesn't exist", and the tag was
+          # there afterwards. Cost of losing that race is a half-release — artifacts published,
+          # tag created, no release and no registration — recoverable only by re-running.
+          #
+          # `--verify-tag` is deliberately KEPT rather than dropped as redundant: without it,
+          # `gh release create` on a tag it cannot see would create the tag ITSELF at the
+          # default branch head, which is the stale-code release this whole step exists to
+          # prevent. So the fix is to make the read succeed, not to stop checking.
+          #
+          # Extracted into a script so the retry is testable; see
+          # .github/workflows/test-wait-for-tag-ref.yml. It polls the GraphQL ref query that
+          # --verify-tag itself uses, NOT the REST endpoint above: the two are separate read
+          # paths and REST can answer while GraphQL is still stale.
+          bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
           gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
           echo "Created tag and release $TAG at $built_sha"
 

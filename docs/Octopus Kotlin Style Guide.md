@@ -289,6 +289,14 @@ Catch the narrowest exception type that you can handle.
 
 Do not ignore exceptions silently. Handle with context, log, or rethrow.
 
+## Visibility And The API Boundary
+
+Declarations under a `*.internal.*` package must carry the `internal` modifier; declarations outside it in a published artifact are a contract and may only change with the matching version increment.
+
+`internal` documents intent but does not hide anything from bytecode: it compiles to `public`, and public members of an `internal` class are not even name-mangled. Any API-diff check must be told the boundary explicitly.
+
+For the full rules — what counts as API per component type, the increment level per change, and the Java/Groovy equivalents — see the shared contract in `docs/Octopus JVM Style Guidelines.md`, section *Public API Boundary And Version Increments*.
+
 ## Baseline Strategy
 
 1. Enable new rules in report mode first.

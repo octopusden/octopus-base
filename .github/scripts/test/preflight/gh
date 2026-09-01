@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Fake gh for central-preflight.sh tests. Answers only the two recorded-state lookups;
+# anything else is a test bug and fails loudly.
+#
+#   TAG_STATE      yes | no | fail   — whether refs/tags/v<version> exists
+#   RELEASE_STATE  yes | no | fail   — whether the GitHub release for it exists
+#
+# `fail` imitates what gh does for a rate limit or 5xx: non-zero exit, no 404 in the
+# message. The script must not read that as "absent" — that is the difference between
+# telling the operator to release the next version and telling them to recover a
+# half-finished release.
+set -u
+answer() { # <state>
+  case "$1" in
+    yes)  echo '{"ref":"ok"}'; exit 0 ;;
+    no)   echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+    fail) echo 'gh: API rate limit exceeded (HTTP 403)' >&2; exit 1 ;;
+    *)    echo "stub gh: unknown state '$1'" >&2; exit 98 ;;
+  esac
+}
+if [ "${1:-}" = "api" ]; then
+  case "${2:-}" in
+    repos/*/git/ref/tags/*)  answer "${TAG_STATE:-no}" ;;
+    repos/*/releases/tags/*) answer "${RELEASE_STATE:-no}" ;;
+  esac
+fi
+echo "stub gh: unexpected invocation: $*" >&2
+exit 99

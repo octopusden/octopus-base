@@ -112,17 +112,27 @@ It is also recommended to develop a signle image family from single repository. 
 
 Image tagging should follow the template:
 
-`${DOCKER_REGISTRY_HOST}/${REPOSITORY_OWNER}/${REPOSITORY_NAME}:${BRANCH_OR_RELEASE_TAG}`
+`${DOCKER_REGISTRY_HOST}/${REPOSITORY_OWNER}/${DOCKER_IMAGE}:${BRANCH_OR_RELEASE_VERSION}`
 
 where:
 - *DOCKER_REGISTRY_HOST*: the registry to deploy image to. Currently `ghcr.io`.
-- *REPOSITORY_OWNER*: the owner of the source repository, that is: **octopusden** always.
-- *REPOSITORY_NAME*: the short repository name the image is build from.
-- *BRANCH_OR_RELEASE_TAG*: the branch image is build from for development versions (short name, without `/refs/...` prefixes), or version tag for releases:
+- *REPOSITORY_OWNER*: **octopusden** always — the shared release workflow hardcodes it in the
+  push target, even though it logs in as the repository's own owner.
+- *DOCKER_IMAGE*: the `docker-image` input of the release workflow. It defaults to nothing and is
+  **not** derived from the repository name, so a repository whose image should match its name has
+  to say so explicitly.
+- *BRANCH_OR_RELEASE_VERSION*: the branch the image is built from for development versions (short
+  name, without `/refs/...` prefixes), or the release version:
     - **Have to be free from extra garbage and spaces**. This means:
-        - Use `X.Y.Z` fromat for release tags, where *X, Y* and *Z* are integers. **Do NOT** use extra prefixes like `v.`, `ver.` and so on.
+        - Use `X.Y.Z` format for release versions, where *X, Y* and *Z* are integers. **Do NOT**
+          use extra prefixes like `v.`, `ver.` and so on. Note this is the *image* tag; the git
+          tag the release creates deliberately does carry a `v` prefix (`v2.0.1`).
         - **Do NOT** use space characters in branch names.
-    - The most recent release have to be pushed with `latest` tag suffix in this position also.
+
+The shared release workflow pushes the image under exactly one image tag — the version. It does
+**not** push a `latest` image tag; if a repository needs one, that is a manual convention, not
+something the pipeline provides. (The git tag is a separate thing, always created, and unlike the
+image tag it carries the `v` prefix.)
 
 # Functional Tests In Gradle And CI
 
@@ -138,7 +148,11 @@ where:
 
 ## GitHub Actions reusable workflows
 
-- `common-java-gradle-build` and `common-java-gradle-release` are shared across repositories.
+- `common-java-gradle-build` and `common-java-gradle-release` are shared across repositories, as
+  are their Maven equivalents and `common-check-and-register-release`, `common-register-release`
+  and `common-docker-build-deploy`. Everything matching `common-*.yml` is public API; see
+  [`.github/README.md`](../.github/README.md) for the full contract and
+  [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for what the release ones do.
 - Release workflow should not assume repository-specific task names.
 - Use `skip-extra-tasks` in `common-java-gradle-release` only for tasks that really exist in the target repository.
 
@@ -178,9 +192,14 @@ In practice this is unrestrictive. Releasing the default-branch head, the tip of
 `.github/workflows` are unchanged relative to some branch head all work. What is refused is a
 release of an older commit that heads no branch and whose workflow files have since changed —
 re-releasing a historical commit after a workflow change landed. Cut it from a branch tip
-instead, or see the token options in the `octopus-base` issue this check links to in its error.
+instead, or see the token options in
+[Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md#release-refused-with-built-commit-cannot-be-tagged).
 
 ## Maven Central publishing
+
+> This section describes the **Gradle** release workflow. The Maven one publishes through the
+> OSSRH path and has none of `publish-to-nexus`, the publication guard or `resume-deployment-id`;
+> see [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for the differences.
 
 Publish to Central only what other projects consume as a **Maven dependency**. Deployables
 and internal tooling do not belong there:
@@ -194,7 +213,8 @@ and internal tooling do not belong there:
 Set `publish-to-nexus: false` **and** remove the `MavenPublication` from the build script: the
 input guards the pipeline, the build-script change is what stops a manual
 `./gradlew publishToSonatype`. The release still builds, pushes the docker image and creates the
-GitHub release — only the Sonatype publish and its secret check are skipped. Pair it with
+GitHub release — the Sonatype publish, its secret check, the helper fetch and the publication
+guard described below are skipped. Pair it with
 `register-release-immediately: true`, or the release-log gate waits for an artifact that will
 never appear.
 
@@ -254,3 +274,54 @@ The allowlist keeps a legitimate exception explicit and reviewed instead of sile
 The guard runs in dry-run too, so `dry-run: true` rehearses it before a real release. Callers
 pin `octopus-base` by tag, so the guard starts applying to a repository only when it bumps that
 ref — check what the repository publishes today and add the exception in the same PR as the bump.
+
+### The already-published preflight
+
+Maven Central versions are immutable, so a version that is already there can never be published
+again. Before building, the release asks Central whether it already holds the version — one HEAD
+per publication, against coordinates read from Gradle's own publication model at configuration
+time, filtered there to the publications actually at the release version — and refuses to start
+when **every** coordinate is already published.
+
+Both halves are bounded, because a check whose whole justification is being cheaper than the
+build it replaces must not be able to become expensive. The coordinate listing gets 300s — it
+pays cold daemon start and full configuration; measured at 9s on the canary. The HEAD sweep
+gets 90s in total, and whatever is still unanswered when that runs out counts as unanswered,
+which lets the release run. Exceeding either is a warning, never a failure.
+
+That case used to surface at the very end, at `closeSonatypeStagingRepository`, after a full
+build, sign, stage and upload, as:
+
+```
+Deployment reached an unexpected status: Failed
+  - Component with package url: 'pkg:maven/<group>/<artifact>@<version>' already exists
+```
+
+The preflight replaces that with a statement of the situation and what to do about it. Two
+situations look identical in Sonatype's message and are not:
+
+| What the preflight finds | What it means | What to do |
+|---|---|---|
+| Published, and tag + GitHub release exist | The previous release published and was tagged; this dispatch resolved a stale version | Release the next version — but check `octopus-release-log` for the published version first. Registration is a separate job (`register-release-immediately`, off by default) and then a separate run gated on the release having succeeded, so the entry can be missing while the tag and release are present; #189 records a version left exactly like that. From internal CI, the manual release build takes its version from the last **finished** compile build, which can predate the previous release's bump |
+| Published, but the tag or release is missing | An earlier run published and died before recording it | Recovery, not a re-dispatch — see `octopus-base#189`. Tag the commit that run **built** (its log names it; the current head usually is not it), create the release, register it in `octopus-release-log` |
+
+Everything short of "all coordinates published" lets the release run, and says why in the log:
+
+- a **partial** overlap — some coordinates published, some free — is reported as a warning, not a
+  stop. It does not prove this release cannot publish, and blocking it would risk stopping a
+  workable release over a publication that the real upload does not send;
+- an unanswered repo1, an unlistable publication set, or a build that declares no publication
+  at the release version leaves the question open, so the release proceeds exactly as it did
+  before the check existed.
+
+That asymmetry is deliberate: the preflight can only ever save a build that was going to fail,
+so it must never become a new reason a valid release does not run. It is skipped when
+`publish-to-nexus: false` (nothing goes to Central), when `resume-deployment-id` is set (the
+version is already staged on purpose), and when the `octopus-base` helper scripts are not on
+disk — the fetch that brings them is required for a real release, which cannot publish without
+them, and tolerated on a dry run, which uses them for nothing else. Under `dry-run: true` the
+check reports its verdict as a warning without failing.
+
+The coordinate listing has been exercised on Gradle 7.6.4, 8.14.3 and 9.4.1, on single- and
+multi-project builds, and with the configuration cache and configure-on-demand switched on in
+`gradle.properties` — the release passes both off as `-D` properties, which override the file.

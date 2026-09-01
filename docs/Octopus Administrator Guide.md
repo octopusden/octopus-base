@@ -57,11 +57,20 @@ List of commonly used topics:
 |---|---|---|
 |sonatype-nexus|OSSRH_USERNAME| - |
 |sonatype-nexus|OSSRH_TOKEN| - |
-|sonatype-nexus|SONATYPE_PROFILE_ID| - |
 |sonatype-nexus|GPG_PASSPHRASE| - |
 |sonatype-nexus|GPG_PRIVATE_KEY| - |
 |pypi-package|PYPI_API_TOKEN|PYPI_API_TOKEN|
 |*|OCTOPUS_GITHUB_TOKEN| - |
+
+The staging profile is **not** a secret. It is the `staging-profile-id` input of the release
+workflow, defaulting to `org.octopusden`; a `SONATYPE_PROFILE_ID` secret is read by nothing.
+
+The four `OSSRH_*`/`GPG_*` secrets are needed whenever a repository publishes to Maven Central.
+A Gradle repository with `publish-to-nexus: false` does not need them — the release skips the
+publish and its secret check. A Maven repository needs them for every non-dry run.
+
+`OCTOPUS_GITHUB_TOKEN` reaches the release-log registration only through `secrets: inherit` in
+the consumer's calling job.
 
 ## Variables
 

@@ -254,6 +254,57 @@ publishing {
 
 With this setup, `./gradlew check` includes `validatePublications` automatically. If any required field is missing or sources/javadoc JARs are absent, the build fails with a clear error message listing exactly what is wrong.
 
+## Public API Boundary And Version Increments
+
+Semantic Versioning requires a declared API as a precondition, not as an optional extra: *"Software using Semantic Versioning MUST declare a public API. This API could be declared in the code itself or exist strictly in documentation."* ([semver.org](https://semver.org/), rule 1). All three increment rules are defined **relative to that API** — rule 6 (patch: backward compatible bug fixes), rule 7 (minor: new backward compatible functionality **to the public API**), rule 8 (major: backward incompatible changes **to the public API**).
+
+Consequence: a component whose API boundary is not declared cannot have its version level checked at all. Declaring the boundary is therefore the first step, and it differs by component role.
+
+### What counts as API, per component type
+
+| Component type | Its public API is | Everything else | What must be compared against the previous release |
+|----------------|-------------------|-----------------|-----------------------------------------------------|
+| **Library** (consumed via `dependencies { }`) | Public types and members in non-internal packages | Implementation classes | The published bytecode API surface |
+| **Gradle convention plugin** | Plugin ID, extension DSL (properties, nested blocks, `fun`s), **`convention(...)` default values**, registered task names, what is wired into `check` | All classes, including the extension's implementation | The DSL and its defaults — not the bytecode |
+| **Service / application** (no downstream library consumers) | REST contract (`/rest/api/{api-version}` + generated OpenAPI), configuration keys and their defaults, DB schema and migrations, message/event payloads, Docker contract (ports, volumes, healthcheck) | **All code — may be fully internal** | The generated OpenAPI spec and the config key set |
+| **BOM / version catalog / parent POM** | Declared coordinates and version constraints | — | The declared constraints |
+
+A service having no downstream services does **not** mean it has no public API — it means the API is not in the bytecode. Marking all of its code internal is correct; judging its version by an API diff of that code is not.
+
+The last column states *what* must be compared, not *how*. No comparison is automated in any Octopus release workflow today, so all of it is currently a review responsibility. Tool selection per component type is a separate decision.
+
+### Increment level, per API plane
+
+| Change | Level |
+|--------|-------|
+| New endpoint, new config key with a safe default, new DSL property, new public type | minor |
+| Behavior fix with no contract change | patch |
+| Removed or renamed endpoint, config key, DSL property, or public member | major |
+| Changed default value that alters existing consumers' behavior | major |
+| Internal refactor, no contract change | patch |
+
+Changing a `convention(...)` default or a config default alters consumer behavior without changing any signature. This is invisible to every API-diff tool and must be classified manually.
+
+### Marking internals
+
+Octopus marks internals by **package name**, because it is the only mechanism that works identically in Java, Kotlin and Groovy. Where the language has a visibility modifier, it is required in addition.
+
+| Mechanism | Java | Kotlin | Groovy |
+|-----------|:----:|:------:|:------:|
+| `*.internal.*` package name | required | required | required |
+| `internal` modifier | not in the language | required | not in the language |
+
+Rules:
+
+- Anything under a `*.internal.*` package is **not** a contract and may change in a patch release.
+- Anything outside it in a published artifact **is** a contract.
+- In Kotlin, declarations in `*.internal.*` must also carry the `internal` modifier. Note that Kotlin `internal` compiles to `public` in bytecode — the compiler mangles internal *member* names, but **public members of an internal class are not mangled** and stay callable from Java ([Calling Kotlin from Java](https://kotlinlang.org/docs/java-to-kotlin-interop.html)). The modifier documents intent; it does not hide anything from bytecode tooling.
+- Therefore any API-diff tool must be configured with the boundary explicitly, e.g. `japicmp -e 'org.octopusden.octopus.<module>.internal'`. Without it, japicmp's default access level treats every `public`/`protected` bytecode member as API and reports internal refactors as breaking changes.
+
+Why by namespace: the JDK identifies its own internals the same way (`sun.*`, `jdk.internal.*`, [JEP 260](https://openjdk.org/jeps/260)), strongly encapsulated by default since [JEP 396](https://openjdk.org/jeps/396).
+
+Not part of this standard: `@ApiStatus.Internal` (would add an `org.jetbrains:annotations` dependency) and JPMS `module-info.java` `exports` (not used in any Octopus component today). Both are valid ways to declare the boundary and are cited here only so the choice is not re-argued — adopting either is a separate decision.
+
 ## Baseline Strategy
 
 - Baseline/suppressions are allowed only for existing violations.
