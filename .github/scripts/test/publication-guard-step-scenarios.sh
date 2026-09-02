@@ -46,9 +46,27 @@ script = "\n".join(collected) + "\n"
 for required in ("publishToMavenLocal", "inspect-publication-set.py", "GUARD_REPO"):
     if required not in script:
         sys.exit("extracted body lacks %r; extraction is wrong" % required)
+# The shell is part of the contract. A step with no `shell:` key runs as `bash -e {0}` and one
+# declaring `shell: bash` as `bash --noprofile --norc -eo pipefail {0}` — either way errexit is
+# on, and this body depends on it to stop before inspecting a failed publication. Running it
+# under a plain `bash` would test a shell the runner never uses; #206 lost fourteen scenarios
+# to exactly that, so the declared value travels with the body and anything unmodelled stops
+# the suite.
+shell = next((lines[i].strip() for i in range(start, run) if lines[i].strip().startswith("shell:")), None)
+if shell not in ("shell: bash", None):
+    sys.exit("scenarios only model bash; step declares %r" % shell)
 io.open(out, "w", encoding="utf-8").write(script)
+io.open(out + ".shell", "w", encoding="utf-8").write(shell or "shell: bash (implicit default)")
 PY
 [ -s "$body" ] || { echo "could not extract the step body"; exit 1; }
+
+if [ "$(cat "$body.shell")" = "shell: bash" ]; then
+  RUNNER_SHELL=(bash --noprofile --norc -eo pipefail)
+else
+  RUNNER_SHELL=(bash --noprofile --norc -e)
+fi
+echo "step declares: $(cat "$body.shell")"
+echo "running it as: ${RUNNER_SHELL[*]} <body>"
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]
 #   HELPER=missing        do not create the inspector on disk
@@ -88,7 +106,7 @@ STUB
       GRADLE_RC="${GRADLE_RC:-0}" INSPECT_RC="${INSPECT_RC:-0}" \
       RUNNER_TEMP="$dir/runner-temp" BUILD_VERSION=2.0.105 \
       DRY_RUN="${DRY:-false}" FAT_JAR_ALLOWLIST="${ALLOWLIST:-}" MAX_ARTIFACT_MB="${MAX_MB:-8}" \
-      bash "$body" ) >"$out" 2>&1
+      "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
   rc=$?
 
   [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }
@@ -137,7 +155,7 @@ CHECK='grep -q -- "--init-script .*no-signing.init.gradle" argv && grep -q "requ
 STALE=1 CHECK='grep -q "argv=" inspected && [ ! -f runner-temp/m2-publication-guard/leftover.jar ]' \
   run "a leftover guard repository is cleared, so nothing stale is inspected" 0 ""
 
-rm -f "$body"
+rm -f "$body" "$body.shell"
 echo
 echo "publication-guard-step scenarios: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
