@@ -204,9 +204,12 @@ Both ceilings fall open: exceeding either is a warning, never a failure.
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
 Before the upload, the **publication guard** inspects what would reach Central by publishing to a
-throwaway local repository first, and fails on a shadow/uber artifact, a Spring Boot executable
-jar, or anything larger than `max-central-artifact-mb` (default 8). See the Developer Guide for
-the allowlist and the four remedies.
+throwaway local repository first, and fails on **a publication carrying a version other than
+the one being released** — most often Gradle's `unspecified` — or on a shadow/uber artifact, a
+Spring Boot executable jar, or anything larger than `max-central-artifact-mb` (default 8). The
+version refusal is the one that also fires for a publication with no archive at all, a BOM or a
+plugin marker, because the set is enumerated from the generated POMs. See the Developer Guide
+for the allowlist and the four remedies.
 
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never
