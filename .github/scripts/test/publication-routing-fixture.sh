@@ -39,13 +39,16 @@ if [ "$rc" != 0 ]; then
   echo "FAIL  could not extract the init script from $WORKFLOW (step renamed, or the heredoc changed)"
   exit 1
 fi
-for marker in 'publishSelectedPublicationsToGitHubPackages' 'selected <<' 'GitHubPackages'; do
-  grep -qF "$marker" "$INIT" || {
-    echo "FAIL  extracted text is missing '$marker' — the extractor dropped a line or read the wrong heredoc"
-    sed 's/^/    /' "$INIT"
-    exit 1
-  }
-done
+# Braces must balance. A generic completeness check, rather than markers pinned to the current
+# implementation: the extractor once matched `<<` loosely and silently ate a body line containing
+# the Groovy left-shift operator, and the script still parsed.
+opens="$(tr -cd '{' < "$INIT" | wc -c | tr -d ' ')"
+closes="$(tr -cd '}' < "$INIT" | wc -c | tr -d ' ')"
+if [ "$opens" != "$closes" ] || ! grep -qF 'publishSelectedPublicationsToGitHubPackages' "$INIT"; then
+  echo "FAIL  extracted init script looks incomplete (braces $opens/$closes) — the extractor dropped a line or read the wrong heredoc"
+  sed 's/^/    /' "$INIT"
+  exit 1
+fi
 
 # Two publications and two repositories, so all four routing pairings exist. libJava is signed,
 # because that is what puts a signing task on the graph of anything depending on its publish task
@@ -167,6 +170,63 @@ check "publishes to mavenLocal with a publication routed away" "the guard's own 
 find "$guard" -name 'routing-root-9.9.9-fixture.jar' 2>/dev/null | grep -q .; check \
   "still shows the Central-bound publication to the guard" \
   "the thin jar vanished too, so the guard would inspect nothing and pass everything"
+
+echo "-- a project without a GitHubPackages repository keeps its own targets ----"
+# A publication name is not unique across a multi-project build — every ORMS module declares one
+# called `maven`. Matching a name globally disabled the namesake in a project with no GitHub
+# target, which published it NOWHERE and reported nothing. The fixture above is symmetric, so it
+# cannot see that; this one gives the subproject no GitHubPackages repository.
+asym="$tmp/asym"
+mkdir -p "$asym/sub"
+cat > "$asym/settings.gradle" <<'G'
+rootProject.name = 'asym-root'
+include 'sub'
+G
+cat > "$asym/build.gradle" <<'G'
+allprojects {
+    apply plugin: 'java'
+    apply plugin: 'maven-publish'
+    group = "org.asym.${project.name}"
+    version = '9.9.9-fixture'
+    publishing {
+        publications {
+            register('libJava', MavenPublication) { from components.java }
+            register('fatJava', MavenPublication) {
+                artifactId = "${project.name}-fat"
+                artifact(tasks.jar) { classifier = 'all' }
+            }
+        }
+        repositories { maven { name = 'sonatype'; url = uri("${rootDir}/out-sonatype") } }
+    }
+}
+// Only the ROOT can publish to GitHub Packages.
+publishing.repositories {
+    maven { name = 'GitHubPackages'; url = uri("${rootDir}/out-github") }
+}
+G
+
+asym_run() {
+  rm -rf "$asym/out-github" "$asym/out-sonatype"
+  ( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=fatJava \
+      ./gradlew --project-dir "$asym" "$1" --init-script "$INIT" \
+      -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
+  ) > "$tmp/log" 2>&1
+}
+
+asym_run publishAllPublicationsToSonatypeRepository
+check "publishes to Sonatype in an asymmetric build" "the Sonatype side failed outright"
+[ -f "$asym/out-sonatype/org/asym/sub/sub-fat/9.9.9-fixture/sub-fat-9.9.9-fixture-all.jar" ]; check \
+  "leaves a namesake publication alone where it has no GitHub target" \
+  "the subproject's fatJava was disabled for Sonatype and has no GitHub target either, so it publishes NOWHERE"
+! find "$asym/out-sonatype" -path '*asym-root*' -name '*-all.jar' 2>/dev/null | grep -q .; check \
+  "still keeps the routed project's fat jar off Sonatype" "the root fat jar reached Sonatype"
+
+asym_run publishSelectedPublicationsToGitHubPackages
+check "publishes to GitHub Packages in an asymmetric build" "the aggregate task failed"
+[ -f "$asym/out-github/org/asym/asym-root/asym-root-fat/9.9.9-fixture/asym-root-fat-9.9.9-fixture-all.jar" ]; check \
+  "routes the fat jar of the project that has a GitHub target" "the root fat jar did not reach GitHub Packages"
+[ "$(find "$asym/out-github" -name '*-all.jar' 2>/dev/null | wc -l | tr -d ' ')" = "1" ]; check \
+  "routes only that project's fat jar" "more than one fat jar reached GitHub Packages"
 
 echo
 echo "passed=$pass failed=$fail"

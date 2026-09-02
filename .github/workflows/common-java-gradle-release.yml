@@ -104,7 +104,7 @@ on:
 concurrency:
   group: >-
     release-${{ github.repository }}-${{ inputs.dry-run
-      && format('dry-{0}-{1}-{2}-{3}-{4}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image, inputs.publish-to-nexus)
+      && format('dry-{0}-{1}-{2}-{3}-{4}-{5}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image, inputs.publish-to-nexus, inputs.github-packages-publications)
       || 'publish' }}
   cancel-in-progress: false
 
@@ -568,18 +568,37 @@ jobs:
               // An init script also applies to buildSrc and to included builds, which publish
               // nothing — without this the check below fails there for want of the publication.
               if (gradle.parent != null) { return }
+              def repoType = org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+              def anyType = org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
               def selected = []
+              // Routing is decided PER PROJECT. A publication name is not unique across a
+              // multi-project build — every octopus-release-management-service module declares one
+              // called `maven` — so a name matched globally would disable a namesake in a project
+              // that has no GitHub target, publishing it nowhere and saying nothing.
+              def routedIn = [:]
               g.rootProject.allprojects.each { proj ->
-                  proj.tasks.withType(org.gradle.api.publish.maven.tasks.AbstractPublishToMaven).all { t ->
-                      def want = wanted.contains(t.publication?.name)
-                      if (t instanceof org.gradle.api.publish.maven.tasks.PublishToMavenRepository) {
-                          def toGitHub = t.repository?.name == 'GitHubPackages'
-                          // The two wrong pairings: a selected publication anywhere else, and an
-                          // unselected one here.
-                          if (want != toGitHub) {
+                  def here = proj.tasks.withType(repoType).findAll {
+                      it.repository?.name == 'GitHubPackages' && wanted.contains(it.publication?.name)
+                  }
+                  routedIn[proj.path] = here.collect { it.publication.name } as Set
+                  selected.addAll(here)
+              }
+              // Unknown names are still checked globally: a publication routed in any project is
+              // a real name, and one routed nowhere is a typo.
+              def missing = wanted - selected.collect { it.publication.name }
+              if (missing) {
+                  throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
+                          "Check github-packages-publications against the publications this build declares.")
+              }
+              g.rootProject.allprojects.each { proj ->
+                  def routed = routedIn[proj.path]
+                  proj.tasks.withType(anyType).each { t ->
+                      def want = routed.contains(t.publication?.name)
+                      if (repoType.isInstance(t)) {
+                          // The two wrong pairings: a publication routed in this project going
+                          // anywhere else, and one not routed here going to GitHub Packages.
+                          if (want != (t.repository?.name == 'GitHubPackages')) {
                               t.enabled = false
-                          } else if (want) {
-                              selected << t
                           }
                       } else if (want) {
                           // PublishToMavenLocal, which is how the Central guard sees what Central
@@ -587,11 +606,6 @@ jobs:
                           t.enabled = false
                       }
                   }
-              }
-              def missing = wanted - selected.collect { it.publication.name }
-              if (missing) {
-                  throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
-                          "Check github-packages-publications against the publications this build declares.")
               }
               // Disabling the rest is not enough: publishAll...Repository would still drag their
               // dependencies in, and signing an unpublished publication dies for want of a key here.
