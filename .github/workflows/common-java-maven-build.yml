@@ -29,28 +29,71 @@ jobs:
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           
-      # The retry handler is not a convenience. Without it a single corrupted TLS record while
-      # Maven resolves a dependency fails the build, and this workflow runs in the octopus-test
+      # Retrying is not a convenience. Without it a single corrupted TLS record while Maven
+      # resolves a dependency fails the build, and this workflow runs in the octopus-test
       # canary, which is a required check on every octopus-base pull request — so one packet
       # blocks a merge. Observed on 2026-08-31: the parent POM download died with
       # `(bad_record_mac) Received fatal alert: bad_record_mac` from repo.maven.apache.org,
       # reddening octopus-test run 33423149904 and with it octopus-base#205's merge gate, while
       # every release-smoke job in the same run passed.
       #
-      # `standard` is Maven's own handler and retries only idempotent transfers; the count is
-      # deliberately small, because this covers a blip, not an outage — an unreachable Central
-      # should still fail fast rather than three times slowly. See TD-002.
+      # Why the retry is around the process and not inside Maven. Maven's own retry cannot
+      # reach this failure class, in three steps:
+      #   1. `maven.wagon.http.retryHandler.*` is inert here — since 3.9.0 Maven defaults to
+      #      the resolver's native transport, and wagon is used only under
+      #      `-Dmaven.resolver.transport=wagon`;
+      #   2. the native transport's own `aether.connector.http.retryHandler.count` already
+      #      defaults to 3, so it was in force during the failure above;
+      #   3. it delegates to HttpClient's `DefaultHttpRequestRetryHandler`, whose
+      #      nonRetriableClasses list contains `SSLException` — and `bad_record_mac` arrives
+      #      as exactly that. No count makes it retry.
+      # A fresh process is therefore the only layer at which this blip is recoverable.
+      #
+      # Two attempts, not more: this covers a blip, not an outage. And only when the log
+      # carries a transfer signature — a compile error or a failing test must cost one build,
+      # never two. Every retry announces itself, because a silent retry hides a recurring
+      # cost; TD-002 tracks what is still uncovered.
       #
       # Not in tension with ADR 0004 ("only unambiguous infrastructure failures are marked
       # retryable"), which governs a different layer: whether a failed RELEASE run may be
       # re-dispatched against an immutable registry, where an over-eager retry wedges a
-      # component. This retries one idempotent GET of a dependency inside a build, before
-      # anything is staged — the case that ADR calls retryable. The release path deliberately
-      # gets no equivalent, because retrying an UPLOAD mid-publish does touch staging state;
-      # that decision is TD-002's next step, not this change's.
+      # component. This retries a dependency GET inside a build, before anything is staged —
+      # the case that ADR calls retryable. The release path deliberately gets no equivalent,
+      # because retrying an UPLOAD mid-publish does touch staging state; that decision is
+      # TD-002's next step, not this change's.
       - name: Maven build
-        run: >-
-          mvn --batch-mode --update-snapshots
-          -Dmaven.wagon.http.retryHandler.class=standard
-          -Dmaven.wagon.http.retryHandler.count=3
-          package ${{ inputs.mvn-parameters }}
+        shell: bash
+        env:
+          # Passed through the environment rather than interpolated into the script, so a
+          # consumer's parameters cannot become shell syntax.
+          MVN_PARAMETERS: ${{ inputs.mvn-parameters }}
+        run: |
+          set -uo pipefail
+
+          # Failures worth a second process, and nothing else. Anchored on Maven's and
+          # HttpClient's own wording, not on ours.
+          transient='Could not transfer artifact|Connection reset|Connection timed out|Read timed out|Premature end of Content-Length|NoHttpResponseException|SSLException|bad_record_mac|Transfer failed for|status code: 50[0-9]'
+
+          log="${RUNNER_TEMP:-/tmp}/maven-build.log"
+          max_attempts=2
+          attempt=1
+
+          while :; do
+            # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
+            mvn --batch-mode --update-snapshots package $MVN_PARAMETERS 2>&1 | tee "$log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && exit 0
+
+            if ! grep -qE "$transient" "$log"; then
+              echo "Maven failed with no transfer error in the log; not retrying." >&2
+              exit "$rc"
+            fi
+
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error title=Maven transfer failed on every attempt::A transfer error survived ${max_attempts} attempt(s); this is an outage rather than a blip. See TD-002." >&2
+              exit "$rc"
+            fi
+
+            echo "::warning title=Maven transfer retried::Attempt ${attempt} failed on a transfer error, not on the code under test; retrying once. Recurrence is a cost, not a fix — see TD-002."
+            attempt=$((attempt + 1))
+          done
