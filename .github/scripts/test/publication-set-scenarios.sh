@@ -187,6 +187,10 @@ SETUP=':' \
   run "a genuinely empty repository still warns" 0 "Nothing to inspect"
 SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar; pom "$repo" "$G" client-bom 2.0.105' \
   run "an archive and a POM-only publication are counted separately" 0 "Enumerated 2 publication\(s\) from their POMs and inspected 1 archive"
+# The listing used to match archives by artifactId alone, so the same artifactId at two
+# versions — one with a jar, one without — hid the POM-only line for the version that had none.
+SETUP='pom "$repo" "$G" twin 1.0; jar "$repo" "$G" twin 2.0 twin-2.0.jar' VERSION= \
+  run "a POM-only version is listed even when the same artifactId has an archive elsewhere" 0 "twin.*POM-only publication"
 
 echo "-- the closing verdict may not contradict the refusal above ---------------"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \

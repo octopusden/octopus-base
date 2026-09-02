@@ -41,6 +41,7 @@ release_version = os.environ.get("BUILD_VERSION", "").strip()
 dry_run = os.environ.get("DRY_RUN", "").strip().lower() == "true"
 
 publications, published, offenders, wrong_version = [], [], [], []
+archived = set()
 
 # Publications are enumerated from their POMs, not from the archives below. Every Maven
 # publication writes a POM whether or not it has an archive, so this is the only enumeration
@@ -67,6 +68,13 @@ for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in
     artifact_id = path.parent.parent.name
     size_mb = path.stat().st_size / 1048576
     published.append((artifact_id, path.name, size_mb))
+    # Keyed by coordinate AND version, not by artifactId: the same artifactId can appear at two
+    # versions in one local repository, and matching on the name alone then hides the
+    # POM-only line for the version that has no archive.
+    archived.add((
+        "{}:{}".format(str(path.parent.parent.parent.relative_to(repo)).replace("/", "."), artifact_id),
+        path.parent.name,
+    ))
     reasons = []
     # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
     if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
@@ -103,7 +111,7 @@ print(f"Enumerated {len(publications)} publication(s) from their POMs and inspec
       f"{len(published)} archive(s) that would be published to Maven Central "
       f"at version {release_version or '(unknown)'} (size limit {max_mb:g} MB):")
 for coordinate, version in publications:
-    if not any(a == coordinate.split(":")[-1] for a, _n, _s in published):
+    if (coordinate, version) not in archived:
         print(f"  {coordinate:<45} {'(no archive: POM-only publication)':<55} {version}")
 for artifact_id, name, size_mb in published:
     print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
