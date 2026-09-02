@@ -103,7 +103,10 @@ jobs:
 
           while :; do
             # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
-            mvn --batch-mode --update-snapshots package $MVN_PARAMETERS 2>&1 | tee "$log"
+            # `:-` so that dropping the env: mapping above, or renaming the input, degrades to
+            # "no extra parameters" instead of killing the pipeline subshell under `set -u`,
+            # where the failure reads as a Maven failure with mvn never having run.
+            mvn --batch-mode --update-snapshots package ${MVN_PARAMETERS:-} 2>&1 | tee "$log"
             rc=${PIPESTATUS[0]}
             [ "$rc" -eq 0 ] && exit 0
 

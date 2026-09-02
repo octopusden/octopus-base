@@ -257,6 +257,35 @@ STUB
   chmod 700 "$dir/ro"; rm -rf "$dir"
 }
 tee_fails_while_mvn_succeeds
+# The workflow supplies MVN_PARAMETERS from an input that defaults to "", so this bites only
+# if the env: mapping is dropped or the input renamed. Under `set -u` that killed the pipeline
+# subshell before mvn ran, and the step then reported a Maven failure with no Maven in it.
+mvn_parameters_unset() {
+  local dir out rc attempts
+  dir="$(mktemp -d)"; out="$dir/out.txt"
+  mkdir -p "$dir/bin" "$dir/ws" "$dir/rt"
+  printf '0 [INFO] BUILD SUCCESS\n' > "$dir/attempts"
+  cat > "$dir/bin/mvn" <<'STUB'
+#!/usr/bin/env bash
+n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNTER"
+printf '%s\n' "$*" >> "$ARGV"
+printf '%b\n' "$(sed -n "${n}p" "$ATTEMPTS")"; exit 0
+STUB
+  chmod +x "$dir/bin/mvn"
+  ( cd "$dir/ws" && PATH="$dir/bin:$PATH" env -u MVN_PARAMETERS \
+      COUNTER="$dir/counter" ATTEMPTS="$dir/attempts" ARGV="$dir/argv" RUNNER_TEMP="$dir/rt" \
+      "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
+  rc=$?; attempts="$(cat "$dir/counter" 2>/dev/null || echo 0)"
+  if [ "$rc" -eq 0 ] && [ "$attempts" = 1 ] && grep -q '^--batch-mode --update-snapshots package$' "$dir/argv"; then
+    pass=$((pass+1)); echo "ok   an unset MVN_PARAMETERS still runs mvn, with no extra arguments"
+  else
+    fail=$((fail+1)); echo "FAIL an unset MVN_PARAMETERS still runs mvn (rc=$rc attempts=$attempts)"
+    sed 's/^/     | /' "$out"; echo "     | argv: $(cat "$dir/argv" 2>/dev/null)"
+  fi
+  rm -rf "$dir"
+}
+mvn_parameters_unset
+
 
 rm -f "$body" "$body.shell"
 echo
