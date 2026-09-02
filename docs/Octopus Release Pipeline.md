@@ -196,9 +196,10 @@ Both ceilings fall open: exceeding either is a warning, never a failure.
 > release-the-next-version message still tells you to go and check it. Both present: release the
 > next version. Either one confirmed missing — a tag whose GitHub release never appeared included
 > — that is [#189](https://github.com/octopusden/octopus-base/issues/189), a recovery rather than
-> a re-dispatch, so a tag alone routes to the recovery. When either lookup fails for a reason
-> other than a 404 the state stays unknown and the message says so. In dry-run every stop
-> degrades to a warning.
+> a re-dispatch, so a tag alone routes to the recovery. The state stays unknown — and the
+> message says so, listing all three facts to check by hand — when either lookup fails for a
+> reason other than a 404, and also when it cannot look at all: no `GITHUB_REPOSITORY`, or no
+> `gh` on the runner. In dry-run every stop degrades to a warning.
 
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
