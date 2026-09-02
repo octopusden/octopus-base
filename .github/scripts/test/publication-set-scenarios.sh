@@ -113,12 +113,12 @@ jar "$repo" "$G" beta 0.0.0 beta-0.0.0.jar' \
 SETUP='jar "$repo" "$G" automation unspecified automation-unspecified-all.jar' ALLOWLIST=automation \
   run "the fat-jar allowlist does not exempt a foreign version" 1 "carries version 'unspecified'"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' VERSION='' \
-  run "checks nothing when no release version is known" 0 "Inspected 1 artifact" "carries version"
+  run "checks nothing when no release version is known" 0 "Enumerated 1 publication\(s\) from their POMs and inspected 1 archive" "carries version"
 # A padded value must compare equal to the artifact's version, or every publication reads as
 # adrift and no release could ever pass.
 SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar' VERSION='  2.0.105
 ' \
-  run "trims the release version before comparing" 0 "Inspected 1 artifact" "carries version"
+  run "trims the release version before comparing" 0 "Enumerated 1 publication\(s\) from their POMs and inspected 1 archive" "carries version"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' \
   run "says which release version it expected" 1 "This release is 2.0.105"
 SETUP='jar "$repo" "$G" client 0.105 client-0.105.jar' \
@@ -172,6 +172,34 @@ SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \
   run "still names the offending coordinate under dry-run" 0 "carries version 'unspecified'"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' DRY=true \
   run "keeps refusing a fat jar under dry-run, as it always has" 1 "shadow/uber"
+
+echo "-- a publication with no archive is checked, not reported as unchecked ----"
+# The archive glob is not the enumeration. A BOM or a java-gradle-plugin marker has a POM and
+# no jar; reporting "nothing was checked" there would be false, and would hide the case the
+# POM enumeration exists for.
+SETUP='pom "$repo" "$G" platform-bom 2.0.105' \
+  run "a POM-only publication does not report an empty set" 0 "Enumerated 1 publication" "Nothing to inspect"
+SETUP='pom "$repo" "$G" platform-bom 2.0.105' \
+  run "a POM-only publication is listed as having no archive" 0 "POM-only publication"
+SETUP='pom "$repo" "$G" marker unspecified' \
+  run "a POM-only publication at the wrong version is still refused" 1 "carries version 'unspecified'"
+SETUP=':' \
+  run "a genuinely empty repository still warns" 0 "Nothing to inspect"
+SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar; pom "$repo" "$G" client-bom 2.0.105' \
+  run "an archive and a POM-only publication are counted separately" 0 "Enumerated 2 publication\(s\) from their POMs and inspected 1 archive"
+
+echo "-- the closing verdict may not contradict the refusal above ---------------"
+SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \
+  run "a dry run that refused does not end with \"fit\"" 0 "Publication set is NOT fit" "Publication set is fit for Maven Central"
+SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar' DRY=true \
+  run "a clean dry run still ends with \"fit\"" 0 "Publication set is fit for Maven Central" "NOT fit"
+
+echo "-- the environment contract is documented -------------------------------"
+if grep -qE '^Env: .*DRY_RUN' "$SCRIPT"; then
+  echo "PASS  DRY_RUN is named in the script's own env contract"; pass=$((pass+1))
+else
+  echo "FAIL  DRY_RUN is named in the script's own env contract"; fail=$((fail+1))
+fi
 
 echo
 echo "passed=$pass failed=$fail"

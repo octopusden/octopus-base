@@ -159,6 +159,13 @@ jobs:
       - name: Publication set scenarios
         shell: bash
         run: bash .github/scripts/test/publication-set-scenarios.sh
+      # The step AROUND the inspector: its fail-closed branch — the inspector missing from
+      # disk — must stop a real release and only warn in a dry run, and nothing else reaches
+      # it. The scenarios extract the step's own `run:` body from the workflow and drive it
+      # with a stubbed gradlew, so that asymmetry cannot regress silently.
+      - name: Publication guard step scenarios
+        shell: bash
+        run: bash .github/scripts/test/publication-guard-step-scenarios.sh
 
   security:
     name: security

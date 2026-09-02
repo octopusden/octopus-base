@@ -17,7 +17,10 @@ being published contains, which differs from what this build produced when
 resume-deployment-id names another deployment.
 
 Usage: inspect-publication-set.py <local-repo-dir>
-Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, MAX_ARTIFACT_MB
+Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, MAX_ARTIFACT_MB, DRY_RUN
+     DRY_RUN=true downgrades the version refusal from exit 1 to exit 0 (a warning); the
+     fat-jar refusals are unaffected and still exit 1. A direct caller that omits it gets
+     the strict behaviour, which is the safe default.
 Exit 0 = the set is fit to upload, 1 = it is not.
 
 Covered by .github/scripts/test/publication-set-scenarios.sh.
@@ -37,7 +40,7 @@ release_version = os.environ.get("BUILD_VERSION", "").strip()
 # the upload the argument for this check rests on.
 dry_run = os.environ.get("DRY_RUN", "").strip().lower() == "true"
 
-published, offenders, wrong_version = [], [], []
+publications, published, offenders, wrong_version = [], [], [], []
 
 # Publications are enumerated from their POMs, not from the archives below. Every Maven
 # publication writes a POM whether or not it has an archive, so this is the only enumeration
@@ -53,6 +56,7 @@ for pom in sorted(repo.rglob("*.pom")):
     # A release publishes ONE version. Any other — most often Gradle's `unspecified`, when the
     # version properties never reached that project — is a build defect, and Central keeps
     # whatever it is handed forever.
+    publications.append((coordinate, version))
     if release_version and version != release_version:
         wrong_version.append((coordinate, version))
 
@@ -82,7 +86,11 @@ for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in
     if reasons and artifact_id not in allowed:
         offenders.append((artifact_id, path.name, size_mb, "; ".join(reasons)))
 
-if not published:
+# "Nothing to inspect" means no POM either. A publication with no archive is a normal,
+# checked publication — a BOM, or the marker java-gradle-plugin creates — and its version has
+# been compared above, so reporting the set as unchecked because the archive glob found
+# nothing would be false, and would hide the very case this enumeration was rewritten for.
+if not publications and not published:
     print(
         "::warning title=Nothing to inspect::The publication set is empty, so nothing was "
         "checked. This step only runs when the repository is supposed to publish to Maven "
@@ -91,8 +99,12 @@ if not published:
         flush=True,
     )
 
-print(f"Inspected {len(published)} artifact(s) that would be published to Maven Central "
+print(f"Enumerated {len(publications)} publication(s) from their POMs and inspected "
+      f"{len(published)} archive(s) that would be published to Maven Central "
       f"at version {release_version or '(unknown)'} (size limit {max_mb:g} MB):")
+for coordinate, version in publications:
+    if not any(a == coordinate.split(":")[-1] for a, _n, _s in published):
+        print(f"  {coordinate:<45} {'(no archive: POM-only publication)':<55} {version}")
 for artifact_id, name, size_mb in published:
     print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
 if allowed:
@@ -128,4 +140,9 @@ if offenders:
         file=sys.stderr,
     )
     sys.exit(1)
-print("\nPublication set is fit for Maven Central.")
+if wrong_version:
+    # Reached only in a dry run; a real release exited above.
+    print("\nPublication set is NOT fit for Maven Central: a real release stops on the "
+          "version(s) above. This run continues only because it is a dry run.")
+else:
+    print("\nPublication set is fit for Maven Central.")
