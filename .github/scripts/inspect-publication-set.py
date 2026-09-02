@@ -50,10 +50,20 @@ archived = set()
 # whether an artifact is fit for Central at all.
 for pom in sorted(repo.rglob("*.pom")):
     version = pom.parent.name
-    coordinate = "{}:{}".format(
-        str(pom.parent.parent.parent.relative_to(repo)).replace("/", "."),
-        pom.parent.parent.name,
-    )
+    try:
+        coordinate = "{}:{}".format(
+            str(pom.parent.parent.parent.relative_to(repo)).replace("/", "."),
+            pom.parent.parent.name,
+        )
+    except ValueError:
+        # A POM shallower than <group>/<artifactId>/<version>/ is not a publication — a
+        # `publishToMavenLocal` into a throwaway repository does not produce one, but a
+        # traceback here would replace this step's whole point, which is naming the situation
+        # and its remedy.
+        print(f"::warning title=Unrecognised file in the publication set::{pom} is not laid out "
+              "as <group>/<artifactId>/<version>/, so it is not a publication and was skipped.",
+              flush=True)
+        continue
     # A release publishes ONE version. Any other — most often Gradle's `unspecified`, when the
     # version properties never reached that project — is a build defect, and Central keeps
     # whatever it is handed forever.

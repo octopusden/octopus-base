@@ -192,6 +192,13 @@ SETUP='jar "$repo" "$G" client 2.0.105 client-2.0.105.jar; pom "$repo" "$G" clie
 SETUP='pom "$repo" "$G" twin 1.0; jar "$repo" "$G" twin 2.0 twin-2.0.jar' VERSION= \
   run "a POM-only version is listed even when the same artifactId has an archive elsewhere" 0 "twin.*POM-only publication"
 
+# A stray POM above the g/a/v layout used to raise ValueError out of relative_to, replacing
+# the step's message with a traceback. It fails closed either way; it must fail legibly.
+SETUP='mkdir -p "$repo"; printf "<project/>\n" > "$repo/stray.pom"' \
+  run "a POM outside the layout is skipped, not a traceback" 0 "Unrecognised file in the publication set" "Traceback"
+SETUP='mkdir -p "$repo"; printf "<project/>\n" > "$repo/stray.pom"; pom "$repo" "$G" client 2.0.105' \
+  run "and the real publications beside it are still checked" 0 "Enumerated 1 publication" "Traceback"
+
 echo "-- the closing verdict may not contradict the refusal above ---------------"
 SETUP='jar "$repo" "$G" client unspecified client-unspecified.jar' DRY=true \
   run "a dry run that refused does not end with \"fit\"" 0 "Publication set is NOT fit" "Publication set is fit for Maven Central"

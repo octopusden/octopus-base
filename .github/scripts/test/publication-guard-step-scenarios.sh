@@ -52,6 +52,14 @@ for required in ("publishToMavenLocal", "inspect-publication-set.py", "GUARD_REP
 # under a plain `bash` would test a shell the runner never uses; #206 lost fourteen scenarios
 # to exactly that, so the declared value travels with the body and anything unmodelled stops
 # the suite.
+# The `if:` is part of this step's contract, not decoration: the guard must not run when the
+# repository publishes nothing to Central, and must not re-inspect a resumed deployment, whose
+# contents this build did not produce. Deleting the gate left every scenario green, so it is
+# pinned here — the scenarios cannot exercise `if:` themselves, GitHub evaluates it.
+gate = next((lines[i].strip() for i in range(start, run) if lines[i].strip().startswith("if:")), "")
+for clause in ("inputs.publish-to-nexus", "inputs.resume-deployment-id == ''"):
+    if clause not in gate:
+        sys.exit("step's if: lost %r; it now reads %r" % (clause, gate))
 shell = next((lines[i].strip() for i in range(start, run) if lines[i].strip().startswith("shell:")), None)
 if shell not in ("shell: bash", None):
     sys.exit("scenarios only model bash; step declares %r" % shell)
@@ -128,8 +136,12 @@ HELPER=missing DRY=false \
   run "a real release refuses when the inspector is missing" 1 "::error title=Cannot inspect the publication set::"
 HELPER=missing DRY=true \
   run "a dry run warns and continues when the inspector is missing" 0 "::warning title=Publication set not inspected::" "::error"
-HELPER=missing DRY=false CHECK='[ ! -s inspected ]' \
-  run "and nothing is inspected in that case" 1 "Refusing to publish unverified artifacts"
+# `inspected` cannot exist in this branch — the inspector is the file that writes it — so
+# asserting its absence proves nothing. What is worth pinning is the ORDER: the dry publication
+# has already run by the time the missing inspector is discovered, and the refusal names the
+# path it looked for, which is what makes the message actionable.
+HELPER=missing DRY=false CHECK='grep -q -- "publishToMavenLocal" argv' \
+  run "the publication runs first, and the refusal names the path it looked for" 1 "\.octopus-base-helper/\.github/scripts/inspect-publication-set\.py is not on disk"
 
 echo "-- the inspector's verdict is the step's verdict --------------------------"
 INSPECT_RC=0 CHECK='grep -q "argv=.*m2-publication-guard" inspected' \
