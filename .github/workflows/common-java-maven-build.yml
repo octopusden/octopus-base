@@ -74,11 +74,23 @@ jobs:
           # consumer's parameters cannot become shell syntax.
           MVN_PARAMETERS: ${{ inputs.mvn-parameters }}
         run: |
+          # `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`, so errexit is already
+          # ON when this script starts, and `set -uo pipefail` does NOT clear it. The retry has
+          # to SEE mvn fail rather than die with it, so errexit is cleared here deliberately —
+          # every failure path below exits explicitly instead. Removing this line makes the
+          # whole step a no-op: the shell leaves inside the loop on the first failure, before
+          # the exit code is read, before the log is classified, before anything is retried.
+          set +e
           set -uo pipefail
 
           # Failures worth a second process, and nothing else. Anchored on Maven's and
           # HttpClient's own wording, not on ours.
           transient='Could not transfer artifact|Connection reset|Connection timed out|Read timed out|Premature end of Content-Length|NoHttpResponseException|SSLException|bad_record_mac|Transfer failed for|status code: 50[0-9]'
+          # A transfer that Maven WARNs about and then works around — a mirror fallback, a 401
+          # on one repository — is not why the build failed. So the signature only counts on a
+          # line Maven itself reports as the failure, and these two deterministic causes veto a
+          # retry outright even if a transfer warning is somewhere in the log.
+          deterministic='^\[ERROR\] COMPILATION ERROR|^\[ERROR\] Tests run:.*(Failures|Errors): [1-9]|^\[ERROR\] There are test failures'
 
           log="${RUNNER_TEMP:-/tmp}/maven-build.log"
           max_attempts=2
@@ -90,8 +102,12 @@ jobs:
             rc=${PIPESTATUS[0]}
             [ "$rc" -eq 0 ] && exit 0
 
-            if ! grep -qE "$transient" "$log"; then
-              echo "Maven failed with no transfer error in the log; not retrying." >&2
+            if grep -qE "$deterministic" "$log"; then
+              echo "Maven failed on the code under test, not on a transfer; not retrying." >&2
+              exit "$rc"
+            fi
+            if ! grep -qE "^\[(ERROR|FATAL)\].*($transient)" "$log"; then
+              echo "Maven failed with no transfer error on an ERROR or FATAL line; not retrying." >&2
               exit "$rc"
             fi
 

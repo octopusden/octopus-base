@@ -48,9 +48,24 @@ for line in lines[run + 1:]:
     collected.append(line[indent:] if len(line) > indent else line.strip())
 if not any(l.strip().startswith("mvn ") for l in collected):
     sys.exit("extracted body does not invoke mvn; extraction is wrong")
+# The shell is part of the contract, not scenery: `shell: bash` means the body runs under
+# `bash --noprofile --norc -eo pipefail`, i.e. with errexit ON. Running it under a plain
+# `bash` — as these scenarios first did — silently tests a shell the workflow never uses, and
+# every failure path passes for the wrong reason. So the declared shell is carried out of the
+# YAML with the body, and an unexpected value stops the suite rather than being ignored.
+shell = next((lines[i].strip() for i in range(start, run) if lines[i].strip().startswith("shell:")), None)
+if shell not in ("shell: bash", None):
+    sys.exit("scenarios only model 'shell: bash'; step declares %r" % shell)
 io.open(out, "w", encoding="utf-8").write("\n".join(collected) + "\n")
+io.open(out + ".shell", "w", encoding="utf-8").write(shell or "shell: bash (implicit default)")
 PY
 [ -s "$body" ] || { echo "could not extract the step body"; exit 1; }
+
+# Exactly what a GitHub runner execs for `shell: bash`. Not a detail: errexit is on, and the
+# body has to clear it to be able to retry at all.
+RUNNER_SHELL=(bash --noprofile --norc -eo pipefail)
+echo "step declares: $(cat "$body.shell")"
+echo "running it as: ${RUNNER_SHELL[*]} <body>"
 
 # run <name> <expected-rc> <expected-mvn-attempts> <must-match> [<must-not-match>]
 #   ATTEMPT_SCRIPT  one line per attempt: "<exit-code> <text the stub prints>"
@@ -68,7 +83,11 @@ echo "$n" > "$COUNTER"
 printf '%s\n' "$*" >> "$ARGV"
 line="$(sed -n "${n}p" "$ATTEMPTS")"
 [ -n "$line" ] || { echo "stub mvn: no behaviour defined for attempt $n" >&2; exit 99; }
-printf '%s\n' "${line#* }"
+# One record per attempt: "<exit-code> <log text>", where a literal \n inside the text is a
+# newline in the emitted log. Multi-line logs are the whole point of the classification
+# scenarios — a stub that emitted only the first line would let them pass on a log they never
+# produced, which is how two of them first passed.
+printf '%b\n' "${line#* }"
 exit "${line%% *}"
 STUB
   chmod +x "$dir/bin/mvn"
@@ -76,7 +95,7 @@ STUB
   ( cd "$dir/ws" && PATH="$dir/bin:$PATH" \
       COUNTER="$dir/counter" ATTEMPTS="$dir/attempts" ARGV="$dir/argv" \
       RUNNER_TEMP="$dir/runner-temp" MVN_PARAMETERS="${MVN_PARAMETERS:-}" \
-      bash "$body" ) >"$out" 2>&1
+      "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
   rc=$?
   attempts="$(cat "$dir/counter" 2>/dev/null || echo 0)"
 
@@ -133,6 +152,33 @@ for sig in 'Connection reset' 'Connection timed out' 'Read timed out' \
   run "retried: $sig" 0 2 '::warning title=Maven transfer retried::'
 done
 
+# --- a warning is not a failure -----------------------------------------------------------
+# Maven WARNs about a transfer and then works around it — a mirror fallback, a 401 on one
+# repository — and the build fails on something else entirely. Retrying that costs a second
+# build and reports a compile error as a Maven Central outage.
+ATTEMPT_SCRIPT='1 [WARNING] Transfer failed for https://repo.maven.apache.org/maven2/foo.pom 401 Unauthorized\n[INFO] Downloaded from central-mirror: .../foo.pom\n[ERROR] COMPILATION ERROR : cannot find symbol' \
+run "a transfer WARNING plus a compile error is one build, not two" 1 1 'not retrying' '::warning title=Maven transfer retried::'
+
+ATTEMPT_SCRIPT='1 [WARNING] Could not transfer artifact org.x:y:pom:1.0 from/to central: Connection reset\n[INFO] Downloaded from central-mirror: .../y-1.0.pom\n[ERROR] Tests run: 12, Failures: 2, Errors: 0, Skipped: 0' \
+run "a transfer WARNING plus a test failure is one build, not two" 1 1 'not retrying' '::warning title=Maven transfer retried::'
+
+ATTEMPT_SCRIPT='1 [WARNING] Transfer failed for https://repo.maven.apache.org/maven2/foo.pom\n[ERROR] Some other deterministic failure' \
+run "a transfer signature only counts on an ERROR or FATAL line" 1 1 'no transfer error on an ERROR or FATAL line' '::warning title=Maven transfer retried::'
+
+# The failure that started this, verbatim in shape: [FATAL], parent POM, one line.
+ATTEMPT_SCRIPT='1 [FATAL] Non-resolvable parent POM for org.octopusden.octopus:octopus-test:1.0-SNAPSHOT: org.octopusden.octopus:octopus-parent:pom:2.0.10 (absent): Could not transfer artifact org.octopusden.octopus:octopus-parent:pom:2.0.10 from/to central (https://repo.maven.apache.org/maven2): (bad_record_mac) Received fatal alert: bad_record_mac and '"'"'parent.relativePath'"'"' points at wrong local POM
+0 [INFO] BUILD SUCCESS' \
+run "the FATAL parent-POM shape from 2026-08-31 is retried" 0 2 '::warning title=Maven transfer retried::'
+
+# Both at once, which a multi-module build produces: one module cannot fetch a dependency,
+# another does not compile. The transfer signature IS on an ERROR line here, so the anchor
+# alone would retry — and the retry cannot fix the compile error, so the veto decides.
+ATTEMPT_SCRIPT='1 [ERROR] Could not transfer artifact org.x:y:pom:1.0 from/to central: Connection reset\n[ERROR] COMPILATION ERROR : cannot find symbol' \
+run "a compile error vetoes the retry even beside a real transfer error" 1 1 'not on a transfer' '::warning title=Maven transfer retried::'
+
+ATTEMPT_SCRIPT='1 [ERROR] Could not transfer artifact org.x:y:pom:1.0 from/to central: Connection reset\n[ERROR] Tests run: 8, Failures: 1, Errors: 0, Skipped: 0' \
+run "a test failure vetoes it too" 1 1 'not on a transfer' '::warning title=Maven transfer retried::'
+
 # --- the mechanics that are easy to break silently ----------------------------------------
 ATTEMPT_SCRIPT='2 [ERROR] COMPILATION ERROR : cannot find symbol' \
 run "maven's exit code survives the pipe to tee" 2 1 'not retrying'
@@ -172,7 +218,7 @@ STUB
   chmod +x "$dir/bin/mvn"
   ( cd "$dir/ws" && PATH="$dir/bin:$PATH" env -u RUNNER_TEMP \
       COUNTER="$dir/counter" ATTEMPTS="$dir/attempts" ARGV="$dir/argv" \
-      MVN_PARAMETERS= bash "$body" ) >"$out" 2>&1
+      MVN_PARAMETERS= "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ]; then pass=$((pass+1)); echo "ok   an unset RUNNER_TEMP does not fail the build"
   else fail=$((fail+1)); echo "FAIL an unset RUNNER_TEMP does not fail the build (rc=$rc)"; sed 's/^/     | /' "$out"; fi
@@ -180,7 +226,7 @@ STUB
 }
 runner_temp_unset
 
-rm -f "$body"
+rm -f "$body" "$body.shell"
 echo
 echo "maven-build-retry scenarios: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
