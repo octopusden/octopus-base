@@ -42,11 +42,17 @@ jobs:
       #   1. `maven.wagon.http.retryHandler.*` is inert here — since 3.9.0 Maven defaults to
       #      the resolver's native transport, and wagon is used only under
       #      `-Dmaven.resolver.transport=wagon`;
-      #   2. the native transport's own `aether.connector.http.retryHandler.count` already
-      #      defaults to 3, so it was in force during the failure above;
-      #   3. it delegates to HttpClient's `DefaultHttpRequestRetryHandler`, whose
-      #      nonRetriableClasses list contains `SSLException` — and `bad_record_mac` arrives
-      #      as exactly that. No count makes it retry.
+      #   2. the native transport's own retry count already defaults to 3, so it was in force
+      #      during the failure above — `aether.connector.http.retryHandler.count` under
+      #      Resolver 1.9.x, which is what Maven 3.9.x ships (`ConfigurationProperties`
+      #      builds it from the `aether.connector.` prefix; Resolver 2.x renamed it to
+      #      `aether.transport.http.retryHandler.count`, so citing one namespace without the
+      #      version is how this gets misread);
+      #   3. it hands that count to HttpClient's `StandardHttpRequestRetryHandler` (the
+      #      `retryHandler.name` default is "standard"), which extends
+      #      `DefaultHttpRequestRetryHandler` and inherits its nonRetriableClasses list —
+      #      and that list contains `SSLException`, which is what `bad_record_mac` arrives
+      #      as, matched by class and by `isInstance`. No count makes it retry.
       # A fresh process is therefore the only layer at which this blip is recoverable.
       #
       # Two attempts, not more: this covers a blip, not an outage. And only when the log
