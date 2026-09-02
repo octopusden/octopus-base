@@ -25,6 +25,10 @@ Releasing a component means doing **two** separate things, in two different plac
 2. **Write down that you did**, so the rest of the org knows: a git tag, a GitHub Release, and a
    line in a shared list called `octopus-release-log`.
 
+A publication can be sent to **GitHub Packages instead of Central** — see
+[Routing](#routing-which-registry-each-publication-goes-to). It behaves like the first half:
+also irreversible, also unable to re-publish a version.
+
 The catch is that these two are not one operation, and they behave differently when something
 goes wrong. Maven Central has **no undo** — a version that lands there stays there forever, and
 the same version can never be uploaded twice. The bookkeeping, by contrast, can be redone as many
@@ -151,6 +155,72 @@ fails **after** publishing never registers: route B is gated on the release run 
 ---
 
 ## Phase A — publish to Maven Central
+
+### Routing: which registry each publication goes to
+
+By default every Maven publication a build declares goes to Maven Central and nowhere else. A
+publication can be sent to **GitHub Packages instead** by naming it in
+`github-packages-publications`.
+
+This exists for artifacts that must stay resolvable by Maven coordinates but should not spend
+Central quota — a shadow jar, a Spring Boot executable jar. The typical consumer is a build tool
+rather than a project: the `OctopusReleaseManagementAutomation` metarunner fetches its CLI as
+`<group>:<name>:<version>:jar:all` through a TeamCity Maven2 runner, so it needs Maven
+coordinates, and a GitHub release asset would not do.
+
+The decision is made **per publication, per project**:
+
+```mermaid
+flowchart TD
+    P["a MavenPublication<br/>in some project"] --> Q1{"named in<br/>github-packages-publications?"}
+    Q1 -->|no| SON["sonatype<br/>(Maven Central)"]
+    Q1 -->|yes| Q2{"does THIS project declare<br/>a repository named<br/>GitHubPackages?"}
+    Q2 -->|no| SON
+    Q2 -->|yes| GHP["GitHubPackages<br/>— and nowhere else"]
+```
+
+> Before any of that, one build-level check: a name in the input that matches **no** publication in
+> **any** project fails the release outright, at configuration time, before anything is published.
+> That is the typo guard.
+
+Per project, not per name, because **a publication name is not unique across a multi-project
+build**. Every `octopus-release-management-service` module declares one called `maven`, and only
+`automation` has a `GitHubPackages` repository. Matching the name globally would disable the
+namesake in the other four modules, which have no GitHub target either — publishing them nowhere,
+silently.
+
+> A publication routed to GitHub Packages is disabled for **every** other target, including
+> `publishToMavenLocal`. That last one matters: the publication guard below inspects mavenLocal as
+> a proxy for what Central would receive, so a routed publication must not appear there or the
+> guard would demand a `fat-jar-publication-allowlist` entry for an artifact Central never sees.
+
+Routing is derived from the input by a generated init script, applied in three places — the guard,
+the Sonatype upload, and the GitHub Packages publish. Nothing in a consumer's build script names
+publish tasks; a renamed publication therefore cannot silently start publishing to the wrong
+registry. Covered by `.github/scripts/test/publication-routing-fixture.sh`.
+
+> `nexusPublishing` binds every publication to the `sonatype` repository, and the upload runs the
+> aggregate `publishToSonatype`. That is why the routing has to be applied to the Sonatype step as
+> well — without it a routed publication still reaches Central.
+
+### What runs when
+
+| step | runs when |
+|---|---|
+| Central preflight | `publish-to-nexus` and no `resume-deployment-id` |
+| Publication guard | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run** |
+| Publish to Sonatype | not dry-run, `publish-to-nexus`, no `resume-deployment-id` |
+| Publish via Central Portal | not dry-run and `publish-to-nexus` |
+| Publish to GitHub Packages | not dry-run and `github-packages-publications` non-blank |
+
+So `publish-to-nexus: false` with a non-blank `github-packages-publications` makes GitHub Packages
+a repository's **only** Maven target. The GitHub Packages step runs **after** the Central publish
+has fully succeeded: neither registry allows re-publishing a version, so the reverse order would
+strand a GitHub package whenever Central then failed, with no way to retry it.
+
+> Consuming from GitHub Packages needs a token with `read:packages`. That registry has **no
+> anonymous read**, even for public packages — unlike `ghcr.io`, which is the same product family
+> and does allow anonymous pulls. Publishing needs no PAT: the ambient `GITHUB_TOKEN` suffices.
 
 ### Build, guard, stage, close
 
@@ -416,6 +486,11 @@ the caller adds a second approval gate.
 
 **Pass `secrets: inherit`**, or registration cannot authenticate.
 
+**`github-packages-publications`** (optional): Gradle publication names to send to GitHub Packages
+instead of Central. Requires a publishing repository named `GitHubPackages` in the build script.
+Publishing uses the ambient `GITHUB_TOKEN`, so no extra secret — but consumers of the resulting
+package need a token with `read:packages`.
+
 ---
 
 ## Behaviour that surprises people
@@ -434,8 +509,9 @@ the caller adds a second approval gate.
 - **`skip-extra-tasks` appends, it does not replace.** In hybrid flow the effective value is
   `-x test -x <extra>`, because hybrid already skips tests.
 - **The concurrency key must be extended whenever a caller varies a new input.** It currently
-  distinguishes run id, attempt, flow type, docker image and `publish-to-nexus` only. Two dry-run
-  variants differing in anything else will cancel each other.
+  distinguishes run id, attempt, flow type, docker image, `publish-to-nexus` and
+  `github-packages-publications`. Two dry-run variants differing in anything else will cancel each
+  other — GitHub keeps only one pending run per group.
   **Maven:** there is no concurrency group at all, so two overlapping public-flow Maven releases
   can compute and publish the same version.
 - **A Maven dry-run compiles and tests nothing** — the only build is inside `mvn deploy`, which
