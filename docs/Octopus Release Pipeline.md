@@ -49,7 +49,10 @@ flowchart LR
 The second half runs **only if the first half finished green**. That one gate causes the failure
 this pipeline is known for: if the upload succeeds and the run dies a minute later, the version is
 on Central, nothing records it, and the next release computes the same version and is refused —
-since #198, before it builds anything. Nothing in the pipeline can repair that on its own.
+since #198 before it builds anything, but only when the preflight finds *every* coordinate that
+attempt would publish already present; a partial answer warns and lets the build run on to the
+close step, as it did before (see [Build, guard, stage, close](#build-guard-stage-close)). Nothing in the
+pipeline can repair that on its own.
 
 So when a release goes red, the first question is never "what broke" but **which side of the line
 it broke on**. Everything else in this document follows from that; if you only need to know what a
@@ -187,15 +190,15 @@ The listing is essentially the whole cost: on the canary the repo1 sweep measure
 
 Both ceilings fall open: exceeding either is a warning, never a failure.
 
-> When it does stop, it separates the two situations Sonatype's identical error string conflates:
-> the previous release published **and fully recorded** — the tag `v<version>` *and* its GitHub
-> release both present — release the next version, after checking the release log, since neither of
-> those two proves the entry exists — versus published but **not** fully recorded, which includes a
-> tag whose GitHub release is missing (that is
-> [#189](https://github.com/octopusden/octopus-base/issues/189) — a recovery, not a re-dispatch).
-> A tag alone therefore routes to the recovery, not to the next version. When either lookup fails
-> for a reason other than a 404 the state stays unknown and the message says so. In dry-run every
-> stop degrades to a warning.
+> When it does stop, it separates the two situations Sonatype's identical error string conflates.
+> It checks two of the four release-state facts — the `v<version>` tag and its GitHub release —
+> and nothing else; the release-log entry is the fact it cannot see, which is why the
+> release-the-next-version message still tells you to go and check it. Both present: release the
+> next version. Either one confirmed missing — a tag whose GitHub release never appeared included
+> — that is [#189](https://github.com/octopusden/octopus-base/issues/189), a recovery rather than
+> a re-dispatch, so a tag alone routes to the recovery. When either lookup fails for a reason
+> other than a 404 the state stays unknown and the message says so. In dry-run every stop
+> degrades to a warning.
 
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
@@ -423,8 +426,10 @@ the release state.
 | Registration fails | yes | yes | yes | no | No. The entry must be added by hand. |
 
 The rows marked **No** are the same underlying state: the artifacts are permanent, the record is
-absent, and the next release computes the same version — which the preflight now stops before
-the build, classified `deterministic`, rather than letting it die at the close step. Recovery is manual: create the tag on
+absent, and the next release computes the same version — which the preflight stops before the
+build when it finds every coordinate of that attempt on Central, classified `deterministic`,
+rather than letting it die at the close step; if the publication set has changed since, or the
+check cannot complete, the build still runs and still dies there. Recovery is manual: create the tag on
 the commit that was actually built, create the release, and dispatch the registration. Tracking
 issue: octopus-base#189.
 
