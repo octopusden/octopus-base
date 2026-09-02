@@ -39,20 +39,25 @@ jobs:
       #
       # Why the retry is around the process and not inside Maven. Maven's own retry cannot
       # reach this failure class, in three steps:
-      #   1. `maven.wagon.http.retryHandler.*` is inert here — since 3.9.0 Maven defaults to
-      #      the resolver's native transport, and wagon is used only under
-      #      `-Dmaven.resolver.transport=wagon`;
-      #   2. the native transport's own retry count already defaults to 3, so it was in force
-      #      during the failure above — `aether.connector.http.retryHandler.count` under
-      #      Resolver 1.9.x, which is what Maven 3.9.x ships (`ConfigurationProperties`
-      #      builds it from the `aether.connector.` prefix; Resolver 2.x renamed it to
+      #   1. `maven.wagon.http.retryHandler.*` is inert on the Maven this job actually runs —
+      #      3.9.0 moved the default to the resolver's native transport, and wagon is used
+      #      only under `-Dmaven.resolver.transport=wagon`. Nothing here pins a Maven; it is
+      #      the `ubuntu-latest` image that ships 3.9.x (3.9.16 as of this change), so the
+      #      claim is about that image, not about Maven in general — under 3.8.x wagon is
+      #      still the default and those properties would have worked;
+      #   2. the native transport's own retry count defaults to 3, so a retry WAS in force
+      #      during the failure above. The property is `aether.connector.http.retryHandler.count`
+      #      under Resolver 1.9.x (`ConfigurationProperties` builds it from the
+      #      `aether.connector.` prefix; Resolver 2.x renamed it to
       #      `aether.transport.http.retryHandler.count`, so citing one namespace without the
-      #      version is how this gets misread);
+      #      version is how this gets misread). Note the boundary is NOT 3.9.0: that shipped
+      #      resolver 1.9.4, which retried nothing at all — the count arrived with 1.9.6
+      #      (MRESOLVER-326, for MNG-7708) and reached Maven in 3.9.1 with resolver 1.9.7;
       #   3. it hands that count to HttpClient's `StandardHttpRequestRetryHandler` (the
       #      `retryHandler.name` default is "standard"), which extends
       #      `DefaultHttpRequestRetryHandler` and inherits its nonRetriableClasses list —
-      #      and that list contains `SSLException`, which is what `bad_record_mac` arrives
-      #      as, matched by class and by `isInstance`. No count makes it retry.
+      #      five classes, one of them `SSLException`, rejected by `isInstance` so subclasses
+      #      go with it. `bad_record_mac` arrives as an `SSLException`. No count retries it.
       # A fresh process is therefore the only layer at which this blip is recoverable.
       #
       # Two attempts, not more: this covers a blip, not an outage. And only when the log

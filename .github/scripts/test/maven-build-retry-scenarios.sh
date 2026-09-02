@@ -226,6 +226,38 @@ STUB
 }
 runner_temp_unset
 
+# The one case that tells `rc=${PIPESTATUS[0]}` apart from `rc=$?`: tee fails while mvn
+# succeeds. With PIPESTATUS the step reports what MAVEN said, which is the contract — the build
+# passed, and losing the log is not a build failure. With `$?` under pipefail it would report
+# tee's failure instead, and a green build would go red on an unwritable temp directory.
+tee_fails_while_mvn_succeeds() {
+  local dir out rc
+  dir="$(mktemp -d)"; out="$dir/out.txt"
+  mkdir -p "$dir/bin" "$dir/ws" "$dir/ro"
+  printf '0 [INFO] BUILD SUCCESS\n' > "$dir/attempts"
+  cat > "$dir/bin/mvn" <<'STUB'
+#!/usr/bin/env bash
+n=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$COUNTER"
+printf '%s\n' "$*" >> "$ARGV"
+printf '%b\n' "$(sed -n "${n}p" "$ATTEMPTS")"; exit 0
+STUB
+  chmod +x "$dir/bin/mvn"; chmod 500 "$dir/ro"
+  if : > "$dir/ro/probe" 2>/dev/null; then
+    echo "NOTE  \$RUNNER_TEMP could not be made unwritable here (running as root?), so the"
+    echo "      PIPESTATUS contract is not exercised by this scenario."
+    rm -rf "$dir"; return
+  fi
+  ( cd "$dir/ws" && PATH="$dir/bin:$PATH" \
+      COUNTER="$dir/counter" ATTEMPTS="$dir/attempts" ARGV="$dir/argv" \
+      RUNNER_TEMP="$dir/ro" MVN_PARAMETERS= \
+      "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then pass=$((pass+1)); echo "ok   an unwritable log does not fail a build maven passed"
+  else fail=$((fail+1)); echo "FAIL an unwritable log does not fail a build maven passed (rc=$rc)"; sed 's/^/     | /' "$out"; fi
+  chmod 700 "$dir/ro"; rm -rf "$dir"
+}
+tee_fails_while_mvn_succeeds
+
 rm -f "$body" "$body.shell"
 echo
 echo "maven-build-retry scenarios: $pass passed, $fail failed"
