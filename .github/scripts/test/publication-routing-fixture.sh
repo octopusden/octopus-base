@@ -278,6 +278,22 @@ grep -q 'ORG_GRADLE_PROJECT_signingKey' "$tmp/ghp-step" &&
   "passes the signing key to the GitHub Packages step" \
   "the step does not set ORG_GRADLE_PROJECT_signingKey/Password, so a signed routed publication fails on 'no configured signatory'"
 
+echo "-- the routing is validated even when nothing else runs Gradle -----------"
+# With dry-run and publish-to-nexus=false, the preflight, the guard and both publishes are all
+# skipped, so no other step loads the routing script and a misspelled name survives a green run.
+# The validation step must therefore be gated on the input ALONE.
+awk '/- name: Validate publication routing/ { s = 1 }
+     s && /^      - name:/ && !/Validate publication routing/ { exit }
+     s { print }' "$WORKFLOW" > "$tmp/validate-step"
+[ -s "$tmp/validate-step" ]; check \
+  "has a step that validates the routing" \
+  "no 'Validate publication routing' step: a typo then survives a dry run with Central off"
+grep -q 'publication-routing.init.gradle' "$tmp/validate-step"; check \
+  "loads the routing script in that step" "the step exists but never applies the init script, so it checks nothing"
+! grep -E '^        if:' "$tmp/validate-step" | grep -qE 'dry-run|publish-to-nexus'; check \
+  "gates it on the input alone" \
+  "the condition also depends on dry-run or publish-to-nexus, which are exactly the cases that skipped every other Gradle invocation"
+
 echo
 echo "passed=$pass failed=$fail"
 rm -rf "$tmp"

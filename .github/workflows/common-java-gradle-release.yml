@@ -617,6 +617,21 @@ jobs:
         env:
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
 
+      # Loads the routing script and does nothing else, so the routing is validated even when no
+      # later step runs Gradle. With dry-run and publish-to-nexus=false — octopus-test's own
+      # GitHub-Packages-only smoke job — the preflight, the guard and both publishes are all
+      # skipped, so a misspelled publication name used to survive a green dry run and surface
+      # only in the real release. Configuration-time only: `help` publishes nothing.
+      - name: Validate publication routing
+        if: ${{ inputs.github-packages-publications != '' }}
+        env:
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+        run: |
+          set -euo pipefail
+          ./gradlew help -q \
+            --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
+            -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
+
       # Maven Central is for artifacts other projects consume as a DEPENDENCY. A Spring Boot
       # executable jar or a shadow/uber jar there is usually unintended — Gradle module metadata
       # can pull the shadow variant into `from(components.java)` without anyone asking — and a
