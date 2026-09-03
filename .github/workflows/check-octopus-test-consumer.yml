@@ -153,6 +153,19 @@ jobs:
       - name: Preflight step scenarios
         shell: bash
         run: bash .github/scripts/test/preflight-step-scenarios.sh
+      # The publication guard decides what may reach an immutable public repository and had no
+      # tests before the version refusal was added to it. Fixtures are local-repository trees, so
+      # no Gradle is needed.
+      - name: Publication set scenarios
+        shell: bash
+        run: bash .github/scripts/test/publication-set-scenarios.sh
+      # The step AROUND the inspector: its fail-closed branch — the inspector missing from
+      # disk — must stop a real release and only warn in a dry run, and nothing else reaches
+      # it. The scenarios extract the step's own `run:` body from the workflow and drive it
+      # with a stubbed gradlew, so that asymmetry cannot regress silently.
+      - name: Publication guard step scenarios
+        shell: bash
+        run: bash .github/scripts/test/publication-guard-step-scenarios.sh
 
   security:
     name: security
