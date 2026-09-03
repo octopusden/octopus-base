@@ -137,12 +137,22 @@ fi
 # edit is worth seeing in the record rather than discovering afterwards.
 self_sha="$(git -C "$here" rev-parse HEAD 2>/dev/null || echo unknown)"
 self_dirty=""
-git -C "$here" diff --quiet HEAD -- "$here" 2>/dev/null || self_dirty=" (with uncommitted changes)"
+if [ "$self_sha" != "unknown" ]; then
+  git -C "$here" diff --quiet HEAD -- "$here" 2>/dev/null || self_dirty=" (with uncommitted changes)"
+else
+  self_dirty=" (not a git checkout — provenance unknown)"
+fi
 
-ACTOR="$(gh api user --jq '.login' 2>/dev/null || echo unknown)"
+# Who is doing this. Refused rather than defaulted: the release-log commit's author is the only
+# record that this recovery happened and who ran it — there is no run in Actions to say it instead
+# (ADR 0006) — and `author=unknown` would quietly cancel that. A credential that authenticates but
+# cannot read /user (a GitHub App installation token, say) lands here.
+ACTOR="$(gh api user --jq '.login' 2>/dev/null)" && [ -n "$ACTOR" ] \
+  || refuse "Cannot identify the operator" "This credential authenticates but cannot read its own account, so the release-log commit would carry no usable author. That commit is the only record of who ran this recovery. Use a credential that can read /user."
 # The noreply form, so the commit carries an address that resolves to the account without exposing
-# a private one. `gh api user --jq .id` is the stable half of it.
-ACTOR_ID="$(gh api user --jq '.id' 2>/dev/null || echo 0)"
+# a private one. The numeric id is the stable half of it.
+ACTOR_ID="$(gh api user --jq '.id' 2>/dev/null)" && [ -n "$ACTOR_ID" ] \
+  || refuse "Cannot identify the operator" "The account id could not be read, so the commit author's address cannot be formed."
 ACTOR_EMAIL="${ACTOR_ID}+${ACTOR}@users.noreply.github.com"
 
 cat >&2 <<EOF
@@ -455,10 +465,13 @@ else
     # Encode first and check it, rather than inside the argument list: a failure in a command
     # substitution there is masked by the status of `local`, and the request would go out with an
     # empty body — which GitHub would accept, replacing the module file with nothing.
+    # rc 2 means THIS side failed and nothing was sent; rc 1 means the request went out and was
+    # refused. Collapsing the two would send an operator to argue about permissions on a repository
+    # that never received a request.
     local encoded
-    encoded="$(LC_ALL=C base64 < "$1")" || return 1
-    encoded="$(LC_ALL=C tr -d '\n' <<<"$encoded")" || return 1
-    [ -n "$encoded" ] || return 1
+    encoded="$(LC_ALL=C base64 < "$1")" || return 2
+    encoded="$(LC_ALL=C tr -d '\n' <<<"$encoded")" || return 2
+    [ -n "$encoded" ] || return 2
     local args=(-X PUT "repos/${RELEASE_LOG_REPO}/contents/${MODULE}.txt"
                 -f "message=${MODULE}-${VERSION}"
                 -f "branch=${RELEASE_LOG_REF}"
@@ -511,7 +524,12 @@ else
       put_sha="$log_sha"
     fi
 
-    if put_out="$(put_log "$work/content" "$put_sha" 2>&1)"; then
+    put_rc=0
+    put_out="$(put_log "$work/content" "$put_sha" 2>&1)" || put_rc=$?
+    if [ "$put_rc" -eq 2 ]; then
+      log_outcome="FAILED — could not encode the file to write; nothing was sent"; rc=1; break
+    fi
+    if [ "$put_rc" -eq 0 ]; then
       # The PUT's own response is the confirmation, not a later GET: a read right after a write can
       # be served from cache, which is the race wait-for-tag-ref.sh exists for on the ref side.
       new_blob="$(jq -r '.content.sha // empty' <<<"$put_out" 2>/dev/null)"

@@ -178,8 +178,9 @@ re-dispatch the release** — that would start a fresh run which tries to publis
 and fails.
 
 Recovery: run the reconciler, which does exactly this and then checks the release log too. The
-failing step prints the tag name, the commit sha and the coordinates; the run's `Built commit`
-annotation prints the commit as well.
+failing step prints the tag name and the commit sha; the run's `Built commit` annotation prints the
+commit too. The coordinates are not there — they are in the Central preflight block earlier in the
+same run, and a Maven release has no preflight at all, so take them from its `mvn deploy` output.
 
 ```bash
 .github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...]

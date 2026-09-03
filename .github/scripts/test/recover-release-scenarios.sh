@@ -82,6 +82,7 @@ base() {
   # Exported empty rather than unset: a case below assigns to these by name, and an assignment to
   # a variable that is not already exported would never reach the fixture.
   export LOG_MISSING="" LOG_UNREADABLE="" LOG_BASE64_TRUNCATED="" LOG_FILE_2="" CONFIRM_FAILS=""
+  export WHOAMI_FAILS=""
   export ABSENT_ARTIFACTS="" UNKNOWN_ARTIFACTS=""
   APPLY_FLAG=""; ARGS=""
 }
@@ -110,6 +111,12 @@ run "a token without workflow scope is refused up front, naming #180" 1 "gh auth
   "log-read,ref-create"
 base; AUTH=fine-grained
 run "a fine-grained token cannot report scopes, so it is allowed with a note" 0 "does not report scopes"
+# The release-log commit's author is the only record of who ran this — there is no run in Actions
+# to say it instead — so a credential that cannot name itself stops the run rather than writing
+# `author=unknown` and quietly cancelling that record.
+base; WHOAMI_FAILS=1
+run "a credential that cannot name its own account is refused" 1 "cannot read its own account" \
+  "commit-lookup,log-read,log-put"
 
 echo "-- Maven Central decides whether this is a #189 at all ---------------------"
 base; ABSENT_ARTIFACTS="octopus-test"
@@ -164,6 +171,16 @@ run "a tag standing at another commit stops everything, moving nothing" 1 "stand
 base; REL_STATE=error
 run "a release lookup that fails for a reason other than 404 stops the run" 1 "Refusing to act on unverified state" \
   "ref-create,log-put"
+# A 200 with no isDraft in it is not evidence of a published release. Anything but an explicit
+# false has to stop the plan, or it reports a state nobody confirmed.
+base; REL_STATE=unreadable
+run "a release whose draft state cannot be read stops the run" 1 "draft state could not be read" \
+  "ref-create,log-put"
+# The tag read has to fail closed for the same reason the release read does: reading a 500 as
+# "no tag" would create one, and the plan would say so with confidence.
+base; TAG_STATE=error
+run "a tag lookup that fails for a reason other than 404 stops the run" 1 "Could not determine whether" \
+  "ref-create,log-put,tag-resolve"
 base; APPLY_FLAG="--apply"; REL_STATE=draft; TAG_STATE=at-built
 run "a stranded draft is published rather than reported as done" 0 "publish the draft" "" "release-publish"
 
