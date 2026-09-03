@@ -9,9 +9,9 @@ in [Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md)
 
 > **Gradle and Maven are not the same pipeline.** Everything below describes
 > `common-java-gradle-release.yml` unless stated otherwise. `common-java-maven-release.yml`
-> shares the shape but has none of: the Central Portal publish path, the publication guard,
-> a concurrency group, `publish-to-nexus`, `resume-deployment-id`, `docker-image`, or
-> `skip-extra-tasks`. Differences are called out as **Maven:** notes.
+> shares the shape but has none of: the Central Portal publish path, the Central preflight, the
+> publication guard, a concurrency group, `publish-to-nexus`, `resume-deployment-id`,
+> `docker-image`, or `skip-extra-tasks`. Differences are called out as **Maven:** notes.
 
 ---
 
@@ -360,11 +360,17 @@ a stale-code release.
 
 **The release carries a run stamp.** An HTML comment `<!-- octopus-release-run: <run_id>/<attempt> -->`
 identifies which run produced it. Registration uses it to resolve the version that was actually
-released, rather than whichever tag sorts highest.
+released, rather than whichever tag sorts highest. Two releases do not carry it: one created by the
+#189 reconciler, which has no run to name, and `octopus-base`'s own release, whose workflow never
+added the stamp. Registration falls back to the highest-sorting tag for those.
 
 ### Registration
 
-Two routes reach the release log, and **both can be wired at once**.
+Two routes reach the release log, and **both can be wired at once**. Both are a
+`repository_dispatch`; the file is written by the workflow in `octopus-release-log`, which only
+ever prepends. The #189 reconciler is the exception and writes the file directly, because a version
+that is not the newest cannot be prepended without breaking the ordering internal post-processing
+reads — see [ADR 0005](adr/0005-reconciliation-writes-the-release-log-directly.md).
 
 **Route A — immediate.** `register-release-immediately: true` runs registration inside the release
 run, right after the tag. Off by default.
@@ -423,11 +429,11 @@ the release state.
 |---|:---:|:---:|:---:|:---:|---|
 | Guard rejects the upload | — | — | — | — | Nothing left on Central, in git or in the log. But a `docker-image` release has already pushed its image by this point — the push runs before the guard — and nothing cleans that up (#190). Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
-| Version already on Central | published earlier | varies | varies | varies | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. Nothing is built, so this run leaves nothing behind and the earlier release's artifacts are untouched; what varies is whether that release was recorded. If the tag or the GitHub release is missing, run the #189 recovery. Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
+| Version already on Central | published earlier | varies | varies | varies | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. Nothing is built, so this run leaves nothing behind and the earlier release's artifacts are untouched; what varies is whether that release was recorded. If the tag or the GitHub release is missing, run `recover-release.sh` (below). Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
-| Registration fails | yes | yes | yes | no | No. The entry must be added by hand. |
+| Registration fails | yes | yes | yes | no | No. `recover-release.sh` writes the entry; it leaves the tag and release alone. |
 
 The rows marked **No** are the same underlying state: the artifacts are permanent, the record is
 absent, and the next release computes the same version — which the preflight stops before the
@@ -480,14 +486,73 @@ the caller adds a second approval gate.
   can compute and publish the same version.
 - **A Maven dry-run compiles and tests nothing** — the only build is inside `mvn deploy`, which
   dry-run skips. The Gradle flow always runs `./gradlew build`.
-- **A stranded draft release is finished rather than treated as done — but only on one of the two
-  Gradle paths.** A draft is invisible to the stamp lookup, so leaving one in place blocks
-  registration forever. The Gradle flow publishes a draft it finds when the tag *and* a release
-  both already exist; it does nothing about the more likely shape, a draft with no tag (GitHub
-  does not create the tag until a draft is published). On that path the tag gets created and
-  `gh release create` then fails with "release already exists".
-  **Maven:** every path publishes the draft — creation always ends `--draft=false`, and the
-  existing-release path calls `publish_if_draft`.
+- **A stranded draft release is finished rather than treated as done.** A draft is invisible to
+  the stamp lookup, so leaving one in place would block registration forever. Both flows and the
+  reconciler now share `.github/scripts/tag-and-release.sh`, which checks for a release before
+  creating the ref and publishes a draft on every path — including a draft with no tag, which used
+  to make the Gradle flow create the tag and then fail with "release already exists".
 - **Registration logic is not separately pinnable.** `common-register-release.yml` is reached
   through a local `uses:` path, so its version is whatever ships in the pinned `octopus-base`
   commit.
+
+## Recovering a published, unrecorded release
+
+The state this fixes: Maven Central holds the version, and one or more of the tag, the GitHub
+Release and the `octopus-release-log` entry is missing. The next release computes the same version
+and is refused with `already exists`, so the component cannot release again until the record is
+completed. Four components have reached it (#189). It is **not** repaired by re-dispatching the
+release: Central refuses a coordinate that exists, and a re-dispatch cannot change that.
+
+Run it from an `octopus-base` checkout, on a released tag, with a clean worktree — the script
+prints its own commit so the record says which version of it ran:
+
+```bash
+.github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...]
+# then, once the plan reads right:
+.github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...] --apply
+```
+
+It plans by default and writes nothing. `--apply` re-reads every fact first.
+
+**The two arguments to get right**, both read out of the failed run's log:
+
+- **`<built-sha>`** — the `Built commit` annotation on that run's page, also in its step summary.
+  It is the commit that was *built*, which is usually not the branch head: `octopus-cve-automation`
+  2.0.3 was published from a commit two behind `main`. On a **resumed** run the annotation says so
+  instead of giving a value — the artifacts came from an earlier run, and its annotation is the one
+  to use.
+- **coordinates** — `group:artifact` pairs, comma-separated. A Gradle release lists them in the
+  Central preflight block `Publications this release would publish`, before the build; a resumed
+  run has no preflight, so take them from the run that published. A Maven release has no preflight
+  at all: its `mvn deploy` output names them in the `Uploading to` lines. `octopus-base`'s own
+  release prints a `Deployment coordinates` block. Do not read them out of a `pom.xml`: an
+  inherited `groupId` and a multi-module build both make that unreliable
+  ([ADR 0007](adr/0007-recovery-coordinates-are-attested-not-derived.md)).
+
+**What it refuses, and why that is the answer:**
+
+| It says | What it means |
+|---|---|
+| Version not published | None of the coordinates are on Central. This is not #189 — nothing published, so re-run the release. |
+| Version only partly published | Some coordinates are there and some are not. Central will not accept the missing ones alongside the ones that exist, so neither recovering nor re-running this version can work. Release the next one. |
+| Maven Central did not answer | A 5xx, a rate limit or a dropped connection. Unlike the release preflight, which fails open because it can only ever save a doomed build, this writes tags — so an unanswered question stops it. |
+| Tag stands at another commit | The tag exists at a commit other than the one given. Nothing is moved: one of the two is wrong, and a tag pointing at stale code is worse than a missing one. |
+| Release log is out of order | The module file's lines are not descending. Repairing that is a separate decision from recording this version; fix the order by hand first. |
+| Credential cannot modify workflows | The token lacks `workflow` scope, and GitHub refuses a tag on a commit that touches a workflow file (#180). `gh auth refresh -s workflow`. |
+
+**Warnings it prints and continues past:** adjacent duplicate lines already in the module file
+(four real files have them), and a commit that no branch reaches — legitimate when a release branch
+was squash-merged and deleted, and never a reason to refuse, because the commit is your attestation
+either way.
+
+**The order of the writes matters.** The tag and the release come first, and the release-log entry
+only after both are confirmed. That entry is the one thing with a consumer outside these
+repositories: internal release post-processing triggers on a commit to `octopus-release-log` and
+takes its build number from the first line of `<module>.txt`. When the recovered version lands on
+top — it is the newest — that post-processing should run for it, and the script says so; check that
+it did. When it is inserted below, post-processing runs and stops at its own "release version is
+new" check, which is expected and harmless.
+
+**What it deliberately does not do:** restore the released `pom.xml` asset that the Maven flow
+attaches from its build job's artifact. If the component's releases carry one, attach it by hand
+straight away, before the release becomes immutable.

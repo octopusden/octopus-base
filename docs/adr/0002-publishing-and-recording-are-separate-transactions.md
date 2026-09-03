@@ -12,7 +12,10 @@ nobody can resolve.
 The gate makes one specific bad state reachable **by design**: a run that dies after the upload
 leaves the version published, untagged and unregistered. The pipeline cannot repair that on its
 own, and the next release computes the same version and is refused with `already exists` — which
-is correct, because it is. Recovery is manual until something reconciles the two sides (#189).
+is correct, because it is. Reconciling the two sides afterwards is
+`.github/scripts/recover-release.sh` — see
+[ADR 0006](0006-reconciliation-is-an-operator-run-script.md) for why it is a script an operator
+runs rather than part of the pipeline.
 
 Every deadline in the publish path inherits this. Giving up while Central is still `PUBLISHING`
 does not stop the publish; it only stops us watching, and Central may finish minutes later
