@@ -71,7 +71,7 @@ on:
         type: string
         default: ''
       github-packages-publications:
-        description: 'Comma-separated Gradle publication names to send to GitHub Packages instead of Maven Central — for an artifact that must stay resolvable by Maven coordinates without spending Central quota, e.g. a shadow jar a TeamCity metarunner fetches. Needs a publishing repository named GitHubPackages. That registry has no anonymous read: consumers need a token with read:packages.'
+        description: 'Comma-separated Gradle publication names to send to GitHub Packages instead of Maven Central — for a distribution artifact that must remain resolvable by Maven coordinates without spending Central quota, such as a shadow jar. Needs a publishing repository named GitHubPackages. That registry has no anonymous read: consumers need a token with read:packages. Callers must grant packages:write.'
         required: false
         type: string
         default: ''

@@ -163,11 +163,11 @@ By default every Maven publication a build declares goes to Maven Central and no
 publication can be sent to **GitHub Packages instead** by naming it in
 `github-packages-publications`.
 
-This exists for artifacts that must stay resolvable by Maven coordinates but should not spend
-Central quota — a shadow jar, a Spring Boot executable jar. The typical consumer is a build tool
-rather than a project: the `OctopusReleaseManagementAutomation` metarunner fetches its CLI as
-`<group>:<name>:<version>:jar:all` through a TeamCity Maven2 runner, so it needs Maven
-coordinates, and a GitHub release asset would not do.
+This exists for a **distribution artifact that must remain resolvable by Maven coordinates** — a
+shadow jar, a Spring Boot executable jar. Such an artifact is fetched by a build tool rather than
+depended on by a project, so it spends Central quota that nothing consumes as a dependency; but it
+cannot simply move to a GitHub release asset either, because the tool that fetches it resolves
+coordinates, not URLs.
 
 The decision is made **per publication, per project**:
 
@@ -185,10 +185,10 @@ flowchart TD
 > That is the typo guard.
 
 Per project, not per name, because **a publication name is not unique across a multi-project
-build**. Every `octopus-release-management-service` module declares one called `maven`, and only
-`automation` has a `GitHubPackages` repository. Matching the name globally would disable the
-namesake in the other four modules, which have no GitHub target either — publishing them nowhere,
-silently.
+build**. A repository whose modules all name their publication the same way — a common shape — has
+one project with a `GitHubPackages` repository and several without. Matching the name globally
+would disable the namesake in every other module, none of which has a GitHub target either,
+publishing them nowhere and reporting nothing.
 
 > A publication routed to GitHub Packages is disabled for **every** other target, including
 > `publishToMavenLocal`. That last one matters: the publication guard below inspects mavenLocal as
