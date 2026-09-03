@@ -26,8 +26,9 @@ Releasing a component means doing **two** separate things, in two different plac
    line in a shared list called `octopus-release-log`.
 
 A publication can be sent to **GitHub Packages instead of Central** — see
-[Routing](#routing-which-registry-each-publication-goes-to). It behaves like the first half:
-also irreversible, also unable to re-publish a version.
+[Routing](#routing-which-registry-each-publication-goes-to). It sits between the two halves:
+a version cannot be re-published there either, but unlike Central it can be **deleted**, so a
+failure there is repairable by hand.
 
 The catch is that these two are not one operation, and they behave differently when something
 goes wrong. Maven Central has **no undo** — a version that lands there stays there forever, and
@@ -214,9 +215,16 @@ registry. Covered by `.github/scripts/test/publication-routing-fixture.sh`.
 | Publish to GitHub Packages | not dry-run and `github-packages-publications` non-blank |
 
 So `publish-to-nexus: false` with a non-blank `github-packages-publications` makes GitHub Packages
-a repository's **only** Maven target. The GitHub Packages step runs **after** the Central publish
-has fully succeeded: neither registry allows re-publishing a version, so the reverse order would
-strand a GitHub package whenever Central then failed, with no way to retry it.
+a repository's **only** Maven target.
+
+The GitHub Packages step runs **after** the Central publish has fully succeeded. Not because the
+two registries are equally permanent — they are not. Central is genuinely immutable; a GitHub
+package version can be deleted, and for a public package that holds until it passes 5,000
+downloads, after which it needs GitHub Support. What the order buys is the **failure state we
+would rather be in**: Central is the slow one, with a long validating pipeline and many ways to
+fail, so putting it first means the common failure happens before anything is written to GitHub
+Packages and leaves nothing to clean up. The rarer reverse case — Central green, GitHub Packages
+red — leaves a package version that can be deleted and retried.
 
 > Consuming from GitHub Packages needs a token with `read:packages`. That registry has **no
 > anonymous read**, even for public packages — unlike `ghcr.io`, which is the same product family
@@ -453,7 +461,8 @@ bookkeeping.
 ## Failure shapes
 
 What each kind of failure leaves behind. The columns are the four independent facts that make up
-the release state.
+the release state. A fifth destination exists when a publication is routed — see the GitHub
+Packages rows at the end.
 
 | Failure | Central | tag | Release | log | Recoverable by the pipeline? |
 |---|:---:|:---:|:---:|:---:|---|
@@ -464,12 +473,19 @@ the release state.
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
 | Registration fails | yes | yes | yes | no | No. The entry must be added by hand. |
+| **GitHub Packages publish fails** after Central succeeded | yes | no | no | no | No, and the state is the one above *plus* an absent package. Recover the release by hand; the version can then be published to GitHub Packages only by re-running that step, since the version cannot be re-published there either. |
+| Run dies **after** the GitHub Packages publish | yes | no | no | no | No. Central and the package are both permanent-as-published; **delete the package version before retrying**, or the retry fails on a version that already exists. |
 
 The rows marked **No** are the same underlying state: the artifacts are permanent, the record is
 absent, and the next release computes the same version and dies on `already exists` — which the
 classifier correctly calls `deterministic`, because it is. Recovery is manual: create the tag on
 the commit that was actually built, create the release, and dispatch the registration. Tracking
 issue: octopus-base#189.
+
+A routed publication adds one repairable step to that recovery. A GitHub package version **can**
+be deleted — for a public package until it passes 5,000 downloads, after which it needs GitHub
+Support — so a half-finished release that left a package behind is cleaned up by deleting that
+version before retrying. Central offers no equivalent.
 
 ---
 
