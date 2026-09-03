@@ -784,6 +784,10 @@ jobs:
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
           GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
           GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A routed publication that is signed puts its Sign task on this graph, and signing is
+          # required by default for a non-SNAPSHOT version. Same keys the Sonatype step uses.
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           ./gradlew publishSelectedPublicationsToGitHubPackages \

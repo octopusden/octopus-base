@@ -228,6 +228,56 @@ check "publishes to GitHub Packages in an asymmetric build" "the aggregate task 
 [ "$(find "$asym/out-github" -name '*-all.jar' 2>/dev/null | wc -l | tr -d ' ')" = "1" ]; check \
   "routes only that project's fat jar" "more than one fat jar reached GitHub Packages"
 
+echo "-- a routed publication that is signed needs the signing key -------------"
+# Signing a publication puts a Sign task on its publish task's graph, and signing is required by
+# default for a non-SNAPSHOT version. So the release step must supply the GPG key exactly as the
+# Sonatype step does; without it the publish dies on "no configured signatory" AFTER the routing
+# has done everything right. The main fixture cannot see this: it signs the publication that is
+# NOT routed, with required = false.
+signed="$tmp/signed"
+mkdir -p "$signed"
+cat > "$signed/settings.gradle" <<'G'
+rootProject.name = 'signed-fat'
+G
+cat > "$signed/build.gradle" <<'G'
+apply plugin: 'java'
+apply plugin: 'maven-publish'
+apply plugin: 'signing'
+group = 'org.signed'
+version = '9.9.9-fixture'
+publishing {
+    publications {
+        register('fatJava', MavenPublication) {
+            artifactId = 'signed-fat'
+            artifact(tasks.jar) { classifier = 'all' }
+        }
+    }
+    repositories { maven { name = 'GitHubPackages'; url = uri("${rootDir}/out-github") } }
+}
+// No `required = false`: this is the ordinary shape of a signed release publication.
+signing { sign(publishing.publications['fatJava']) }
+G
+# --dry-run, because the point is which tasks reach the graph. Executing would need a real key,
+# which is exactly what the workflow supplies and this fixture cannot.
+( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=fatJava \
+    ./gradlew --project-dir "$signed" publishSelectedPublicationsToGitHubPackages --dry-run \
+    --init-script "$INIT" \
+    -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
+) > "$tmp/log" 2>&1
+grep -q ':signFatJavaPublication' "$tmp/log"; check \
+  "puts the Sign task on a routed publication's graph" \
+  "the signing task did not appear, so this fixture is no longer testing the case it was written for"
+
+# It is therefore the workflow step's job to pass the key. Read from the workflow, since that is
+# the thing that runs.
+awk '/- name: Publish to GitHub Packages/ { s = 1 }
+     s && /^      - name:/ && !/Publish to GitHub Packages/ { exit }
+     s { print }' "$WORKFLOW" > "$tmp/ghp-step"
+grep -q 'ORG_GRADLE_PROJECT_signingKey' "$tmp/ghp-step" &&
+  grep -q 'ORG_GRADLE_PROJECT_signingPassword' "$tmp/ghp-step"; check \
+  "passes the signing key to the GitHub Packages step" \
+  "the step does not set ORG_GRADLE_PROJECT_signingKey/Password, so a signed routed publication fails on 'no configured signatory'"
+
 echo
 echo "passed=$pass failed=$fail"
 rm -rf "$tmp"
