@@ -288,13 +288,20 @@ log_read() { # <content-outfile>
 }
 
 # Parse and validate in one place, so the conflict retry below cannot write over a file the first
-# read would have refused. Fills log_lines and log_dups from $1; refuses on anything it will not
-# write over.
+# read would have refused. Fills log_lines and log_dups from $1.
+#
+# It REPORTS rather than exits: the caller decides. Before anything has been written the answer is
+# to refuse and stop; after the tag and the release are in place it is to fail this ledger and
+# still print the per-ledger report, because a run that ends without saying "the tag and release
+# ARE in place" is how the operator of 2.0.15 came to think the job was done.
+# Sets log_problem to the reason on failure.
 declare -a log_lines=()
 log_sha="" log_state="" log_position="" log_dups="" insert_at=""
-read_and_validate() { # <file>
+log_problem=""
+read_and_validate() { # <file>  → rc 0 = usable, rc 1 = log_problem says why
   local i dups=0 line n=0
   log_lines=()
+  log_problem=""
   # `|| [ -n "$line" ]` so a file whose last byte is not a newline does not lose its last line.
   # Every module file ends in one today, but that is a property of the data, not an invariant, and
   # dropping a version here would delete it from the log.
@@ -302,8 +309,10 @@ read_and_validate() { # <file>
     n=$((n+1))
     # A blank line is refused rather than skipped: skipping one would silently drop it from the
     # file this rewrites, and "every other byte unchanged" is the property that makes the write safe.
-    [[ "$line" =~ ^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$ ]] \
-      || refuse "Release log has an unusable line" "${MODULE}.txt line ${n} is '${line}', not an X.Y.Z version with components of at most nine digits. This inserts by comparing those three numbers, so it will not touch a file it cannot read. Fix that line by hand first."
+    if [[ ! "$line" =~ ^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$ ]]; then
+      log_problem="${MODULE}.txt line ${n} is '${line}', not an X.Y.Z version with components of at most nine digits. This inserts by comparing those three numbers, so it will not touch a file it cannot read. Fix that line by hand first."
+      return 1
+    fi
     log_lines+=("$line")
   done < "$1"
   # The file has to be ordered already. Duplicates are NOT a defect: the receiving workflow
@@ -311,8 +320,10 @@ read_and_validate() { # <file>
   # module files carry them today. Out-of-order lines are a different thing, and this refuses to
   # write over them rather than quietly repairing someone else's history.
   for (( i=1; i<${#log_lines[@]}; i++ )); do
-    version_le "${log_lines[$i]}" "${log_lines[$((i-1))]}" \
-      || refuse "Release log is out of order" "${MODULE}.txt has ${log_lines[$((i-1))]} on line ${i} and ${log_lines[$i]} on line $((i+1)), which is not descending. Release post-processing reads the first line of this file, so a repair here is a separate decision from recording ${VERSION}. Fix the order by hand first."
+    if ! version_le "${log_lines[$i]}" "${log_lines[$((i-1))]}"; then
+      log_problem="${MODULE}.txt has ${log_lines[$((i-1))]} on line ${i} and ${log_lines[$i]} on line $((i+1)), which is not descending. Release post-processing reads the first line of this file, so a repair here is a separate decision from recording ${VERSION}. Fix the order by hand first."
+      return 1
+    fi
     [ "${log_lines[$i]}" = "${log_lines[$((i-1))]}" ] && dups=$((dups+1))
   done
   log_dups=""
@@ -342,7 +353,8 @@ elif [ "$log_rc" -ne 0 ]; then
 fi
 
 if [ "$log_state" != "no file yet" ]; then
-  read_and_validate "$WORK/log"
+  read_and_validate "$WORK/log" \
+    || refuse "Release log cannot be written over" "$log_problem"
 
   found=0
   for line in ${log_lines[@]+"${log_lines[@]}"}; do
@@ -467,6 +479,9 @@ else
   # Assembles the new file. Every write is checked: a full disk here would otherwise send a
   # truncated file with a valid old sha, and compare-and-swap would accept it — CAS guards against
   # another writer, not against a payload this script mangled itself.
+  #
+  # Not covered by the scenarios, deliberately: a mid-write failure cannot be produced from outside
+  # without a fault-injection knob in this file. Defence in depth, and the suite header says so.
   build_content() { # <outfile>
     local out="$1" i
     : > "$out" || return 1
@@ -539,7 +554,10 @@ else
     # Validate again, not just re-parse: whoever won the race may have written a line this would
     # have refused to touch on the first read, and retrying past that would write over exactly the
     # state ADR 0005 says stops the write.
-    read_and_validate "$work/log"
+    if ! read_and_validate "$work/log"; then
+      note "$log_problem"
+      log_outcome="FAILED — the file changed into one this will not write over"; rc=1; break
+    fi
     for line in ${log_lines[@]+"${log_lines[@]}"}; do
       if [ "$line" = "$VERSION" ]; then
         log_outcome="written by someone else meanwhile"
