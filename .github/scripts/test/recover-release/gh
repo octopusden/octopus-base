@@ -7,10 +7,11 @@
 #
 # State (env):
 #   AUTH          ok | fail | fine-grained | no-workflow-scope
+#   WHOAMI_FAILS  non-empty => `gh api user` is refused although auth succeeds
 #   COMMIT_EXISTS yes | no
 #   COMPARE       identical | behind | ahead | fail
-#   TAG_STATE     absent | at-built | at-other
-#   REL_STATE     absent | draft | published | error
+#   TAG_STATE     absent | at-built | at-other | error   (error = the ref lookup itself fails)
+#   REL_STATE     absent | draft | published | error | unreadable  (200 with no isDraft)
 #   LOG_FILE      path to the module file's content; unset with LOG_MISSING/LOG_UNREADABLE
 #   LOG_MISSING   non-empty => 404 on the module file
 #   LOG_UNREADABLE non-empty => the read fails with a 500
@@ -42,6 +43,10 @@ if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
 fi
 if [ "${1:-}" = "api" ] && [ "$path" = "user" ]; then
   log "whoami"
+  # A credential that authenticates but cannot read its own account — a GitHub App installation
+  # token behaves this way. The release-log commit's author is the only record of who ran the
+  # recovery, so this must stop the run rather than write `unknown`.
+  [ -n "${WHOAMI_FAILS:-}" ] && { echo 'gh: HTTP 403: Resource not accessible by integration' >&2; exit 1; }
   [[ "$*" == *".id"* ]] && { echo "4242"; exit 0; }
   echo "tester"; exit 0
 fi
@@ -128,6 +133,8 @@ fi
 
 if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/git/ref/tags/* ]]; then
   log "ref-lookup"
+  # Not a 404: the reconciler must refuse rather than read this as "no tag" and create one.
+  [ "${TAG_STATE:-absent}" = "error" ] && { echo 'gh: HTTP 500: server error' >&2; exit 1; }
   if [ "${TAG_STATE:-absent}" = "absent" ] && ! created; then
     echo 'gh: Not Found (HTTP 404)' >&2; exit 1
   fi
@@ -172,6 +179,9 @@ if [ "${1:-}" = "release" ]; then
         [ -f "${state}.published" ] && st=published
         case "$st" in
           error)  echo 'gh: HTTP 500: server error' >&2; exit 1 ;;
+          # A 200 whose body carries no isDraft: anything but an explicit false must not read as
+          # published, or the plan reports a state nobody confirmed.
+          unreadable) jq -n --arg t "${3:-}" '{tagName:$t}' ;;
           absent) echo 'release not found' >&2; exit 1 ;;
           draft)  jq -n --arg t "${3:-}" '{isDraft:true,  tagName:$t}' ;;
           *)      jq -n --arg t "${3:-}" '{isDraft:false, tagName:$t}' ;;

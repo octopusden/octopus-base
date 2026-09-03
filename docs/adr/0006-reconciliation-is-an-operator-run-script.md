@@ -47,5 +47,15 @@ it reacts to the dispatch path's commit. The evidence for it is
 downstream post-processing, so registering twice runs that twice", plus the observed behaviour of
 manual repairs in August 2026. It matters only when the recovered version becomes the file's first
 line; when it is inserted below, post-processing is expected to run and stop at its own
-"release version is new" check. Confirming it against the canary is a prerequisite for merging, and
-the result belongs in this file.
+"release version is new" check — which is every #189 case seen so far, because a wedged version is
+one the log has already moved past.
+
+So the assumption gates one case, and that case is where it must be confirmed: **before the first
+recovery of a version that becomes the file's first line**, run one against `octopus-test` and
+check that internal post-processing ran for it. `release-gradle-github-packages.yml` in that
+repository produces the input state — a real release with a tag and a GitHub Release and no log
+entry — without spending anything on Central, because it publishes with `publish-to-nexus: false`.
+The reconciler prints a line telling the operator to check exactly this whenever the version it
+wrote became the first line. The result of that rehearsal belongs in this file; until it is here,
+treat a newest-version recovery as unproven and a below-the-top one as covered by the reasoning
+above.
