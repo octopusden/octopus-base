@@ -29,6 +29,7 @@ Upload Meta-Runners:
 
 * ![OctopusCalculateBuildParameters](../teamcity.meta-runners/OctopusCalculateBuildParameters.xml)
 * ![OctopusCallGitHubAction](../teamcity.meta-runners/OctopusCallGitHubAction.xml)
+* ![OctopusCheckReleaseVersionIsNew](../teamcity.meta-runners/OctopusCheckReleaseVersionIsNew.xml)
 
 ## Octopus Module project
 
