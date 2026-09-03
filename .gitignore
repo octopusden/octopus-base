@@ -1,1 +1,5 @@
-/.idea/
+# Local spec-driven tooling and its generated agent scaffolding. Deliberately not committed: this
+# repository records decisions in docs/adr/ and instructions in AGENTS.md, and a second design-record
+# system would be free to diverge from both.
+/openspec/
+/.claude/

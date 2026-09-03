@@ -142,6 +142,8 @@ jobs:
 
       - name: Record the built commit
         id: built-commit
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
           # fails, writing an empty sha that is only caught after the publish.
@@ -153,8 +155,14 @@ jobs:
           # not expose. A run that dies after Central accepted the upload is recovered by
           # tagging THIS commit (octopus-base#189). This flow has no resume path, so HEAD is
           # always the built commit here.
-          echo "::notice title=Built commit::${sha}"
-          { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${DRY_RUN}" = "true" ]; then
+            # A dry run publishes nothing, so this commit is not evidence of anything.
+            echo "::notice title=Built commit (dry run — nothing published)::${sha}"
+            { echo "### Built commit (dry run)"; echo ""; echo "\`${sha}\` — nothing was published by this run."; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=Built commit::${sha}"
+            { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,

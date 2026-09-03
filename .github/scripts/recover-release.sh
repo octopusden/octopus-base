@@ -27,7 +27,7 @@
 #
 # Why the credential is the operator's own, and not a provisioned one: creating a tag on a commit
 # that carries workflow files needs `workflow` scope, which the Actions GITHUB_TOKEN can never
-# have (#180). The token `gh auth login` mints through its OAuth flow does have it. See ADR 0009
+# have (#180). The token `gh auth login` mints through its OAuth flow does have it. See ADR 0006
 # for what that costs — one credential instead of a read/write split, and no run in Actions.
 #
 # Inputs (env, all optional):
@@ -92,8 +92,10 @@ MODULE="${TARGET_REPO##*/}"   # the log's file name is the repository name, `oct
 # Strict X.Y.Z. The registration path accepts more than this, but every line in every module file
 # of the release log is X.Y.Z, and the insertion below compares those as three numbers. A version
 # outside that shape would be placed by a comparison that was never designed for it.
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-  || refuse "Unusable version" "'${VERSION}' is not an X.Y.Z version. Every line in the release log is, and this inserts by comparing those three numbers. Record such a version by hand."
+# Components are bounded, not just numeric: the comparison below is shell arithmetic, and a
+# 24-digit component silently becomes "integer expression expected" and a wrong verdict.
+[[ "$VERSION" =~ ^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$ ]] \
+  || refuse "Unusable version" "'${VERSION}' is not an X.Y.Z version with components of at most nine digits. Every line in the release log is, and this inserts by comparing those three numbers. Record such a version by hand."
 [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] \
   || refuse "Unusable commit" "'${COMMIT}' is not a full 40-character commit SHA. A short SHA is refused rather than resolved: the whole point of this argument is to name one commit unambiguously."
 
@@ -137,10 +139,16 @@ self_sha="$(git -C "$here" rev-parse HEAD 2>/dev/null || echo unknown)"
 self_dirty=""
 git -C "$here" diff --quiet HEAD -- "$here" 2>/dev/null || self_dirty=" (with uncommitted changes)"
 
+ACTOR="$(gh api user --jq '.login' 2>/dev/null || echo unknown)"
+# The noreply form, so the commit carries an address that resolves to the account without exposing
+# a private one. `gh api user --jq .id` is the stable half of it.
+ACTOR_ID="$(gh api user --jq '.id' 2>/dev/null || echo 0)"
+ACTOR_EMAIL="${ACTOR_ID}+${ACTOR}@users.noreply.github.com"
+
 cat >&2 <<EOF
 
-  ${APPLY:+}$([ "$APPLY" = true ] && echo APPLY || echo PLAN) — recovering ${MODULE} ${VERSION}
-  actor        $(gh api user --jq '.login' 2>/dev/null || echo unknown)
+  $([ "$APPLY" = true ] && echo APPLY || echo PLAN) — recovering ${MODULE} ${VERSION}
+  actor        ${ACTOR}
   target       ${TARGET_REPO} @ ${COMMIT}
   tag/release  ${TAG}
   coordinates  ${coords[*]}
@@ -196,8 +204,18 @@ fi
 # ---------------------------------------------------------------------------
 # Fact 3 — the tag, and Fact 4 — the release
 # ---------------------------------------------------------------------------
+# Ask for the REF first. `/commits/<ref>` resolves a branch name and a raw sha as happily as a
+# tag, so a branch called v2.0.15 would otherwise be read as the tag being present — and the log
+# entry would then be written for a version that has no tag at all. Only once the ref exists is it
+# resolved through /commits, which is what turns an annotated tag into its commit.
 tag_state="absent" tag_sha=""
-if tag_sha="$(gh api "repos/${TARGET_REPO}/commits/${TAG}" --jq '.sha' 2>/dev/null)" && [ -n "$tag_sha" ]; then
+ref_out="$(gh api "repos/${TARGET_REPO}/git/ref/tags/${TAG}" 2>&1)" && tag_state="present" || {
+  grep -qE 'HTTP 404|"status": ?"404"' <<<"$ref_out" \
+    || refuse "Tag lookup failed" "Could not determine whether ${TAG} exists in ${TARGET_REPO}: ${ref_out}. Refusing to act on unverified state."
+}
+if [ "$tag_state" = "present" ]; then
+  tag_sha="$(gh api "repos/${TARGET_REPO}/commits/${TAG}" --jq '.sha' 2>/dev/null)" \
+    || refuse "Tag unresolvable" "${TAG} exists in ${TARGET_REPO} but could not be resolved to a commit."
   if [ "$tag_sha" = "$COMMIT" ]; then tag_state="at the commit"; else tag_state="at ${tag_sha}"; fi
 fi
 [ "$tag_state" = "absent" ] || [ "$tag_state" = "at the commit" ] \
@@ -206,8 +224,14 @@ fi
 # `gh release view`, not the REST lookup by tag: a draft is invisible to the latter, and a
 # stranded draft is exactly one of the states this exists to end.
 release_state="absent"
-if rel="$(gh release view "$TAG" --repo "$TARGET_REPO" --json isDraft,tagName 2>&1)"; then
-  if [ "$(jq -r '.isDraft' <<<"$rel" 2>/dev/null)" = "true" ]; then release_state="draft"; else release_state="published"; fi
+if rel="$(gh release view "$TAG" --repo "$TARGET_REPO" --json isDraft 2>&1)"; then
+  # Explicitly false, not "anything but true": an unparseable body would otherwise read as a
+  # published release, and the plan would report a state nobody confirmed.
+  case "$(jq -r '.isDraft' <<<"$rel" 2>/dev/null)" in
+    false) release_state="published" ;;
+    true)  release_state="draft" ;;
+    *)     refuse "Release state unreadable" "A release exists for ${TAG} but its draft state could not be read: ${rel}." ;;
+  esac
 elif ! grep -qE 'release not found|HTTP 404|"status": ?"404"' <<<"$rel"; then
   refuse "Release lookup failed" "Could not determine whether a release exists for ${TAG}: ${rel}. Refusing to act on unverified state."
 fi
@@ -250,17 +274,63 @@ log_read() { # <content-outfile>
   # The same two guards the registration path documents: BSD base64 decodes a truncated payload
   # and reports success, so a syntax check has to come first or the outcome depends on which
   # coreutils is installed.
-  [ -n "$encoded" ] && [ "$encoded" != "null" ] \
-    && [ $(( ${#encoded} % 4 )) -eq 0 ] && [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
-    || { note "The release log for ${MODULE} could not be decoded."; return 1; }
+  # An empty file is a legitimate state — a module file truncated to nothing — and decodes to no
+  # lines. Only a payload that is present and not base64 is undecodable.
+  if [ -z "$encoded" ] || [ "$encoded" = "null" ]; then
+    : > "$out"
+    printf '%s' "$sha"
+    return 0
+  fi
+  [ $(( ${#encoded} % 4 )) -eq 0 ] && [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || { note "The release log for ${MODULE} is not decodable base64."; return 1; }
   LC_ALL=C base64 -d <<<"$encoded" > "$out" 2>/dev/null || return 1
   printf '%s' "$sha"
 }
 
+# Parse and validate in one place, so the conflict retry below cannot write over a file the first
+# read would have refused. Fills log_lines and log_dups from $1; refuses on anything it will not
+# write over.
 declare -a log_lines=()
 log_sha="" log_state="" log_position="" log_dups="" insert_at=""
+read_and_validate() { # <file>
+  local i dups=0 line n=0
+  log_lines=()
+  # `|| [ -n "$line" ]` so a file whose last byte is not a newline does not lose its last line.
+  # Every module file ends in one today, but that is a property of the data, not an invariant, and
+  # dropping a version here would delete it from the log.
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n+1))
+    # A blank line is refused rather than skipped: skipping one would silently drop it from the
+    # file this rewrites, and "every other byte unchanged" is the property that makes the write safe.
+    [[ "$line" =~ ^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$ ]] \
+      || refuse "Release log has an unusable line" "${MODULE}.txt line ${n} is '${line}', not an X.Y.Z version with components of at most nine digits. This inserts by comparing those three numbers, so it will not touch a file it cannot read. Fix that line by hand first."
+    log_lines+=("$line")
+  done < "$1"
+  # The file has to be ordered already. Duplicates are NOT a defect: the receiving workflow
+  # prepends unconditionally, so a repeated dispatch leaves two adjacent identical lines, and four
+  # module files carry them today. Out-of-order lines are a different thing, and this refuses to
+  # write over them rather than quietly repairing someone else's history.
+  for (( i=1; i<${#log_lines[@]}; i++ )); do
+    version_le "${log_lines[$i]}" "${log_lines[$((i-1))]}" \
+      || refuse "Release log is out of order" "${MODULE}.txt has ${log_lines[$((i-1))]} on line ${i} and ${log_lines[$i]} on line $((i+1)), which is not descending. Release post-processing reads the first line of this file, so a repair here is a separate decision from recording ${VERSION}. Fix the order by hand first."
+    [ "${log_lines[$i]}" = "${log_lines[$((i-1))]}" ] && dups=$((dups+1))
+  done
+  log_dups=""
+  [ "$dups" -eq 0 ] || log_dups="${dups} adjacent duplicate line(s), left alone"
+}
+
+# Where the new position is, given log_lines. Sets insert_at.
+position_for_insert() {
+  local i
+  insert_at="${#log_lines[@]}"
+  for i in "${!log_lines[@]}"; do
+    if version_le "${log_lines[$i]}" "$VERSION"; then insert_at="$i"; return 0; fi
+  done
+}
+
 log_rc=0
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d)" && [ -d "$WORK" ] \
+  || refuse "No scratch directory" "mktemp -d failed, so there is nowhere to assemble the release-log file. Refusing to build a payload that cannot be verified."
 trap 'rm -rf "$WORK"' EXIT
 log_sha="$(log_read "$WORK/log")" || log_rc=$?
 if [ "$log_rc" -eq 2 ]; then
@@ -272,32 +342,7 @@ elif [ "$log_rc" -ne 0 ]; then
 fi
 
 if [ "$log_state" != "no file yet" ]; then
-  # `|| [ -n "$line" ]` so a file whose last byte is not a newline does not lose its last line.
-  # Every module file ends in one today, but that is a property of the data, not an invariant, and
-  # dropping a version here would delete it from the log.
-  while IFS= read -r line || [ -n "$line" ]; do
-    [ -n "$line" ] || continue
-    log_lines+=("$line")
-  done < "$WORK/log"
-  # Every line has to be X.Y.Z, or the comparison that places the new one is meaningless.
-  for i in "${!log_lines[@]}"; do
-    [[ "${log_lines[$i]}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-      || refuse "Release log has an unusable line" "${MODULE}.txt line $((i+1)) is '${log_lines[$i]}', not an X.Y.Z version. This inserts by comparing those three numbers, so it will not touch a file it cannot read. Fix that line by hand first."
-  done
-  # And the file has to be ordered already. Duplicates are NOT a defect: the receiving workflow
-  # prepends unconditionally, so a repeated dispatch leaves two adjacent identical lines, and four
-  # module files carry them today. Out-of-order lines are a different thing, and this refuses to
-  # write over them rather than quietly repairing someone else's history.
-  for (( i=1; i<${#log_lines[@]}; i++ )); do
-    if ! version_le "${log_lines[$i]}" "${log_lines[$((i-1))]}"; then
-      refuse "Release log is out of order" "${MODULE}.txt has ${log_lines[$((i-1))]} on line ${i} and ${log_lines[$i]} on line $((i+1)), which is not descending. Release post-processing reads the first line of this file, so a repair here is a separate decision from recording ${VERSION}. Fix the order by hand first."
-    fi
-  done
-  dups=0
-  for (( i=1; i<${#log_lines[@]}; i++ )); do
-    [ "${log_lines[$i]}" = "${log_lines[$((i-1))]}" ] && dups=$((dups+1))
-  done
-  [ "$dups" -eq 0 ] || log_dups="${dups} adjacent duplicate line(s), left alone"
+  read_and_validate "$WORK/log"
 
   found=0
   for line in ${log_lines[@]+"${log_lines[@]}"}; do
@@ -308,10 +353,7 @@ if [ "$log_state" != "no file yet" ]; then
     [ "$found" -eq 1 ] || log_state="present ${found} times"
   else
     log_state="absent"
-    insert_at="${#log_lines[@]}"
-    for i in "${!log_lines[@]}"; do
-      if version_le "${log_lines[$i]}" "$VERSION"; then insert_at="$i"; break; fi
-    done
+    position_for_insert
     if [ "$insert_at" -eq 0 ]; then
       log_position="as the first line — release post-processing will run for ${VERSION}"
     elif [ "$insert_at" -eq "${#log_lines[@]}" ]; then
@@ -391,35 +433,53 @@ fi
 
 if [ "$rc" -ne 0 ]; then
   log_outcome="not attempted — the tag and release must be in place first"
-elif [ "$log_state" = "present" ] || [[ "$log_state" == present* ]]; then
+elif [[ "$log_state" == present* ]]; then
   :
 else
   # Compare-and-swap: the blob sha read above is sent back, so a concurrent write loses rather than
   # being overwritten. On a conflict, re-read: if a real release landed the version meanwhile there
   # is nothing to do, and otherwise the position is recomputed against what is there now.
   put_log() { # <content-file> <sha-or-empty>
+    # Encode first and check it, rather than inside the argument list: a failure in a command
+    # substitution there is masked by the status of `local`, and the request would go out with an
+    # empty body — which GitHub would accept, replacing the module file with nothing.
+    local encoded
+    encoded="$(LC_ALL=C base64 < "$1")" || return 1
+    encoded="$(LC_ALL=C tr -d '\n' <<<"$encoded")" || return 1
+    [ -n "$encoded" ] || return 1
     local args=(-X PUT "repos/${RELEASE_LOG_REPO}/contents/${MODULE}.txt"
                 -f "message=${MODULE}-${VERSION}"
                 -f "branch=${RELEASE_LOG_REF}"
-                -f "content=$(LC_ALL=C base64 < "$1" | LC_ALL=C tr -d '\n')")
-    # The receiving workflow commits as github-actions[bot] with this same message shape. Internal
-    # post-processing triggers on commits to this repository; matching both removes the only two
-    # differences a trigger filter could distinguish (ADR 0009).
+                -f "content=${encoded}")
+    # Two identities, set explicitly rather than left to default. The COMMITTER matches the
+    # receiving workflow's own commit (github-actions[bot], same message shape), because internal
+    # post-processing triggers on commits to this repository and those are the only two things a
+    # trigger filter could distinguish (ADR 0005). The AUTHOR is the operator, so the commit still
+    # says who did this — the reconciler produces no run in Actions to say it instead (ADR 0006).
     args+=(-f "committer[name]=github-actions[bot]"
-           -f "committer[email]=41898282+github-actions[bot]@users.noreply.github.com")
+           -f "committer[email]=41898282+github-actions[bot]@users.noreply.github.com"
+           -f "author[name]=${ACTOR}"
+           -f "author[email]=${ACTOR_EMAIL}")
     [ -z "$2" ] || args+=(-f "sha=$2")
     gh api "${args[@]}"
   }
 
-  build_content() { # writes the file with VERSION inserted at $insert_at
+  # Assembles the new file. Every write is checked: a full disk here would otherwise send a
+  # truncated file with a valid old sha, and compare-and-swap would accept it — CAS guards against
+  # another writer, not against a payload this script mangled itself.
+  build_content() { # <outfile>
     local out="$1" i
-    : > "$out"
+    : > "$out" || return 1
     for i in "${!log_lines[@]}"; do
-      [ "$i" -eq "$insert_at" ] && printf '%s\n' "$VERSION" >> "$out"
-      printf '%s\n' "${log_lines[$i]}" >> "$out"
+      if [ "$i" -eq "$insert_at" ]; then printf '%s\n' "$VERSION" >> "$out" || return 1; fi
+      printf '%s\n' "${log_lines[$i]}" >> "$out" || return 1
     done
-    [ "$insert_at" -ge "${#log_lines[@]}" ] && printf '%s\n' "$VERSION" >> "$out"
-    return 0
+    if [ "$insert_at" -ge "${#log_lines[@]}" ]; then printf '%s\n' "$VERSION" >> "$out" || return 1; fi
+    # The line count is known in advance, so a short write is caught even where printf did not
+    # report one.
+    local want=$(( ${#log_lines[@]} + 1 )) got
+    got="$(wc -l < "$out")" || return 1
+    [ "$got" -eq "$want" ] || return 1
   }
 
   work="$WORK"
@@ -427,10 +487,12 @@ else
   while :; do
     attempt=$((attempt+1))
     if [ "$log_state" = "no file yet" ]; then
-      printf '%s\n' "$VERSION" > "$work/content"
+      printf '%s\n' "$VERSION" > "$work/content" \
+        || { log_outcome="FAILED — could not assemble the file to write"; rc=1; break; }
       put_sha=""
     else
-      build_content "$work/content"
+      build_content "$work/content" \
+        || { log_outcome="FAILED — could not assemble the file to write"; rc=1; break; }
       put_sha="$log_sha"
     fi
 
@@ -474,20 +536,17 @@ else
       log_outcome="FAILED — the write was refused and the file had not changed, so this is not a conflict"; rc=1
       break
     fi
-    log_lines=()
-    while IFS= read -r line || [ -n "$line" ]; do
-      [ -n "$line" ] || continue; log_lines+=("$line")
-    done < "$work/log"
+    # Validate again, not just re-parse: whoever won the race may have written a line this would
+    # have refused to touch on the first read, and retrying past that would write over exactly the
+    # state ADR 0005 says stops the write.
+    read_and_validate "$work/log"
     for line in ${log_lines[@]+"${log_lines[@]}"}; do
       if [ "$line" = "$VERSION" ]; then
         log_outcome="written by someone else meanwhile"
         break 2
       fi
     done
-    insert_at="${#log_lines[@]}"
-    for i in "${!log_lines[@]}"; do
-      if version_le "${log_lines[$i]}" "$VERSION"; then insert_at="$i"; break; fi
-    done
+    position_for_insert
     log_state="absent"
   done
 fi

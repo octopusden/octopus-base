@@ -17,6 +17,7 @@
 #   LOG_BASE64_TRUNCATED non-empty => the payload is not decodable base64
 #   LOG_FILE_2    path used by the SECOND read (the conflict-retry case)
 #   PUT           ok | conflict-then-ok | conflict-twice | refused | no-commit
+#   CONFIRM_FAILS error | draft | othertag   the post-write release confirmation only
 #   BUILT         the commit being recovered
 #   REF_CREATE    ok | refused        (tag-and-release.sh's one refusable operation)
 set -u
@@ -39,7 +40,11 @@ if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
   esac
   exit 0
 fi
-if [ "${1:-}" = "api" ] && [ "$path" = "user" ]; then log "whoami"; echo "tester"; exit 0; fi
+if [ "${1:-}" = "api" ] && [ "$path" = "user" ]; then
+  log "whoami"
+  [[ "$*" == *".id"* ]] && { echo "4242"; exit 0; }
+  echo "tester"; exit 0
+fi
 
 # --- the release log ---
 log_payload() { # <file>
@@ -55,7 +60,11 @@ if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/contents/*.txt* ]]; then
         message=*) [[ "${a#message=}" =~ ^[a-z0-9.-]+-[0-9]+\.[0-9]+\.[0-9]+$ ]] && log "log-put-message-ok" ;;
       esac
     done
-    [[ "$*" == *"github-actions[bot]"* ]] && log "log-put-committer-ok"
+    [[ "$*" == *"committer[name]=github-actions[bot]"* ]] && log "log-put-committer-ok"
+    # The author is the operator, so the commit says who did this: the reconciler leaves no run in
+    # Actions to say it instead.
+    [[ "$*" == *"author[name]=tester"* ]] && [[ "$*" == *"author[email]=4242+tester@"* ]] \
+      && log "log-put-author-ok"
     [[ "$*" == *"-f branch="* ]] && log "log-put-branch-ok"
     [[ "$*" == *"-f sha="* ]] && log "log-put-with-sha" || log "log-put-without-sha"
     # Keep what was written, so a test can assert the bytes rather than the intention.
@@ -140,8 +149,22 @@ fi
 if [ "${1:-}" = "release" ]; then
   case "${2:-}" in
     view)
-      if [[ "$*" == *"--json isDraft,tagName"* ]]; then
+      # The reconciler reads the JSON object; tag-and-release.sh asks the same question with
+      # `--jq`, which makes gh print the bare value. Distinguishing them here is what keeps a
+      # scenario honest about which caller it is exercising.
+      if [[ "$*" == *"--json isDraft"* ]] && [[ "$*" != *"--jq"* ]]; then
         log "release-json"
+        # CONFIRM_FAILS makes only the LAST of these calls fail — the confirmation the reconciler
+        # makes after tag-and-release.sh succeeded, and before it touches the release log. Without
+        # it that gate is unreachable from a test: every other way of breaking the release also
+        # breaks tag-and-release.sh, which stops the run earlier for a different reason.
+        if [ -n "${CONFIRM_FAILS:-}" ] && [ -f "${state}.rel" ]; then
+          case "${CONFIRM_FAILS}" in
+            draft)   echo '{"isDraft":true,"tagName":"'"${3:-}"'"}'; exit 0 ;;
+            othertag) echo '{"isDraft":false,"tagName":"v9.9.9"}'; exit 0 ;;
+            *)       echo 'gh: HTTP 500: server error' >&2; exit 1 ;;
+          esac
+        fi
         st="${REL_STATE:-absent}"
         rel_created && [ "$st" = absent ] && st=published
         # A draft that has since been published reads as published, which is what the reconciler
@@ -156,7 +179,11 @@ if [ "${1:-}" = "release" ]; then
         exit 0
       fi
       if [[ "$*" == *"--json isDraft"* ]]; then
-        log "draft-query"; [ "${REL_STATE:-absent}" = draft ] && echo true || echo false; exit 0
+        log "draft-query"
+        if [ -f "${state}.published" ]; then echo false
+        elif [ "${REL_STATE:-absent}" = draft ]; then echo true
+        else echo false; fi
+        exit 0
       fi
       if [[ "$*" == *"--json assets"* ]]; then log "assets-query"; exit 0; fi
       log "release-view"

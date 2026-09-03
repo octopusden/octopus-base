@@ -23,9 +23,11 @@ It does not need to: the operator already has it.
 Four properties of the workflow design are given up, and they are real:
 
 - **One credential instead of two.** The phase that decides now holds write capability, so a defect
-  in the decision logic can cause a wrong write. The script's answer is that every write is guarded
-  by a read-back and the plan is the default: `--apply` is a separate, deliberate invocation that
-  re-reads everything first.
+  in the decision logic can cause a wrong write. The script's answer is that the plan is the
+  default — `--apply` is a separate, deliberate invocation that re-reads everything first — and
+  that every write is confirmed before the next one begins: the tag by resolving it, the release by
+  reading it back, and the release-log entry from the write's own response rather than a later read,
+  because a read straight after a write can be served from cache.
 - **No allowlist.** A typo in the repository argument is caught by the commit lookup and by Central,
   not by a declared list. The blast radius is the operator's own access, which is wider than any
   token that would have been provisioned.
@@ -33,9 +35,10 @@ Four properties of the workflow design are given up, and they are real:
   by the release log's compare-and-swap. The tag and the release are idempotent, so the exposure is
   a duplicated effort, not a corrupted state.
 - **No run in Actions, in either repository.** There is no `environment: Prod`, no approval gate, and
-  no automatic record that this happened. The GitHub Release and the release-log commit are
-  attributed to the operator; the tag is a lightweight ref and has no author at all. The run's own
-  report is printed and not stored.
+  no automatic record that this happened. The GitHub Release is attributed to the operator, and so is
+  the release-log commit's author — its committer is deliberately the bot, for the reason
+  [ADR 0005](0005-reconciliation-writes-the-release-log-directly.md) gives. The tag is a lightweight
+  ref and has no author at all. The run's own report is printed and not stored.
 
 One assumption is not verifiable from this repository: that internal release post-processing
 triggers on a **commit** to `octopus-release-log`, and therefore reacts to a direct write exactly as

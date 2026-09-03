@@ -16,9 +16,11 @@ re-runs plainly gets `already exists` and a component whose record then has to b
 (#189).
 
 The resume path itself has a defect worth knowing about while using it: the job that creates the
-tag takes the commit from the run doing the resuming, not from the run that built the artifacts.
-Both the Gradle flow and `octopus-base`'s own release annotate this now, but the annotation only
-warns — see the issue linked from that annotation.
+tag takes the commit from the run doing the resuming, not from the run that built the artifacts, so
+a branch that moved in between gets tagged at the wrong commit. Both the Gradle flow and
+`octopus-base`'s own release now annotate the resumed run to say its HEAD is not the published
+commit, but the annotation only warns — the tagging job is unchanged, and fixing it needs a way to
+pass the original commit in, which `target-ref` cannot express today.
 
 The default for anything unclassified is therefore also non-retryable: without evidence, "a retry
 cannot help" is the answer that cannot make things worse.

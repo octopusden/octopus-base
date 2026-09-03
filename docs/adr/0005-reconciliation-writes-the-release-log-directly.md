@@ -20,6 +20,10 @@ in the file and not where.
 the entry is a different run in another repository, and that is exactly how 2.0.15's registration
 went missing while every visible step was green. A direct write returns the commit it made.
 
+Those checks run on every read of the file, including the re-read after a compare-and-swap
+conflict: whoever won that race may have written a line this would have refused to touch, and
+retrying past it would write over exactly the state this refuses to write over.
+
 Nothing outside the file's ordering is repaired. Existing adjacent duplicates — four module files
 carry them, because the dispatch path prepends unconditionally and a repeated dispatch leaves two
 identical lines — are reported and left alone. A file whose lines are out of order, or whose lines
@@ -36,8 +40,9 @@ The release log is also written **last**, after the tag and a non-draft release 
 the only one of the three ledgers with a consumer outside these repositories, and the release path
 never shows that consumer a version whose tag and release are not already in place.
 
-A direct write differs from the dispatch path's commit in author and message unless it matches them,
-so it does: the same `<module>-<version>` message, and `github-actions[bot]` as committer. Those are
-the only two things a trigger filter could distinguish, and the internal post-processing behind that
-trigger is not ours to inspect. See [ADR 0006](0006-reconciliation-is-an-operator-run-script.md) for
-what that assumption rests on.
+A direct write is made to look like the dispatch path's commit where that is observable: the same
+`<module>-<version>` message and `github-actions[bot]` as **committer**, which are the two things a
+trigger filter could distinguish. The **author** is left as the operator, so the commit still records
+who did this — there is no run in Actions to record it instead. The internal post-processing behind
+that trigger is not ours to inspect; see
+[ADR 0006](0006-reconciliation-is-an-operator-run-script.md) for what that assumption rests on.
