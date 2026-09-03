@@ -58,7 +58,7 @@ base() {
 # --- the ordinary paths --------------------------------------------------------------------
 base
 run "no tag and no release: create the ref, wait, then publish a release" 0 \
-  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref release-view graphql create-published" \
+  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view graphql create-published" \
   "Created tag and release"
 
 base; REL_STATE=published; REF_STATE=exists; export REL_STATE REF_STATE
@@ -77,14 +77,18 @@ run "tag correct but no release: adopt the tag" 0 \
 # already existed, so here it created the ref and then died on "release already exists".
 base; REL_STATE=draft; export REL_STATE
 run "a draft with no tag is adopted, not collided with" 0 \
-  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref release-view draft-query publish" \
+  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view draft-query publish" \
   "publishing it"
 
-# The ref must be created BEFORE the draft is published: publishing a draft whose tag does not
-# exist makes GitHub create that tag at the draft's own target_commitish, which need not be the
-# commit that was built. The expected call order above pins that; this asserts it explicitly.
+# The ref must be created AND VISIBLE before the draft is published. Publishing a draft is itself
+# a tag-creating operation: GitHub materialises the tag from the draft's own target_commitish,
+# which need not be the commit that was built. So the GraphQL wait has to come before `publish`,
+# not only before a `release create` — the sequence below is the assertion, and it is the one path
+# neither inline copy ever reached, because both died at "release already exists" first.
 base; REL_STATE=draft; export REL_STATE
-run "the ref is created before the draft is published, not after" 0 "" "publishing it"
+run "the ref is waited for before the draft is published, not only before a create" 0 \
+  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view draft-query publish" \
+  "publishing it"
 
 base; REF_STATE=exists REL_STATE=draft; export REF_STATE REL_STATE
 run "a draft on a correct existing tag is published" 0 "" "publishing it"
@@ -112,12 +116,12 @@ tmpasset="$(mktemp -d)/pom.xml"; printf '<project/>\n' > "$tmpasset"
 
 base; RELEASE_ASSET="$tmpasset"; export RELEASE_ASSET
 run "with an asset: draft, attach, then publish — in that order" 0 \
-  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref release-view graphql create-draft upload $tmpasset publish" \
+  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view graphql create-draft upload $tmpasset publish" \
   "Attached"
 
 base; RELEASE_ASSET="$tmpasset" UPLOAD=error; export RELEASE_ASSET UPLOAD
 run "a refused upload still leaves a published release" 0 \
-  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref release-view graphql create-draft upload $tmpasset publish" \
+  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view graphql create-draft upload $tmpasset publish" \
   "refused the asset upload"
 
 base; RELEASE_ASSET="/nonexistent/pom.xml"; export RELEASE_ASSET

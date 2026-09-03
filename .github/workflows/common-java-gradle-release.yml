@@ -236,21 +236,32 @@ jobs:
         id: built-commit
         env:
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
           # fails, writing an empty sha that is only caught after the publish.
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          # A workflow command ends at a newline and delimits on `::`, so an id carrying either
+          # would truncate or split the annotation. The id is a Portal UUID in practice; this
+          # keeps a hand-typed one from rewriting the message around it.
+          resume_id_safe="$(printf '%s' "${RESUME_DEPLOYMENT_ID}" | tr -cd 'A-Za-z0-9._:-' | cut -c1-64)"
           # Leave the commit where a failed run's reader will find it: as an annotation on the
           # run page and in the step summary, not only in a job output that a failed job does
           # not expose. A run that dies after Central accepted the upload is recovered by
           # tagging THIS commit (octopus-base#189), and the head of the branch is usually not it.
-          if [ -n "${RESUME_DEPLOYMENT_ID}" ]; then
+          if [ "${DRY_RUN}" = "true" ]; then
+            # A dry run publishes nothing, so this commit is not evidence of anything. Said rather
+            # than suppressed: the value is still what a reader of this run wants, and the
+            # reconciler asks Central regardless of what any annotation claims.
+            echo "::notice title=Built commit (dry run — nothing published)::${sha}"
+            { echo "### Built commit (dry run)"; echo ""; echo "\`${sha}\` — nothing was published by this run."; } >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "${RESUME_DEPLOYMENT_ID}" ]; then
             # On a resume the artifacts were built by an EARLIER run, so this HEAD is not the
             # commit that was published. Say so where the wrong value would otherwise be read.
-            echo "::notice title=Built commit belongs to an earlier run::This run resumed Portal deployment ${RESUME_DEPLOYMENT_ID}, built by an earlier run. Its HEAD (${sha}) is NOT the published commit. Use the earlier run's Built commit entry, or its checkout sha, and attest that."
-            { echo "### Built commit"; echo ""; echo "Not this run's HEAD: resumed deployment \`${RESUME_DEPLOYMENT_ID}\` from an earlier run. Take the commit from that run."; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Built commit belongs to an earlier run::This run resumed Portal deployment ${resume_id_safe}, built by an earlier run. Its HEAD (${sha}) is NOT the published commit. Use the earlier run's Built commit entry, or its checkout sha, and attest that."
+            { echo "### Built commit"; echo ""; echo "Not this run's HEAD: resumed deployment \`${resume_id_safe}\` from an earlier run. Take the commit from that run."; } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::notice title=Built commit::${sha}"
             { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"

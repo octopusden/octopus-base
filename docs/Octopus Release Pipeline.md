@@ -488,9 +488,11 @@ the caller adds a second approval gate.
   dry-run skips. The Gradle flow always runs `./gradlew build`.
 - **A stranded draft release is finished rather than treated as done.** A draft is invisible to
   the stamp lookup, so leaving one in place would block registration forever. Both flows and the
-  reconciler now share `.github/scripts/tag-and-release.sh`, which checks for a release before
-  creating the ref and publishes a draft on every path — including a draft with no tag, which used
-  to make the Gradle flow create the tag and then fail with "release already exists".
+  reconciler now share `.github/scripts/tag-and-release.sh`, which looks for an existing release
+  before it would create one — on every path, including a draft with no tag of its own, which used
+  to make the Gradle flow create the tag and then fail with "release already exists". The ref is
+  created first and then waited for; publishing a draft is itself a tag-creating operation, so the
+  wait covers that too.
 - **Registration logic is not separately pinnable.** `common-register-release.yml` is reached
   through a local `uses:` path, so its version is whatever ships in the pinned `octopus-base`
   commit.
@@ -503,8 +505,9 @@ and is refused with `already exists`, so the component cannot release again unti
 completed. Four components have reached it (#189). It is **not** repaired by re-dispatching the
 release: Central refuses a coordinate that exists, and a re-dispatch cannot change that.
 
-Run it from an `octopus-base` checkout, on a released tag, with a clean worktree — the script
-prints its own commit so the record says which version of it ran:
+Run it from an `octopus-base` checkout, ideally on a released tag with a clean worktree. The
+script prints its own commit and whether `.github/scripts` has uncommitted changes, so the record
+says which version of it ran; it does not refuse a dirty checkout, so read that line:
 
 ```bash
 .github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...]
@@ -518,9 +521,10 @@ It plans by default and writes nothing. `--apply` re-reads every fact first.
 
 - **`<built-sha>`** — the `Built commit` annotation on that run's page, also in its step summary.
   It is the commit that was *built*, which is usually not the branch head: `octopus-cve-automation`
-  2.0.3 was published from a commit two behind `main`. On a **resumed** run the annotation says so
-  instead of giving a value — the artifacts came from an earlier run, and its annotation is the one
-  to use.
+  2.0.3 was published from a commit two behind `main`. Two annotations must not be used as the
+  answer: a **dry run** says `(dry run — nothing published)`, and a **resumed** run says the commit
+  belongs to an earlier run and names the Portal deployment it resumed. Neither links to that run —
+  find it by that deployment id, and take its own `Built commit` annotation.
 - **coordinates** — `group:artifact` pairs, comma-separated. A Gradle release lists them in the
   Central preflight block `Publications this release would publish`, before the build; a resumed
   run has no preflight, so take them from the run that published. A Maven release has no preflight

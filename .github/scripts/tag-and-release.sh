@@ -224,5 +224,12 @@ if [ "$ref_create" -ne 0 ]; then
   exit 1
 fi
 
+# Wait here, before ANY release operation, not only before `gh release create`. Publishing a draft
+# also creates a tag: GitHub materialises it from the draft's own target_commitish, so publishing
+# one while this ref is not yet visible produces a release on whatever that commitish points at —
+# the stale-code release this whole file exists to prevent. The path that reaches it — ref created
+# here, a draft already present with no ref of its own — is new; both inline copies died earlier,
+# at `gh release create` reporting "release already exists".
+wait_for_tag
 create_or_adopt_release
 echo "Created tag and release $TAG at $built_sha"

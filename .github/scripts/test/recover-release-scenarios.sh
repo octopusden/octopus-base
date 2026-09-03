@@ -74,7 +74,7 @@ base() {
   export LOG_FILE="$fixtures/octopus-test.txt"
   # Exported empty rather than unset: a case below assigns to these by name, and an assignment to
   # a variable that is not already exported would never reach the fixture.
-  export LOG_MISSING="" LOG_UNREADABLE="" LOG_BASE64_TRUNCATED="" LOG_FILE_2=""
+  export LOG_MISSING="" LOG_UNREADABLE="" LOG_BASE64_TRUNCATED="" LOG_FILE_2="" CONFIRM_FAILS=""
   export ABSENT_ARTIFACTS="" UNKNOWN_ARTIFACTS=""
   APPLY_FLAG=""; ARGS=""
 }
@@ -128,7 +128,15 @@ run "a comparison that fails does not stop the plan" 0 "could not be compared"
 echo "-- a plan writes nothing -------------------------------------------------"
 base
 run "a plan reads every fact and writes nothing" 0 "Plan only" \
-  "ref-create,release-create,release-publish,log-put" "commit-lookup,tag-resolve,release-json,log-read"
+  "ref-create,release-create,release-publish,log-put" "commit-lookup,ref-lookup,release-json,log-read"
+# The tag is asked for as a REF first: `/commits/<name>` also resolves a branch or a raw sha, so a
+# branch called v2.0.15 would otherwise read as the tag being present, and the log entry would be
+# written for a version that has no tag at all.
+base; TAG_STATE=at-built
+run "an existing tag is confirmed as a ref before it is resolved" 0 "at the commit" "" \
+  "ref-lookup,tag-resolve"
+base; TAG_STATE=absent
+run "a branch sharing the tag's name is not mistaken for the tag" 0 "tag            absent" "tag-resolve"
 base; TAG_STATE=at-built REL_STATE=published LOG_FILE="$fixtures/octopus-test-with-2.0.15.txt"
 run "a plan over a complete state says there is nothing to do" 0 "leave it" \
   "ref-create,release-create,log-put"
@@ -160,11 +168,21 @@ run "a full recovery writes all three, in order" 0 "written now" "" \
 # shows that consumer a version whose tag and release are not already there.
 base; APPLY_FLAG="--apply"; REF_CREATE=refused
 run "a tag that cannot be created leaves the log untouched and exits non-zero" 1 "not attempted" "log-put"
+# The gate that has to hold when tag-and-release.sh itself SUCCEEDS: its own release lookups sit
+# inside `if` conditions, where errexit is suppressed, so a failed lookup there can leave a draft
+# unpublished and still exit 0. The release log is the only ledger with a consumer outside these
+# repositories, and it must not learn about a version whose release is not confirmed.
+base; APPLY_FLAG="--apply"; CONFIRM_FAILS=error
+run "a release that cannot be confirmed after the write leaves the log untouched" 1 "not attempted" "log-put"
+base; APPLY_FLAG="--apply"; CONFIRM_FAILS=draft
+run "a release still a draft after the write leaves the log untouched" 1 "not attempted" "log-put"
+base; APPLY_FLAG="--apply"; CONFIRM_FAILS=othertag
+run "a release attached to another tag leaves the log untouched" 1 "not attempted" "log-put"
 
 echo "-- apply: the release-log write ------------------------------------------"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published
 run "the entry is appended, one line, every other byte unchanged" 0 "written now" "" \
-  "log-put,log-put-with-sha,log-put-message-ok,log-put-committer-ok,log-put-branch-ok" \
+  "log-put,log-put-with-sha,log-put-message-ok,log-put-committer-ok,log-put-author-ok,log-put-branch-ok" \
   "$fixtures/expected-octopus-test-2.0.15.txt"
 # The insertion that matters most: into the middle of a file that already carries duplicates.
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published
@@ -201,7 +219,7 @@ LOG_FILE="$fixtures/out-of-order.txt"
 run "an out-of-order file is refused, not silently repaired" 1 "is out of order" "log-put"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published
 LOG_FILE="$fixtures/malformed-line.txt"
-run "a line that is not a version is refused, naming the line" 1 "line 2" "log-put"
+run "a line that is not a version is refused, naming it" 1 "line 2 is .not-a-version., not an X.Y.Z" "log-put"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; LOG_UNREADABLE=1
 run "a log that cannot be read stops the write" 1 "could not be read" "log-put"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; LOG_BASE64_TRUNCATED=1
@@ -218,6 +236,16 @@ run "a conflict where the version has since landed is adopted, not written again
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-twice
 LOG_FILE_2="$fixtures/octopus-test-newer.txt"
 run "a file that keeps changing under the write fails red rather than looping" 1 "kept changing"
+# Whoever won the race may have written a file this would have refused to touch on the first read.
+# Retrying past that check would write over exactly the state ADR 0005 says stops the write — and
+# with the version landing on the first line, which is what release post-processing reads.
+base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-then-ok
+LOG_FILE_2="$fixtures/out-of-order.txt"
+run "a conflict whose winner left the file out of order refuses, it does not retry over it" 1 \
+  "is out of order"
+base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-then-ok
+LOG_FILE_2="$fixtures/malformed-line.txt"
+run "a conflict whose winner left an unusable line refuses too" 1 "not an X.Y.Z"
 # A 422 is not only a conflict: it also covers a malformed request. Retrying that would burn the
 # one retry on a bug and report the wrong cause.
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-twice

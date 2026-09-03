@@ -105,6 +105,11 @@ REPO1_CODES=200 TAG_STATE=fail RELEASE_STATE=yes \
   run "does not read a failed tag lookup as absent" 1 "could not be determined" "published but not recorded"
 COORDS="$TWO_COORDS" REPO1_CODES="200 200" TAG_STATE=yes RELEASE_STATE=yes \
   run "stops only after every coordinate answers present" 1 "all 2 coordinate"
+# The remedy it prints is copied by an operator during an incident, so it has to be runnable:
+# recover-release.sh takes the coordinates as ONE comma-separated argument, and a space-separated
+# list makes it exit with usage for every multi-module component.
+COORDS="$TWO_COORDS" REPO1_CODES="200 200" TAG_STATE=no RELEASE_STATE=no \
+  run "prints the coordinates comma-separated, as the reconciler takes them" 1 "org.octopusden.octopus:client,org.octopusden.octopus:teamcity-client"
 
 echo "-- inconclusive: must proceed --------------------------------------------"
 COORDS="$TWO_COORDS" REPO1_CODES="200 404" WANT_REPO1_CALLS=2 \

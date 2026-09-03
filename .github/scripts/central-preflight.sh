@@ -188,6 +188,11 @@ if [ -n "$GITHUB_REPOSITORY" ] && command -v gh >/dev/null 2>&1; then
   fi
 fi
 
+# The reconciler takes its coordinates as ONE comma-separated argument, so build them that way
+# rather than printing the array space-separated: an operator copying the line below during an
+# incident would otherwise get "usage" for every multi-module component.
+present_csv="$(IFS=,; printf '%s' "${PRESENT[*]}")"
+
 case "$recorded" in
   yes)
     stop "Version already released" \
@@ -195,7 +200,7 @@ case "$recorded" in
     ;;
   no)
     stop "Version published but not recorded" \
-      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), but ${tag} is not fully recorded here. This is octopus-base#189: an earlier run published and then died before tagging, so re-dispatching cannot work — Central refuses a version that exists. Recovery: from an octopus-base checkout run .github/scripts/recover-release.sh ${GITHUB_REPOSITORY} ${BUILD_VERSION} <built-commit> ${PRESENT[*]} — it asks Central itself and then completes the tag, the release and the release-log entry, in that order. The built commit is the 'Built commit' annotation on the failed run's page; the current head is usually NOT it, and on a resumed run that annotation points at the earlier run instead. The first invocation only plans; add --apply once the plan reads right. Then release the next version."
+      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), but ${tag} is not fully recorded here. This is octopus-base#189: an earlier run published and then died before tagging, so re-dispatching cannot work — Central refuses a version that exists. Recovery: from an octopus-base checkout run .github/scripts/recover-release.sh ${GITHUB_REPOSITORY} ${BUILD_VERSION} <built-commit> ${present_csv} — it asks Central itself and then completes the tag, the release and the release-log entry, in that order. The built commit is the 'Built commit' annotation on the failed run's page; the current head is usually NOT it, and on a resumed run that annotation points at the earlier run instead. The first invocation only plans; add --apply once the plan reads right. Then release the next version."
     ;;
   *)
     stop "Version already on Maven Central" \
