@@ -242,13 +242,12 @@ workflow's `artifact-pattern` at a module that is still published.
 
 ### The publication guard
 
-Before uploading, the release inspects what would reach Central and **fails** on:
+Before uploading, the release inspects what would reach Central and **fails** on either of two
+complaints:
 
-- a shadow/uber artifact (`-all` classifier);
-- a Spring Boot executable jar, detected by a `BOOT-INF/` entry inside the archive — its file
-  name is indistinguishable from a library's;
-- anything larger than `max-central-artifact-mb` (default 8), which catches a shadow jar
-  published with the classifier stripped.
+- **not a library** — an `-all` classifier, or a `BOOT-INF/` entry inside the archive, since a
+  Spring Boot jar's filename is indistinguishable from a library's;
+- **too big** — over `max-central-artifact-mb` (default 8).
 
 A fat jar often appears without anyone asking for it: the shadow plugin exposes
 `shadowRuntimeElements` as a variant of the `java` component, so `from(components.java)`

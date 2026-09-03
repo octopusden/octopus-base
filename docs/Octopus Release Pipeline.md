@@ -195,10 +195,11 @@ publishing them nowhere and reporting nothing.
 > a proxy for what Central would receive, so a routed publication must not appear there or the
 > guard would demand a `fat-jar-publication-allowlist` entry for an artifact Central never sees.
 
-Routing is derived from the input by a generated init script, applied in three places — the guard,
-the Sonatype upload, and the GitHub Packages publish. Nothing in a consumer's build script names
-publish tasks; a renamed publication therefore cannot silently start publishing to the wrong
-registry. Covered by `.github/scripts/test/publication-routing-fixture.sh`.
+Routing is derived from the input by a generated init script, applied wherever the release runs
+Gradle: the validation step, the guard, the Sonatype upload and the GitHub Packages publish.
+Nothing in a consumer's build script names publish tasks, so a renamed publication cannot silently
+start publishing to the wrong registry. Covered by
+`.github/scripts/test/publication-routing-fixture.sh`.
 
 > `nexusPublishing` binds every publication to the `sonatype` repository, and the upload runs the
 > aggregate `publishToSonatype`. That is why the routing has to be applied to the Sonatype step as
@@ -209,22 +210,23 @@ registry. Covered by `.github/scripts/test/publication-routing-fixture.sh`.
 | step | runs when |
 |---|---|
 | Central preflight | `publish-to-nexus` and no `resume-deployment-id` |
+| Validate publication routing | `github-packages-publications` non-blank — **nothing else** |
 | Publication guard | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run** |
 | Publish to Sonatype | not dry-run, `publish-to-nexus`, no `resume-deployment-id` |
 | Publish via Central Portal | not dry-run and `publish-to-nexus` |
 | Publish to GitHub Packages | not dry-run and `github-packages-publications` non-blank |
 
 So `publish-to-nexus: false` with a non-blank `github-packages-publications` makes GitHub Packages
-a repository's **only** Maven target.
+a repository's **only** Maven target. That combination is also why the validation step is gated on
+the input alone: every other Gradle invocation is skipped, so a misspelled publication name would
+otherwise survive a green dry run.
 
-The GitHub Packages step runs **after** the Central publish has fully succeeded. Not because the
-two registries are equally permanent — they are not. Central is genuinely immutable; a GitHub
-package version can be deleted, and for a public package that holds until it passes 5,000
-downloads, after which it needs GitHub Support. What the order buys is the **failure state we
-would rather be in**: Central is the slow one, with a long validating pipeline and many ways to
-fail, so putting it first means the common failure happens before anything is written to GitHub
-Packages and leaves nothing to clean up. The rarer reverse case — Central green, GitHub Packages
-red — leaves a package version that can be deleted and retried.
+The GitHub Packages step runs **after** the Central publish has fully succeeded — not because the
+two registries are equally permanent. They are not: Central is immutable, while a GitHub package
+version can be deleted, for a public package until it passes 5,000 downloads. The order buys the
+**failure state we would rather be in**. Central fails in far more ways, so putting it first means
+the common failure happens before anything is written to GitHub Packages and leaves nothing to
+clean up; the rarer reverse case leaves a package version that can be deleted and retried.
 
 > Consuming from GitHub Packages needs a token with `read:packages`. That registry has **no
 > anonymous read**, even for public packages — unlike `ghcr.io`, which is the same product family
@@ -253,9 +255,16 @@ It is the exact opposite of the taggability check beside it, which fails closed.
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
 Before the upload, the **publication guard** inspects what would reach Central by publishing to a
-throwaway local repository first, and fails on a shadow/uber artifact, a Spring Boot executable
-jar, or anything larger than `max-central-artifact-mb` (default 8). See the Developer Guide for
-the allowlist and the four remedies.
+throwaway local repository first. It makes two distinct complaints, each with its own exception:
+*not a library* — an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over
+`max-central-artifact-mb` (default 8). `oversize-library-allowlist` waives the size limit only, so
+it cannot admit an executable artifact. `fat-jar-publication-allowlist` waives both and is
+**deprecated**: it still works and warns, and the executable-artifact bypass will be removed
+(TD-001). See the Developer Guide for which remedy fits which complaint.
+
+> A shadow jar published with its classifier stripped trips neither name rule. The guard warns when
+> a jar declares `Main-Class` and bundles several third-party package roots, but cannot fail on it —
+> an ordinary thin CLI jar declares `Main-Class` too.
 
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never

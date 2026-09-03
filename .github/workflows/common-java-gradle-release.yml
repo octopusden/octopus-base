@@ -560,9 +560,8 @@ jobs:
           DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
 
-      # Derives the routing from the input so no build script names publish tasks — a misspelled
-      # name there disabled nothing and silently sent the fat jar to Central. A blank input is a
-      # no-op, so this is written unconditionally.
+      # Derives the routing from the input, so no build script names publish tasks — a misspelled
+      # name there disabled nothing silently. Written unconditionally; a blank input is a no-op.
       # Covered by .github/scripts/test/publication-routing-fixture.sh.
       - name: Prepare publication routing init script
         run: |
@@ -844,10 +843,10 @@ jobs:
           PUBLISH_LOG: ${{ runner.temp }}/publish.log
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
 
-      # After Central: neither registry allows re-publishing a version, so a Central failure after
-      # this would strand the GitHub package. Still runs when publish-to-nexus is false, so GitHub
-      # Packages can be a repository's only Maven target. Credentials match the ghcr.io login —
-      # repository_owner is stable across triggers where github.actor is not.
+      # After Central, which fails in far more ways: most failures then happen before anything is
+      # written here, leaving nothing to clean up. A package version can be deleted; a Central one
+      # cannot. Still runs when publish-to-nexus is false, so this can be the only Maven target.
+      # Credentials match the ghcr.io login — repository_owner is stable across triggers.
       - name: Publish to GitHub Packages
         if: ${{ !inputs.dry-run && inputs.github-packages-publications != '' }}
         env:
