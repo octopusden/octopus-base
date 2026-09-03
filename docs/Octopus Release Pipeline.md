@@ -381,6 +381,20 @@ caller must expose it in its own `workflow_dispatch` inputs to use it — but co
 files are `repository_dispatch`-only. Using it today means editing the consumer workflow first.
 The Maven flow has no such input at all.
 
+> **A repository that also routes a publication should expose it.** Splitting a release across two
+> registries adds a state a resume can repair — Central published, the package missing — so the
+> knob is worth more there than in a Central-only repository, and it still has to be wired in by
+> hand.
+
+Resume composes with routing. The Portal publish treats an already-`PUBLISHED` deployment as
+success and verifies it, and the GitHub Packages step is **not** gated on `resume-deployment-id`,
+so a resumed run reaches it and can finish a half-published release.
+
+> With one caveat that decides whether a resume works at all: if the earlier run had already
+> published to GitHub Packages, the resumed run tries the same version again and the registry
+> refuses it. **Delete that package version first** — see
+> [Failure shapes](#failure-shapes) — or the resume dies on the step that had already succeeded.
+
 ---
 
 ## Phase B — record the release
