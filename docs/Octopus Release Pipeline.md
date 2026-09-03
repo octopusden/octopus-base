@@ -504,8 +504,25 @@ the caller adds a second approval gate.
 
 **`github-packages-publications`** (optional): Gradle publication names to send to GitHub Packages
 instead of Central. Requires a publishing repository named `GitHubPackages` in the build script.
-Publishing uses the ambient `GITHUB_TOKEN`, so no extra secret — but consumers of the resulting
-package need a token with `read:packages`.
+Publishing needs no extra secret — it uses the run's own `GITHUB_TOKEN` — but consumers of the
+resulting package need a token with `read:packages`.
+
+**Permissions**, when using that input. A reusable workflow can only *narrow* the permissions its
+caller grants; it can never widen them. State them on the calling job:
+
+```yaml
+jobs:
+  release:
+    permissions:
+      contents: write   # tag and GitHub Release
+      packages: write   # publish to GitHub Packages
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@vX.Y.Z
+```
+
+> Nothing is blocked in this organisation today: the default token evidently already grants package
+> write, which is what lets the existing GHCR push work. It is stated because the failure is
+> invisible until it happens — tightening that default, or adopting the input in an organisation
+> whose default is read-only, breaks publication with an error that names permissions nowhere.
 
 ---
 
