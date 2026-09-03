@@ -254,10 +254,34 @@ A fat jar often appears without anyone asking for it: the shadow plugin exposes
 `shadowRuntimeElements` as a variant of the `java` component, so `from(components.java)`
 publishes the fat jar alongside the thin one.
 
-The guard makes two different complaints, and the fix depends on which one:
+What the guard does with each artifact, and which exception applies:
+
+```mermaid
+flowchart TD
+    A["an artifact that would<br/>reach Maven Central"] --> K1{"named -all.jar<br/>OR contains BOOT-INF/ ?"}
+    K1 -->|yes| EXF{"in<br/>fat-jar-publication-allowlist?"}
+    EXF -->|yes| WARN["allowed, with a warning:<br/>deprecated — route it instead"]
+    EXF -->|no| FAILF["release fails"]
+    K1 -->|no| K2{"over max-central-artifact-mb?"}
+    K2 -->|no| OK["allowed on Central"]
+    K2 -->|yes| EXO{"in<br/>oversize-library-allowlist?"}
+    EXO -->|yes| OK
+    EXO -->|no| FAILO["release fails"]
+```
+
+The two branches are the guard's two different complaints, and the fix depends on which one you
+hit:
 
 **"This is not a library"** — an `-all` classifier, or a `BOOT-INF/` entry. Central is the wrong
 destination at any size. Choose by **how anyone obtains the artifact**:
+
+```mermaid
+flowchart TD
+    B["blocked from Maven Central"] --> Q{"how does anyone<br/>obtain this artifact?"}
+    Q -->|"a build tool resolves it<br/>by Maven coordinates"| GHP["GitHub Packages:<br/>github-packages-publications"]
+    Q -->|"a person or script<br/>downloads a URL"| REL["a GitHub release asset"]
+    Q -->|"nobody — it is deployed,<br/>not consumed"| NONE["do not publish it:<br/>declare no MavenPublication, or<br/>publish-to-nexus: false"]
+```
 
 | How is it obtained? | Fix |
 |---|---|
