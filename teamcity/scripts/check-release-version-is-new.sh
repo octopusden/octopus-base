@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # TeamCity step: "Check release version is new" (Command Line runner, replaces the Kotlin script).
-# Args: %build.number% %LAST_RELEASE_VERSION%
+#
+# The two values arrive as ENVIRONMENT VARIABLES, never interpolated into this script's text.
+# The meta-runner binds them as env.BUILD_NUMBER / env.LAST_RELEASE_VERSION. Substituting a
+# TeamCity %PARAM% into the script body instead would execute whatever the value contains,
+# BEFORE any line below runs - and BUILD_NUMBER comes from the first line of a release-log
+# file, so the value is repository content. The two existing meta-runners in this directory
+# pass values the same way, as kotlinArgs.
 set -uo pipefail
 
-build="${1-}"; last="${2-}"
+build="${BUILD_NUMBER-}"; last="${LAST_RELEASE_VERSION-}"
 
 # TeamCity service-message values are single-quoted; ' | [ ] and newlines must be escaped
 # or the message is silently mangled and the build problem never appears.
