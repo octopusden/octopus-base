@@ -521,7 +521,10 @@ It plans by default and writes nothing. `--apply` re-reads every fact first.
 
 - **`<built-sha>`** — the `Built commit` annotation on that run's page, also in its step summary.
   It is the commit that was *built*, which is usually not the branch head: `octopus-cve-automation`
-  2.0.3 was published from a commit two behind `main`. Two annotations must not be used as the
+  2.0.3 was published from a commit two behind `main`. It lives as long as the run does — 90 days,
+  the organisation's Actions retention setting, measured from an artifact's `expires_at` because
+  the setting itself is not readable through the API. A wedge discovered later than that has no
+  record of its built commit, and the operator has to establish it another way. Two annotations must not be used as the
   answer: a **dry run** says `(dry run — nothing published)`, and a **resumed** run says the commit
   belongs to an earlier run and names the Portal deployment it resumed. Neither links to that run —
   find it by that deployment id, and take its own `Built commit` annotation.
