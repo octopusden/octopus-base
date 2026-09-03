@@ -254,22 +254,51 @@ A fat jar often appears without anyone asking for it: the shadow plugin exposes
 `shadowRuntimeElements` as a variant of the `java` component, so `from(components.java)`
 publishes the fat jar alongside the thin one.
 
-If the guard fails your release, pick one:
+The guard makes two different complaints, and the fix depends on which one:
+
+**"This is not a library"** — an `-all` classifier, or a `BOOT-INF/` entry. Central is the wrong
+destination at any size. Choose by **how anyone obtains the artifact**:
+
+| How is it obtained? | Fix |
+|---|---|
+| A build tool resolves it by Maven coordinates | Route it: `github-packages-publications: <publication>` |
+| A person or script downloads a URL | Attach it to a GitHub release instead |
+| Nobody — it is deployed, not consumed | Stop publishing it: declare no `MavenPublication`, or `publish-to-nexus: false` for a whole repository |
+
+Routing needs a publishing repository named `GitHubPackages` in the build script, and moves that
+publication off Central entirely:
+
+```yaml
+      # The automation module's shadow jar is resolved by coordinates, so it keeps them —
+      # on GitHub Packages rather than Central.
+      github-packages-publications: shadow
+```
+
+> Consumers then need a token with `read:packages`: that registry has no anonymous read, unlike
+> `ghcr.io`. Callers also need `packages: write` on the calling job.
+
+**"This library is too big"** — over `max-central-artifact-mb`, but a genuine dependency that
+projects compile against. Two options:
 
 | Situation | Fix |
 |---|---|
-| The module is a deployable nobody depends on | Stop publishing it |
-| The whole repository is a deployable | `publish-to-nexus: false` |
-| A consumer really resolves this fat jar from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner | Add its artifactId to `fat-jar-publication-allowlist` |
-| A genuinely consumed library is legitimately large | Raise `max-central-artifact-mb` |
+| One artifact is legitimately large | Add its artifactId to `oversize-library-allowlist` |
+| The limit itself is wrong for this repository | Raise `max-central-artifact-mb` |
 
-The allowlist keeps a legitimate exception explicit and reviewed instead of silent:
+`oversize-library-allowlist` waives the size limit **only**. Every other check still applies, so
+it cannot be used to hold a shadow or executable artifact on Central.
 
-```yaml
-      # The automation module's fat jar is resolved by its TeamCity metarunner
-      # (-Dartifact=<group>:<name>:<version>:jar:all), so it must stay on Central.
-      fat-jar-publication-allowlist: automation
-```
+> **`fat-jar-publication-allowlist` is deprecated.** It waived both complaints at once, and being
+> keyed by artifactId — which a module's thin and fat jars share — exempting the fat jar stopped
+> the guard checking the thin one too. It still works and emits a deprecation warning; the
+> executable-artifact bypass will be removed once consumers have migrated. Use routing for a
+> distribution artifact, `oversize-library-allowlist` for a large library.
+
+> A shadow jar published with its classifier **stripped** trips no name rule — it occupies the
+> unclassified `jar` slot and looks like a library. The guard warns when a jar declares
+> `Main-Class` and bundles several third-party package roots, but it cannot fail on that: a thin
+> CLI jar declares `Main-Class` too. If you see that warning, the artifact is almost certainly a
+> distribution and belongs somewhere other than Central.
 
 The guard runs in dry-run too, so `dry-run: true` rehearses it before a real release. Callers
 pin `octopus-base` by tag, so the guard starts applying to a repository only when it bumps that
