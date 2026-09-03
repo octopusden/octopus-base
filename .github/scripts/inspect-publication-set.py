@@ -50,28 +50,9 @@ release_version = os.environ.get("BUILD_VERSION", "").strip()
 dry_run = os.environ.get("DRY_RUN", "").strip().lower() == "true"
 
 publications, published, offenders, wrong_version = [], [], [], []
-deprecated, shaded = [], []
+deprecated = []
 archived = set()
 
-
-def looks_shaded(path):
-    """A shadow jar published with its classifier stripped: no name pattern can see it.
-
-    Returns the package-root count when the shape matches, 0 otherwise. WARNED, never failed —
-    Main-Class alone is ordinary (a thin CLI jar sets it) and a package-root count is a
-    heuristic, so a hard rule could block a valid release with no override.
-    """
-    try:
-        with zipfile.ZipFile(path) as z:
-            entries = z.namelist()
-            if "META-INF/MANIFEST.MF" not in entries:
-                return 0
-            if "Main-Class:" not in z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace"):
-                return 0
-            roots = {n.split("/", 1)[0] for n in entries if n.endswith(".class") and "/" in n}
-            return len(roots) if len(roots) > 3 else 0
-    except (zipfile.BadZipFile, KeyError):
-        return 0
 
 # Publications are enumerated from their POMs, not from the archives below. Every Maven
 # publication writes a POM whether or not it has an archive, so this is the only enumeration
@@ -140,9 +121,6 @@ for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in
         deprecated.append((artifact_id, path.name,
                            "executable artifact" if executable else "size",
                            "; ".join(executable + oversize)))
-    roots = looks_shaded(path) if path.suffix == ".jar" else 0
-    if roots:
-        shaded.append((artifact_id, path.name, size_mb, roots))
 
 # "Nothing to inspect" means no POM either. A publication with no archive is a normal,
 # checked publication — a BOM, or the marker java-gradle-plugin creates — and its version has
@@ -176,12 +154,6 @@ for artifact_id, name, axis, reason in deprecated:
           f"github-packages-publications; move a genuinely large library to "
           f"oversize-library-allowlist. This bypass will be removed.", flush=True)
 
-for artifact_id, name, size_mb, roots in shaded:
-    print(f"::warning title=Unclassified jar looks like a shadow jar::{artifact_id}: {name} "
-          f"({size_mb:.2f} MB) declares Main-Class and bundles {roots} top-level package roots, "
-          f"so no -all classifier or BOOT-INF/ marker can identify it. If it is a distribution "
-          f"artifact, route it with github-packages-publications rather than holding it on "
-          f"Central with a size exception.", flush=True)
 
 if wrong_version:
     level, verb = ("warning", "would be") if dry_run else ("error", "would be")

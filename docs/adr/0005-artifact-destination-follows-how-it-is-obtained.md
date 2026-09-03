@@ -33,8 +33,10 @@ four for shadow jars a metarunner fetches, one for a plugin bundle nothing resol
 a large library, so the narrow size exception begins with no legitimate user. Until those five
 have somewhere to go, removing the bypass would break them; it is deprecated and warns first.
 
-The policy also cannot be fully enforced by inspection, deliberately. A shadow jar published with
-its classifier stripped carries no marker a rule can rely on, and the only available signals — an
-executable manifest entry, a count of bundled third-party packages — are things ordinary libraries
-also have. That shape is reported, not refused: refusing on a heuristic would trade a real failure
-for a possible one at the moment a release can least absorb it, and Central versions are immutable.
+One shape the policy cannot recognise: a shadow jar published with its classifier stripped
+occupies the unclassified `jar` slot and carries no marker a rule can rely on. Only the size limit
+catches it, which is why a size exception must never be granted to one — the exception would
+remove the single check that sees it. Detecting the shape itself was considered and left out: the
+available signals (an executable manifest entry, a count of bundled packages) are things ordinary
+libraries also have, so a rule built on them could refuse a valid release, and a warning that
+changes no outcome is only noise.

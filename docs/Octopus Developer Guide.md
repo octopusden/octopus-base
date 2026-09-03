@@ -342,10 +342,8 @@ it cannot be used to hold a shadow or executable artifact on Central.
 > distribution artifact, `oversize-library-allowlist` for a large library.
 
 > A shadow jar published with its classifier **stripped** trips no name rule — it occupies the
-> unclassified `jar` slot and looks like a library. The guard warns when a jar declares
-> `Main-Class` and bundles several third-party package roots, but it cannot fail on that: a thin
-> CLI jar declares `Main-Class` too. If you see that warning, the artifact is almost certainly a
-> distribution and belongs somewhere other than Central.
+> unclassified `jar` slot and looks like a library. Only the size limit catches it, so such an
+> artifact must not be given a size exception: fix the build to classify it, or route it.
 
 The guard runs in dry-run too, so `dry-run: true` rehearses it before a real release. Callers
 pin `octopus-base` by tag, so the guard starts applying to a repository only when it bumps that

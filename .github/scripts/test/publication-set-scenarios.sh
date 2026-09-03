@@ -56,17 +56,6 @@ pad() { local f="$1"; local mb="$2"; dd if=/dev/zero bs=1048576 count="$mb" >> "
 # content would push the file just over, which is how this fixture first read as "exceeds".
 sized() { truncate -s $(( $2 * 1048576 )) "$1"; }
 
-# shaded <jar> — rewrite a jar as a shadow jar whose classifier was stripped: an executable
-# manifest plus classes from several third-party package roots, and no -all in the name.
-shaded() {
-  local target="$1" stage; stage="$(mktemp -d)"
-  mkdir -p "$stage/META-INF"
-  printf 'Manifest-Version: 1.0\nMain-Class: org.fixture.Main\n' > "$stage/META-INF/MANIFEST.MF"
-  for r in kotlin org com net io; do mkdir -p "$stage/$r"; echo x > "$stage/$r/C.class"; done
-  rm -f "$target"
-  ( cd "$stage" && zip -q -r "$target" . )
-  rm -rf "$stage"
-}
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]  — fixture built by $SETUP
 run() {
@@ -241,15 +230,6 @@ SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST
   run "warns that the fat-jar list is deprecated" 0 "is deprecated" "unfit for Maven Central"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
   run "points at the replacement" 0 "github-packages-publications"
-
-# --- a shadow jar with its classifier stripped --------------------------------------------
-# No name rule can see this shape, so it is reported and NOT refused: Main-Class alone is
-# ordinary — a thin CLI jar sets it — and a package-root count is a heuristic, so a hard rule
-# could block a valid release with no override.
-SETUP='jar "$repo" "$G" stripped 2.0.105 stripped-2.0.105.jar; shaded "$repo/$G/stripped/2.0.105/stripped-2.0.105.jar"' \
-  run "warns about a stripped-classifier shadow jar" 0 "looks like a shadow jar" "unfit for Maven Central"
-SETUP='jar "$repo" "$G" thin 2.0.105 thin-2.0.105.jar META-INF/MANIFEST.MF' \
-  run "does not warn about an ordinary jar" 0 "" "looks like a shadow jar"
 
 echo
 echo "passed=$pass failed=$fail"

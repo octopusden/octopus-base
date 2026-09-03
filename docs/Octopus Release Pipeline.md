@@ -297,10 +297,6 @@ it cannot admit an executable artifact. `fat-jar-publication-allowlist` waives b
 **deprecated**: it still works and warns, and the executable-artifact bypass will be removed
 (TD-003). See the Developer Guide for which remedy fits which complaint.
 
-> A shadow jar published with its classifier stripped trips neither name rule. The guard warns when
-> a jar declares `Main-Class` and bundles several third-party package roots, but cannot fail on it —
-> an ordinary thin CLI jar declares `Main-Class` too.
-
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never
 > re-inspected.
