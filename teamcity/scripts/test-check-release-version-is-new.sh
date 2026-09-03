@@ -23,13 +23,17 @@ check "numeric order, not lexical"     "value='false'"                        2.
 check "numeric order both ways"        "identity='releaselog_regressed'"      2.0.9  2.0.10
 check "empty version"                  "identity='releaselog_bad_version'"    ""     2.0.16
 check "non-version"                    "identity='releaselog_bad_version'"    "x.y"  2.0.16
-check "empty last-release"             "identity='releaselog_bad_lastrelease'" 2.0.16 ""
+check "empty last: initial state"      "ALREADY_PROCESSED' value='false'"     2.0.16 ""
+check "junk last-release"              "identity='releaselog_bad_lastrelease'" 2.0.16 "x.1"
+check "2.0 equals 2.0.0"               "ALREADY_PROCESSED' value='true'"      2.0    2.0.0
+check "leading zeros compare numeric"  "ALREADY_PROCESSED' value='false'"     2.0.010 2.0.9
 check "quote is service-msg escaped"   "\|'"                                  "2.0.'16" 2.0.16
 check "problem also logs an ERROR line" "##teamcity\[message text=.*status='ERROR'\]" 2.0.15 2.0.16
 
 # Non-zero exit on every real problem, zero on both good outcomes.
-for c in "2.0.16 2.0.16 0" "2.0.17 2.0.16 0" "2.0.15 2.0.16 1" "x 2.0.16 1"; do
+for c in "2.0.16 2.0.16 0" "2.0.17 2.0.16 0" "2.0.15 2.0.16 1" "x 2.0.16 1" "2.0.16 EMPTY 0"; do
   set -- $c
+  [ "$2" = EMPTY ] && set -- "$1" "" "$3"
   BUILD_NUMBER="$1" LAST_RELEASE_VERSION="$2" bash "$script" >/dev/null 2>&1; rc=$?
   if [ "$rc" -eq "$3" ]; then echo "PASS [exit $3 for $1 vs $2]"; pass=$((pass+1))
   else echo "FAIL [exit: $1 vs $2 gave $rc, want $3]"; fail=$((fail+1)); fi
@@ -58,6 +62,15 @@ evil="\"; : > ${marker}; x=\""
 BUILD_NUMBER="$evil" LAST_RELEASE_VERSION=2.0.16 bash <(printf '%s\n' "$embedded") >/dev/null 2>&1
 if [ -e "$marker" ]; then echo "FAIL [embedded copy executed an injected command]"; rm -f "$marker"; fail=$((fail+1))
 else echo "PASS [embedded copy treats a hostile value as data]"; pass=$((pass+1)); fi
+
+# The comparison must not depend on any external command: a `sort` that cannot do -V used to
+# make this script report an OLDER version as newer, with exit 0.
+stub="$(mktemp -d)"
+for c in sort awk sed grep cut tr; do printf '#!/bin/sh\nexit 2\n' > "$stub/$c"; chmod +x "$stub/$c"; done
+out="$(PATH="$stub:/usr/bin:/bin" BUILD_NUMBER=2.0.9 LAST_RELEASE_VERSION=2.0.16 bash "$script" 2>&1)"
+if grep -q "releaselog_regressed" <<<"$out"; then echo "PASS [verdict needs no external command]"; pass=$((pass+1))
+else echo "FAIL [verdict changed when external commands were broken]"; sed 's/^/       /' <<<"$out"; fail=$((fail+1)); fi
+rm -rf "$stub"
 
 echo "Results: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
