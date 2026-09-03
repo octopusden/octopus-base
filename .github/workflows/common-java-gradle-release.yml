@@ -234,12 +234,27 @@ jobs:
 
       - name: Record the built commit
         id: built-commit
+        env:
+          RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
         run: |
           # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
           # fails, writing an empty sha that is only caught after the publish.
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          # Leave the commit where a failed run's reader will find it: as an annotation on the
+          # run page and in the step summary, not only in a job output that a failed job does
+          # not expose. A run that dies after Central accepted the upload is recovered by
+          # tagging THIS commit (octopus-base#189), and the head of the branch is usually not it.
+          if [ -n "${RESUME_DEPLOYMENT_ID}" ]; then
+            # On a resume the artifacts were built by an EARLIER run, so this HEAD is not the
+            # commit that was published. Say so where the wrong value would otherwise be read.
+            echo "::notice title=Built commit belongs to an earlier run::This run resumed Portal deployment ${RESUME_DEPLOYMENT_ID}, built by an earlier run. Its HEAD (${sha}) is NOT the published commit. Use the earlier run's Built commit entry, or its checkout sha, and attest that."
+            { echo "### Built commit"; echo ""; echo "Not this run's HEAD: resumed deployment \`${RESUME_DEPLOYMENT_ID}\` from an earlier run. Take the commit from that run."; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=Built commit::${sha}"
+            { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
