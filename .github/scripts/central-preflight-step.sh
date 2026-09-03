@@ -94,4 +94,15 @@ else
   tail -n 40 "$log" 2>/dev/null || true
 fi
 
+# A publication carrying another version is a build defect, and the listing already saw it —
+# the init script skips it by name. Surfacing it here is the earliest anything can: the
+# publication guard makes the same finding after the build, and the Portal makes it after the
+# upload. Only a warning, because the preflight may not stop a release on anything but a
+# fully published version, and because a mixed set is exactly the case that would otherwise
+# be silent: the coordinate file is non-empty, so the log above is not printed.
+if skipped="$(grep -F 'not the version being released' "$log" 2>/dev/null)" && [ -n "$skipped" ]; then
+  echo "::warning title=Publication at another version::The publication listing skipped $(printf '%s\n' "$skipped" | grep -c .) publication(s) carrying a version other than ${BUILD_VERSION}. They are not checked against Central, and the publication guard will refuse the release after the build unless the version properties reach every project that declares a publication."
+  printf '%s\n' "$skipped" | sed 's/^/  /'
+fi
+
 COORDS_FILE="$coords" bash "$HELPER_DIR/central-preflight.sh"

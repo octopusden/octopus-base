@@ -77,13 +77,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/test/publication-routing-fixture.sh
 
-      # The guard only reads files, so crafted archives cover every branch in a second — including
-      # the combination that matters most: the size-only allowlist must not admit an executable
-      # artifact, or splitting the two lists bought nothing.
-      - name: Central publication guard scenarios
-        shell: bash
-        run: bash .github/scripts/test/central-guard-fixture.sh
-
   quality:
     name: quality
     runs-on: ubuntu-latest
@@ -167,6 +160,25 @@ jobs:
       - name: Preflight step scenarios
         shell: bash
         run: bash .github/scripts/test/preflight-step-scenarios.sh
+      # The publication guard decides what may reach an immutable public repository and had no
+      # tests before the version refusal was added to it. Fixtures are local-repository trees, so
+      # no Gradle is needed.
+      - name: Publication set scenarios
+        shell: bash
+        run: bash .github/scripts/test/publication-set-scenarios.sh
+      # The step AROUND the inspector: its fail-closed branch — the inspector missing from
+      # disk — must stop a real release and only warn in a dry run, and nothing else reaches
+      # it. The scenarios extract the step's own `run:` body from the workflow and drive it
+      # with a stubbed gradlew, so that asymmetry cannot regress silently.
+      - name: Publication guard step scenarios
+        shell: bash
+        run: bash .github/scripts/test/publication-guard-step-scenarios.sh
+      # The retry around `mvn` lives in the workflow's own `run:` body, so these scenarios
+      # extract that body and execute it against a stubbed mvn. Both halves are easy to break
+      # silently: a transfer blip must cost a second attempt, and a compile error must not.
+      - name: Maven build retry scenarios
+        shell: bash
+        run: bash .github/scripts/test/maven-build-retry-scenarios.sh
 
   security:
     name: security

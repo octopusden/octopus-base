@@ -651,6 +651,7 @@ jobs:
           OVERSIZE_ALLOWLIST: ${{ inputs.oversize-library-allowlist }}
           MAX_ARTIFACT_MB: ${{ inputs.max-central-artifact-mb }}
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
 
@@ -675,118 +676,20 @@ jobs:
             --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
 
-          python3 - "$GUARD_REPO" <<'PY'
-          import os, re, sys, zipfile
-          from pathlib import Path
+          # This guard is a real gate, unlike the fail-open Central preflight: being unable to
+          # run it IS a reason not to publish to an immutable repository. A dry run publishes
+          # nothing and tolerates a failed helper fetch, so there it is a warning.
+          inspector=".octopus-base-helper/.github/scripts/inspect-publication-set.py"
+          if [ ! -f "$inspector" ]; then
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning title=Publication set not inspected::${inspector} is not on disk, so what this build would publish was not checked. Continuing because this is a dry run; a real release would refuse."
+              exit 0
+            fi
+            echo "::error title=Cannot inspect the publication set::${inspector} is not on disk, so what this release would publish to Maven Central cannot be checked. Refusing to publish unverified artifacts to an immutable repository." >&2
+            exit 1
+          fi
 
-          repo = Path(sys.argv[1])
-
-          def names(var):
-              return {a.strip() for a in os.environ.get(var, "").split(",") if a.strip()}
-
-          # Two axes, two lists. "Not a library" (a shadow or executable artifact) has a
-          # destination now, so its bypass is deprecated. "A big library" is still legitimate and
-          # gets its own narrow list, which cannot admit an executable artifact.
-          # TD-001: remove the executable-artifact bypass once consumers have migrated
-          # (see docs/Octopus Tech Debt Register.md).
-          fat_allowed = names("FAT_JAR_ALLOWLIST")
-          size_allowed = names("OVERSIZE_ALLOWLIST")
-          max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
-
-          # A jar carrying a Main-Class AND bundling several third-party package roots is a shadow
-          # jar whose classifier was stripped, so no name pattern can see it. WARNED, never failed:
-          # Main-Class alone is ordinary — a thin CLI jar sets it — and a package-root count is a
-          # heuristic. A hard rule built on it could block a legitimate release with no way through.
-          def looks_shaded(path):
-              try:
-                  with zipfile.ZipFile(path) as z:
-                      entries = z.namelist()
-                      if "META-INF/MANIFEST.MF" not in entries:
-                          return 0
-                      manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
-                      if "Main-Class:" not in manifest:
-                          return 0
-                      roots = {n.split("/", 1)[0] for n in entries if n.endswith(".class") and "/" in n}
-                      return len(roots) if len(roots) > 3 else 0
-              except (zipfile.BadZipFile, KeyError):
-                  return 0
-
-          published, offenders, deprecated, shaded = [], [], [], []
-          # .zip is included because automation modules can publish shadow distributions and
-          # TeamCity plugin bundles, which cost the same quota as a jar.
-          for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in repo.rglob(ext)):
-              # <group path>/<artifactId>/<version>/<file>
-              artifact_id = path.parent.parent.name
-              size_mb = path.stat().st_size / 1048576
-              published.append((artifact_id, path.name, size_mb))
-
-              executable, oversize = [], []
-              # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
-              if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
-                  executable.append("shadow/uber artifact (-all classifier)")
-              else:
-                  try:
-                      with zipfile.ZipFile(path) as z:
-                          if any(n.startswith("BOOT-INF/") for n in z.namelist()):
-                              executable.append("Spring Boot executable jar (BOOT-INF/)")
-                  except zipfile.BadZipFile:
-                      pass
-              if size_mb > max_mb:
-                  oversize.append(f"exceeds {max_mb:g} MB")
-
-              blocked = []
-              if executable and artifact_id not in fat_allowed:
-                  blocked += executable
-              if oversize and artifact_id not in size_allowed and artifact_id not in fat_allowed:
-                  blocked += oversize
-              if blocked:
-                  offenders.append((artifact_id, path.name, size_mb, "; ".join(blocked)))
-              if artifact_id in fat_allowed and (executable or oversize):
-                  deprecated.append((artifact_id, path.name,
-                                     "executable artifact" if executable else "size",
-                                     "; ".join(executable + oversize)))
-              roots = looks_shaded(path) if path.suffix == ".jar" else 0
-              if roots:
-                  shaded.append((artifact_id, path.name, size_mb, roots))
-
-          print(f"Inspected {len(published)} artifact(s) that would be published to Maven Central "
-                f"(size limit {max_mb:g} MB):")
-          for artifact_id, name, size_mb in published:
-              print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
-          if fat_allowed:
-              print(f"fat-jar-publication-allowlist (deprecated): {', '.join(sorted(fat_allowed))}")
-          if size_allowed:
-              print(f"oversize-library-allowlist: {', '.join(sorted(size_allowed))}")
-
-          for artifact_id, name, axis, reason in deprecated:
-              print(f"::warning title=fat-jar-publication-allowlist is deprecated::{artifact_id}: "
-                    f"{name} bypassed the {axis} check ({reason}). Route a distribution artifact "
-                    f"with github-packages-publications; move a genuinely large library to "
-                    f"oversize-library-allowlist. This bypass will be removed.", flush=True)
-
-          for artifact_id, name, size_mb, roots in shaded:
-              print(f"::warning title=Unclassified jar looks like a shadow jar::{artifact_id}: "
-                    f"{name} ({size_mb:.2f} MB) declares Main-Class and bundles {roots} top-level "
-                    f"package roots, so no -all classifier or BOOT-INF/ marker can identify it. If "
-                    f"it is a distribution artifact, route it with github-packages-publications "
-                    f"rather than holding it on Central with a size exception.", flush=True)
-
-          if offenders:
-              print("\n::error::Artifact(s) unfit for Maven Central would be published", flush=True)
-              for artifact_id, name, size_mb, reason in offenders:
-                  print(f"  {artifact_id}: {name} ({size_mb:.2f} MB) — {reason}", file=sys.stderr)
-              print(
-                  "\nCentral is for artifacts consumed as a Maven dependency. For a distribution "
-                  "artifact, pick by how it is obtained: resolved by Maven coordinates -> "
-                  "github-packages-publications; downloaded from a URL -> a GitHub release asset; "
-                  "obtained by nobody -> stop publishing it (declare no MavenPublication, or set "
-                  "publish-to-nexus: false for a repository nobody consumes). Only a genuine "
-                  "dependency that is legitimately large belongs in oversize-library-allowlist.",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          print("\nPublication set is fit for Maven Central.")
-          PY
+          DRY_RUN="${DRY_RUN}" python3 "$inspector" "$GUARD_REPO"
 
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script

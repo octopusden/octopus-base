@@ -47,14 +47,17 @@ flowchart LR
         direction LR
         T["tag<br/>vX.Y.Z"] --> R["GitHub<br/>Release"] --> L["registration<br/>repository_dispatch"]
     end
-    PF -->|"only if the version is free"| B
+    PF -->|"unless every coordinate<br/>is already published"| B
     P -->|"only if green"| T
 ```
 
 The second half runs **only if the first half finished green**. That one gate causes the failure
 this pipeline is known for: if the upload succeeds and the run dies a minute later, the version is
-on Central, nothing records it, and the next release computes the same version and is refused
-because it already exists. Nothing in the pipeline can repair that on its own.
+on Central, nothing records it, and the next release computes the same version and is refused —
+since #198 before it builds anything, but only when the preflight finds *every* coordinate that
+attempt would publish already present; a partial answer warns and lets the build run on to the
+close step, as it did before (see [Build, guard, stage, close](#build-guard-stage-close)). Nothing in the
+pipeline can repair that on its own.
 
 So when a release goes red, the first question is never "what broke" but **which side of the line
 it broke on**. Everything else in this document follows from that; if you only need to know what a
@@ -238,29 +241,61 @@ The job checks out (the default ref for `public`, `commit-hash` for `hybrid`), v
 built commit can be tagged **before** building anything, sets up Java, asks Maven Central whether
 this version is already published, and only then runs `./gradlew build`.
 
-**The Central preflight** (`.github/scripts/central-preflight.sh`, added in #198) lists the
-coordinates the upload would send — from Gradle's publication model at *configuration* time, no
-compilation — and HEADs each one on repo1. It stops the release on exactly one verdict: **every**
-coordinate is already published, which means the close step provably cannot succeed. Everything
-else warns and proceeds — a partial overlap, an unanswered repo1, an unlistable publication set,
-an exhausted budget, a missing helper. The asymmetry is deliberate: the check can only ever save a
-build that was going to fail, so it must never become a new reason a valid release does not run.
-It is the exact opposite of the taggability check beside it, which fails closed.
+> **The order matters and is not what the irreversible/reversible split suggests.** For a
+> `docker-image` component the image is pushed *before* the publication guard runs, so a guard
+> rejection — or any later failure — leaves a pushed image behind that nothing removes. The
+> tables below track Central, the tag, the Release and the log; the container registry is a fifth
+> piece of state they do not cover. That ordering is #190.
 
-> When it does stop, it separates the two situations Sonatype's identical error string conflates:
-> the previous release published *and* was tagged (release the next version), versus published but
-> never recorded (that is [#189](https://github.com/octopusden/octopus-base/issues/189) — a
-> recovery, not a re-dispatch). In dry-run every stop degrades to a warning.
+**The Central preflight** stops the release on exactly one verdict: **every** coordinate the
+upload would send is already published, which means the close step provably cannot succeed.
+Everything else warns and proceeds — a partial overlap, an unanswered repo1, an unlistable
+publication set, either ceiling running out, a missing helper. The asymmetry is deliberate: the
+check can only ever save a build that was going to fail, so it must never become a new reason a
+valid release does not run. It is the exact opposite of the taggability check beside it, which
+fails closed.
+
+It is three files, and they fail in different ways — worth knowing, because the way this check
+breaks is by quietly doing nothing rather than by going red:
+
+| File | Does |
+|---|---|
+| `central-preflight-step.sh` | Runs the listing under a **300s** ceiling, passing `-Pnexus=true` and the version properties so the set matches what the real upload sends, then hands the result over. |
+| `list-publications.init.gradle` | Produces the coordinates from Gradle's publication model at *configuration* time — no compilation — and filters them to the release version. |
+| `central-preflight.sh` | HEADs each coordinate on repo1 within a **90s** budget for the sweep as a whole, and decides. |
+
+The listing is essentially the whole cost: on the canary the repo1 sweep measured **0.09s** and
+**0.07s** in two runs, against step totals of 9s and 13s (octopus-test runs 33390083635 and
+33393050098, one publication each). Which is why it gets the larger ceiling.
+
+Both ceilings fall open: exceeding either is a warning, never a failure.
+
+> When it does stop, it separates the two situations Sonatype's identical error string conflates.
+> It checks two of the four release-state facts — the `v<version>` tag and its GitHub release —
+> and nothing else; the release-log entry is the fact it cannot see, which is why the
+> release-the-next-version message still tells you to go and check it. Both present: release the
+> next version. Either one confirmed missing — a tag whose GitHub release never appeared included
+> — that is [#189](https://github.com/octopusden/octopus-base/issues/189), a recovery rather than
+> a re-dispatch, so a tag alone routes to the recovery. The state stays unknown — and the
+> message says so, listing all three facts to check by hand — when either lookup fails for a
+> reason other than a 404, and also when it cannot look at all: no `GITHUB_REPOSITORY`, or no
+> `gh` on the runner. In dry-run every stop degrades to a warning.
 
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
 Before the upload, the **publication guard** inspects what would reach Central by publishing to a
-throwaway local repository first. It makes two distinct complaints, each with its own exception:
-*not a library* — an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over
+throwaway local repository first. It refuses two independent things.
+
+**A publication carrying a version other than the one being released** — most often Gradle's
+`unspecified`. That refusal also fires for a publication with no archive at all, a BOM or a plugin
+marker, because the set is enumerated from the generated POMs.
+
+**An artifact unfit for Central as a dependency**, on either of two complaints, each with its own
+exception: *not a library* — an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over
 `max-central-artifact-mb` (default 8). `oversize-library-allowlist` waives the size limit only, so
 it cannot admit an executable artifact. `fat-jar-publication-allowlist` waives both and is
 **deprecated**: it still works and warns, and the executable-artifact bypass will be removed
-(TD-001). See the Developer Guide for which remedy fits which complaint.
+(TD-003). See the Developer Guide for which remedy fits which complaint.
 
 > A shadow jar published with its classifier stripped trips neither name rule. The guard warns when
 > a jar declares `Main-Class` and bundles several third-party package roots, but cannot fail on it —
@@ -277,8 +312,10 @@ The upload itself is `./gradlew publishToSonatype closeSonatypeStagingRepository
 > Central. Publication is driven through the Portal API instead, below.
 
 `staging-profile-id` (default `org.octopusden`) is bound to the publishing plugin through an
-injected init script. It has a second, undocumented effect: it is also the namespace the
-coordinate guard checks. **Leaving it blank disables the namespace half of that guard** — the
+injected init script. It has two further, undocumented effects: it is the namespace the
+coordinate guard checks, and it filters the Portal deployment search (`portal-publish.sh:135`
+appends `&profile_id=` only when it is set; blank leaves the search unfiltered, which is benign
+because the key-suffix match still pins the deployment). **Leaving it blank disables the namespace half of that guard** — the
 version comparison and the "no coordinates at all" check still run, and the script says so with a
 `::warning::` annotation rather than failing.
 
@@ -489,9 +526,9 @@ Packages rows at the end.
 
 | Failure | Central | tag | Release | log | Recoverable by the pipeline? |
 |---|:---:|:---:|:---:|:---:|---|
-| Guard rejects the upload | — | — | — | — | Yes — nothing left anywhere. Fix and re-dispatch. |
+| Guard rejects the upload | — | — | — | — | Nothing left on Central, in git or in the log. But a `docker-image` release has already pushed its image by this point — the push runs before the guard — and nothing cleans that up (#190). Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
-| Version already on Central | published earlier | — | — | — | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. The earlier release is intact. Release the next version — or, if the tag or release is missing, run the #189 recovery. |
+| Version already on Central | published earlier | varies | varies | varies | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. Nothing is built, so this run leaves nothing behind and the earlier release's artifacts are untouched; what varies is whether that release was recorded. If the tag or the GitHub release is missing, run the #189 recovery. Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
 | `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
@@ -500,8 +537,10 @@ Packages rows at the end.
 | Run dies **after** the GitHub Packages publish | yes | no | no | no | No. Central and the package are both permanent-as-published; **delete the package version before retrying**, or the retry fails on a version that already exists. |
 
 The rows marked **No** are the same underlying state: the artifacts are permanent, the record is
-absent, and the next release computes the same version and dies on `already exists` — which the
-classifier correctly calls `deterministic`, because it is. Recovery is manual: create the tag on
+absent, and the next release computes the same version — which the preflight stops before the
+build when it finds every coordinate of that attempt on Central, classified `deterministic`,
+rather than letting it die at the close step; if the publication set has changed since, or the
+check cannot complete, the build still runs and still dies there. Recovery is manual: create the tag on
 the commit that was actually built, create the release, and dispatch the registration. Tracking
 issue: octopus-base#189.
 
@@ -554,12 +593,16 @@ jobs:
 - **`docker-image` pushes to a hardcoded owner** — `ghcr.io/octopusden/<image>:<version>` — while
   the login uses the repository's own owner.
 - **`publish-to-nexus: false` still produces a tag and a GitHub release.** What it skips is the
-  Sonatype publish, its secret check, the Portal helper fetch and the fat-jar publication guard.
+  Sonatype publish, its secret check, the Portal helper fetch and its ref resolution, the Central
+  preflight, the staging-profile init script, the Portal publish and the publication guard.
   Pair it with `register-release-immediately: true`, or route B waits 90 minutes for an artifact
   that will never appear.
 - **The public and hybrid version formats disagree.** `public` enforces strict `X.Y.Z`; `hybrid`
-  accepts anything matching `[A-Za-z0-9._+-]+`; registration then requires strict `X.Y.Z`. A
-  non-semver hybrid version publishes and tags fine and fails only at registration.
+  accepts anything matching `[A-Za-z0-9._+-]+`; **route B's version resolution** then requires
+  strict `X.Y.Z`. Registration itself does not — the shared tail accepts any non-blank
+  single-line value — so a non-semver hybrid version publishes and tags fine and then fails when
+  the artifact-check workflow tries to resolve it, while `register-release-immediately: true`
+  puts it in the log without complaint.
 - **`increment-version-level` advertises pre-release levels that cannot work** — the version
   parser rejects anything that is not `vX.Y.Z`.
 - **`skip-extra-tasks` appends, it does not replace.** In hybrid flow the effective value is

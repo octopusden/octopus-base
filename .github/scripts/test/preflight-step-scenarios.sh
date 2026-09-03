@@ -126,6 +126,20 @@ UNSET_HELPER_DIR=1 GRADLEW="$WRITES_ONE" WANT_REPO1_CALLS=0 \
 UNSET_BUILD_VERSION=1 GRADLEW="$WRITES_ONE" WANT_REPO1_CALLS=0 \
   run "proceeds when BUILD_VERSION is not even set" 0 "preflight skipped" "::error"
 
+echo "-- a publication at another version is surfaced before the build ---------"
+# The mixed case is the silent one: the coordinate file is non-empty, so the listing log is
+# not printed, and without this the operator learns about it only after the build.
+MIXED='printf "org.octopusden.octopus:client\n" > "$OCTOPUS_COORDS_FILE"
+echo "skipping org.octopusden.octopus:legacy:unspecified - not the version being released (2.0.105)"'
+GRADLEW="$MIXED" REPO1_CODES=404 \
+  run "warns that a publication carries another version" 0 "::warning title=Publication at another version::"
+GRADLEW="$MIXED" REPO1_CODES=404 \
+  run "names the skipped publication, not just the count" 0 "org.octopusden.octopus:legacy:unspecified"
+GRADLEW="$MIXED" REPO1_CODES=404 \
+  run "a foreign version is a warning, never a stop" 0 "the version is free" "::error"
+GRADLEW="$WRITES_ONE" REPO1_CODES=404 \
+  run "says nothing about other versions when there are none" 0 "" "Publication at another version"
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

@@ -245,6 +245,24 @@ workflow's `artifact-pattern` at a module that is still published.
 Before uploading, the release inspects what would reach Central and **fails** on either of two
 complaints:
 
+- **a version other than the one being released** — most often Gradle's `unspecified`, which is
+  its value when nothing set one. A release publishes exactly one version, and a publication at
+  another version means the version properties never reached that project. Fix it by setting the
+  version for every project that declares a publication (an `allprojects` / `subprojects` block,
+  or the convention plugin), or by not publishing the module.
+
+  The Portal publish step already refuses a deployment containing a foreign version — but only
+  after everything has been built, signed, staged and uploaded, which leaves a staging repository
+  to drop by hand. This is the same judgement, before the upload. Coordinates such as
+  `unspecified` reached Central this way before the later check existed, and Central keeps them
+  permanently.
+
+  Under `dry-run: true` this one reports and continues rather than failing. A dry run has no
+  upload to save, so it has nothing to gain from failing — and consumer repositories run a dry
+  release as a required merge check, so a refusal there would turn a green check red on nothing
+  but an `octopus-base` ref bump. The two complaints below keep failing under dry-run, as they
+  always have.
+
 - **not a library** — an `-all` classifier, or a `BOOT-INF/` entry inside the archive, since a
   Spring Boot jar's filename is indistinguishable from a library's;
 - **too big** — over `max-central-artifact-mb` (default 8).
@@ -268,8 +286,14 @@ flowchart TD
     EXO -->|no| FAILO["release fails"]
 ```
 
-The two branches are the guard's two different complaints, and the fix depends on which one you
-hit:
+The diagram covers the two complaints about the artifact itself. There is a third, about the
+version it carries. The fix depends on which one you hit.
+
+**"This carries the wrong version"** — a publication at any version other than the one being
+released. There is no allowlist for it, deliberately: `fat-jar-publication-allowlist` says an
+artifact may be a fat jar, which says nothing about it carrying a foreign version, and
+`unspecified` is a defect rather than a choice. Set the version for every project that declares a
+publication.
 
 **"This is not a library"** — an `-all` classifier, or a `BOOT-INF/` entry. Central is the wrong
 destination at any size. Choose by **how anyone obtains the artifact**:
@@ -311,7 +335,7 @@ projects compile against. Two options:
 `oversize-library-allowlist` waives the size limit **only**. Every other check still applies, so
 it cannot be used to hold a shadow or executable artifact on Central.
 
-> **`fat-jar-publication-allowlist` is deprecated.** It waived both complaints at once, and being
+> **`fat-jar-publication-allowlist` is deprecated.** It waived both artifact complaints at once, and being
 > keyed by artifactId — which a module's thin and fat jars share — exempting the fat jar stopped
 > the guard checking the thin one too. It still works and emits a deprecation warning; the
 > executable-artifact bypass will be removed once consumers have migrated. Use routing for a
@@ -337,8 +361,9 @@ when **every** coordinate is already published.
 
 Both halves are bounded, because a check whose whole justification is being cheaper than the
 build it replaces must not be able to become expensive. The coordinate listing gets 300s — it
-pays cold daemon start and full configuration; measured at 9s on the canary. The HEAD sweep
-gets 90s in total, and whatever is still unanswered when that runs out counts as unanswered,
+pays cold daemon start and full configuration, and is essentially the whole cost: on the canary
+the sweep measured 0.09s and 0.07s against step totals of 9s and 13s. The HEAD sweep gets 90s in
+total, and whatever is still unanswered when that runs out counts as unanswered,
 which lets the release run. Exceeding either is a warning, never a failure.
 
 That case used to surface at the very end, at `closeSonatypeStagingRepository`, after a full
