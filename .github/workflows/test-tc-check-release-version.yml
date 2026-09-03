@@ -1,0 +1,24 @@
+name: Test TeamCity check-release-version-is-new
+
+on:
+  pull_request:
+    paths:
+      - 'teamcity/scripts/check-release-version-is-new.sh'
+      - 'teamcity/scripts/test-check-release-version-is-new.sh'
+      - 'teamcity.meta-runners/OctopusCheckReleaseVersionIsNew.xml'
+      - '.github/workflows/test-tc-check-release-version.yml'
+  workflow_dispatch:
+
+# Same shape as test-release-log-has-version.yml: CI runs the same file a laptop runs, rather
+# than a second copy of the cases. The meta-runner has to carry its own copy of the script
+# because TeamCity cannot source one from a repository, so the last case in the runner asserts
+# the two have not drifted. That assertion is the reason this workflow exists at all.
+
+jobs:
+  test:
+    name: test tc check-release-version-is-new
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cases
+        run: bash teamcity/scripts/test-check-release-version-is-new.sh
