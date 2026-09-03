@@ -39,7 +39,11 @@ fi
 # The same rule as the step that calls this one: a helper that is not on disk means the check
 # cannot run, which is never a reason to stop a release. Checked before the listing so a
 # missing preflight is not discovered after paying for Gradle.
-for required in central-preflight.sh list-publications.init.gradle; do
+# repo1-coordinate.sh is on this list because central-preflight.sh now sources it: without it the
+# preflight dies on a bare `source` error instead of the diagnosis this step exists to print. All
+# three arrive together today — every caller sparse-checks the whole scripts directory — which is
+# exactly the assumption a guard is for.
+for required in central-preflight.sh repo1-coordinate.sh list-publications.init.gradle; do
   if [ ! -f "$HELPER_DIR/$required" ]; then
     echo "::warning title=Central preflight skipped::$HELPER_DIR/$required is missing, so whether ${BUILD_VERSION:-the release version} is already on Maven Central could not be checked. Continuing."
     exit 0

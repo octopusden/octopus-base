@@ -234,12 +234,38 @@ jobs:
 
       - name: Record the built commit
         id: built-commit
+        env:
+          RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
           # fails, writing an empty sha that is only caught after the publish.
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          # A workflow command ends at a newline and delimits on `::`, so an id carrying either
+          # would truncate or split the annotation. The id is a Portal UUID in practice; this
+          # keeps a hand-typed one from rewriting the message around it.
+          resume_id_safe="$(printf '%s' "${RESUME_DEPLOYMENT_ID}" | tr -cd 'A-Za-z0-9._:-' | cut -c1-64)"
+          # Leave the commit where a failed run's reader will find it: as an annotation on the
+          # run page and in the step summary, not only in a job output that a failed job does
+          # not expose. A run that dies after Central accepted the upload is recovered by
+          # tagging THIS commit (octopus-base#189), and the head of the branch is usually not it.
+          if [ "${DRY_RUN}" = "true" ]; then
+            # A dry run publishes nothing, so this commit is not evidence of anything. Said rather
+            # than suppressed: the value is still what a reader of this run wants, and the
+            # reconciler asks Central regardless of what any annotation claims.
+            echo "::notice title=Built commit (dry run — nothing published)::${sha}"
+            { echo "### Built commit (dry run)"; echo ""; echo "\`${sha}\` — nothing was published by this run."; } >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "${RESUME_DEPLOYMENT_ID}" ]; then
+            # On a resume the artifacts were built by an EARLIER run, so this HEAD is not the
+            # commit that was published. Say so where the wrong value would otherwise be read.
+            echo "::notice title=Built commit belongs to an earlier run::This run resumed Portal deployment ${resume_id_safe}, built by an earlier run. Its HEAD (${sha}) is NOT the published commit. Use the earlier run's Built commit entry, or its checkout sha, and attest that."
+            { echo "### Built commit"; echo ""; echo "Not this run's HEAD: resumed deployment \`${resume_id_safe}\` from an earlier run. Take the commit from that run."; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=Built commit::${sha}"
+            { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
@@ -818,6 +844,14 @@ jobs:
           path: .octopus-base-tagwait
           sparse-checkout: .github/scripts
 
+      # The body of this step is `.github/scripts/tag-and-release.sh`, shared with the Maven flow
+      # and, later, with the #189 recovery. It was two inline copies that had already diverged —
+      # the Maven one grew a stranded-draft path this one lacked — and its branches could not be
+      # tested at all while they were step bodies. They are now covered by
+      # .github/scripts/test/tag-and-release-scenarios.sh, verified by mutation.
+      #
+      # No RELEASE_ASSET: this flow attaches nothing to the release, so the release is created
+      # published, with no draft phase and therefore no draft to strand.
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -829,111 +863,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           BUILT_SHA: ${{ needs.prepare-build-publish-release.outputs.built-sha }}
-        run: |
-          set -euo pipefail
-
-          built_sha="${BUILT_SHA}"
-          if [ -z "$built_sha" ]; then
-            echo "::error title=Built commit unknown::The build job did not report the commit it built, so there is nothing safe to tag." >&2
-            exit 1
-          fi
-
-          # The TAG is the authority, not the release: `gh release create --target` is IGNORED
-          # when the tag already exists (REST: target_commitish is "unused if the Git tag already
-          # exists"). A tag that outlived its release — deleting a release leaves the tag behind
-          # unless it is removed separately — would otherwise silently re-point a new release at
-          # stale code, which is the very bug this step exists to prevent. Ask the API rather than
-          # the local clone: checkout is shallow and never fetches other tags.
-          #
-          # Fail closed: only a confirmed 404 means the tag does not exist. gh exits non-zero
-          # for auth failures, rate limits, 5xx and network errors alike, and treating any of
-          # those as "no tag" would fall through to creation on unverified state.
-          ref_lookup=0
-          ref_out="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" 2>&1)" || ref_lookup=$?
-
-          if [ "$ref_lookup" -eq 0 ]; then
-            # Resolve through /commits so an annotated tag yields its commit, not the tag object.
-            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha')"
-            if [[ "$tag_sha" != "$built_sha" ]]; then
-              echo "::error title=Release tag conflict::Tag ${TAG} already exists at ${tag_sha}, but this run built ${built_sha}. Not moving it. Delete the tag and its release (release immutability may prevent this once published), or release a new version." >&2
-              exit 1
-            fi
-            # Fail closed here too: gh exits non-zero for a missing release and for a
-            # rate limit, auth error or 5xx alike, and reading the latter as "no release"
-            # makes the next line fail with a misleading "release already exists".
-            rel_lookup=0
-            rel_out="$(gh release view "$TAG" 2>&1)" || rel_lookup=$?
-            if [ "$rel_lookup" -eq 0 ]; then
-              # A draft is invisible to the stamp step's `releases/tags/...` lookup, so
-              # finish it rather than reporting success and leaving registration blocked.
-              if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
-                echo "Release ${TAG} exists as a draft — publishing it."
-                gh release edit "$TAG" --draft=false
-              fi
-              echo "Release $TAG already exists at $built_sha — nothing to do."
-              exit 0
-            fi
-            if ! grep -qE 'release not found|HTTP 404|"status": ?"404"' <<<"$rel_out"; then
-              echo "$rel_out" >&2
-              echo "::error title=Release lookup failed::Could not determine whether release ${TAG} exists. Refusing to act on unverified state; re-run when the API is reachable." >&2
-              exit 1
-            fi
-            # Tag is correct but has no release: adopt it instead of creating a second one.
-            # The same wait applies here. This path is reached from the REST lookup above, and
-            # --verify-tag resolves the tag through GraphQL, so "REST sees it" does not mean
-            # "the release command will". Usually warm on this path — the tag predates the run —
-            # but the failure shape is identical, so it is not left to luck.
-            bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
-            echo "Created release $TAG on the existing, correct tag $built_sha"
-            exit 0
-          fi
-
-          if ! grep -qE 'HTTP 404|"status": ?"404"' <<<"$ref_out"; then
-            echo "$ref_out" >&2
-            echo "::error title=Tag lookup failed::Could not determine whether ${TAG} exists (the lookup failed with something other than 404). Refusing to create a release on unverified state; re-run when the API is reachable." >&2
-            exit 1
-          fi
-
-          # The tag is ours to create. The ref is created directly rather than through
-          # `release create --target` because --target is ignored once a tag exists (see
-          # above), and because creating the ref makes the ONE operation that can be
-          # refused explicit and separately reportable. It carries no lesser restriction
-          # than the release endpoint: the workflow-file rule measured in the pre-build
-          # check applies to any ref update, this one included. --verify-tag then pins the
-          # release to the tag that was just created.
-          # The pre-build check said this commit was taggable, but branches move: a
-          # workflow change merged while the build ran can withdraw that, and by now the
-          # artifacts are published and immutable. Say so explicitly rather than leaving a
-          # bare masked 404 in the log.
-          ref_create=0
-          ref_create_out="$(gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref="refs/tags/${TAG}" -f sha="${built_sha}" --jq '.ref' 2>&1)" || ref_create=$?
-          if [ "$ref_create" -ne 0 ]; then
-            printf '%s\n' "$ref_create_out" >&2
-            echo "::error title=Tag creation refused::Could not create ${TAG} at ${built_sha}. An HTTP 404 here means GitHub refused the ref update because the commit carries a workflow file that now matches no branch head — the pre-build check passed, so a branch moved while this release was building. The artifacts for this version are already published and cannot be published again, so do NOT re-dispatch the release. Recovery: create ${TAG} manually on ${built_sha} with a credential authorized to modify workflows, then use GitHub's 're-run failed jobs' on this run — that repeats only this job, which will adopt the tag and attach the release, and leaves the publish untouched." >&2
-            exit 1
-          fi
-          # Wait for the ref to become readable before creating the release. The create
-          # above returned success, so the tag exists — but `gh release create --verify-tag`
-          # performs its OWN lookup, and that read can miss a ref committed milliseconds
-          # earlier. Observed on octopus-api-gateway 2.0.19: the ref was created at the built
-          # commit, the very next command reported "tag v2.0.19 doesn't exist", and the tag was
-          # there afterwards. Cost of losing that race is a half-release — artifacts published,
-          # tag created, no release and no registration — recoverable only by re-running.
-          #
-          # `--verify-tag` is deliberately KEPT rather than dropped as redundant: without it,
-          # `gh release create` on a tag it cannot see would create the tag ITSELF at the
-          # default branch head, which is the stale-code release this whole step exists to
-          # prevent. So the fix is to make the read succeed, not to stop checking.
-          #
-          # Extracted into a script so the retry is testable; see
-          # .github/workflows/test-wait-for-tag-ref.yml. It polls the GraphQL ref query that
-          # --verify-tag itself uses, NOT the REST endpoint above: the two are separate read
-          # paths and REST can answer while GraphQL is still stale.
-          bash .octopus-base-tagwait/.github/scripts/wait-for-tag-ref.sh "${GITHUB_REPOSITORY}" "${TAG}"
-          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
-          echo "Created tag and release $TAG at $built_sha"
+        run: bash .octopus-base-tagwait/.github/scripts/tag-and-release.sh
 
       # Bind the release to the run that produced it. Registration happens afterwards
       # in a workflow_run context whose only trustworthy identity is this run's id and

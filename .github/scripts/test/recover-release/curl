@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Fake curl for the repo1 probe in recover-release.sh. Answers per coordinate so a sweep
+# that stops early, or one that asks about the wrong artifact, is visible.
+#
+#   PRESENT_ARTIFACTS  space-separated artifact ids that answer 200
+#   ABSENT_ARTIFACTS   answer 404
+#   UNKNOWN_ARTIFACTS  answer 500
+# Anything not listed answers 200, so a test only has to name the interesting ones.
+set -u
+url=""
+for a in "$@"; do case "$a" in https://*) url="$a" ;; esac; done
+[ -n "${CALL_LOG:-}" ] && printf 'repo1 %s\n' "${url##*/}" >> "$CALL_LOG"
+# .../<group path>/<artifact>/<version>/<artifact>-<version>.pom
+# Strip "-<version>.pom" rather than cutting at the first hyphen: every artifact id in this
+# organisation contains one, so cutting at the first would read octopus-test as "octopus".
+file="${url##*/}"
+rest="${url%/*}"; version="${rest##*/}"
+artifact="${file%-${version}.pom}"
+for a in ${ABSENT_ARTIFACTS:-};  do [ "$a" = "$artifact" ] && { echo 404; exit 0; }; done
+for a in ${UNKNOWN_ARTIFACTS:-}; do [ "$a" = "$artifact" ] && { echo 500; exit 0; }; done
+echo 200

@@ -20,3 +20,8 @@ it: the step runs under `bash -e`, the comment asserted it did not, and the firs
 the whole step on the ordinary HTTP 404 for a component with no log file. Every new component's
 first release therefore failed to register, for the entire time the comment claimed the opposite
 (#196).
+
+A reconciliation of a version that published but was never recorded does **not** inherit this: see
+[ADR 0005](0005-reconciliation-writes-the-release-log-directly.md). There the missing entry is the
+whole deliverable, so the same reasoning points the other way, and the write goes to the file
+directly rather than through the dispatch path this fail-open check guards.

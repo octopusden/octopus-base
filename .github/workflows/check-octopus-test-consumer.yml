@@ -172,6 +172,21 @@ jobs:
       - name: Maven build retry scenarios
         shell: bash
         run: bash .github/scripts/test/maven-build-retry-scenarios.sh
+      # The step that runs after the artifacts are immutable, where every wrong answer is
+      # permanent: a tag that outlived its release, a draft left by an interrupted attempt, a
+      # lookup that failed for a reason other than 404. None of these were reachable from a test
+      # while this logic was two inline step bodies.
+      - name: Tag and release scenarios
+        shell: bash
+        run: bash .github/scripts/test/tag-and-release-scenarios.sh
+      # The #189 reconciler. Its release-log fixtures are the REAL files from
+      # octopus-release-log, adjacent duplicates included: four module files carry them, so a
+      # reconciler that refuses them refuses the canary itself. The cases that matter are the
+      # ones that write: one line inserted, every other byte unchanged, and nothing written at
+      # all until the tag and the release are confirmed.
+      - name: Recover release scenarios
+        shell: bash
+        run: bash .github/scripts/test/recover-release-scenarios.sh
 
   security:
     name: security

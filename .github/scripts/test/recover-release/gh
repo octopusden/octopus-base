@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# Fake gh for recover-release.sh's scenarios. It answers the union of what that script and
+# tag-and-release.sh call. Anything else fails loudly, so a new API call cannot slip in untested.
+#
+# Every call is logged to $CALL_LOG, and the PLAN cases assert the ABSENCE of writes: a message
+# saying nothing was written is not evidence that nothing was written.
+#
+# State (env):
+#   AUTH          ok | fail | fine-grained | no-workflow-scope
+#   WHOAMI_FAILS  non-empty => `gh api user` is refused although auth succeeds
+#   COMMIT_EXISTS yes | no
+#   COMPARE       identical | behind | ahead | fail
+#   TAG_STATE     absent | at-built | at-other | error   (error = the ref lookup itself fails)
+#   REL_STATE     absent | draft | published | error | unreadable  (200 with no isDraft)
+#   LOG_FILE      path to the module file's content; unset with LOG_MISSING/LOG_UNREADABLE
+#   LOG_MISSING   non-empty => 404 on the module file
+#   LOG_UNREADABLE non-empty => the read fails with a 500
+#   LOG_BASE64_TRUNCATED non-empty => the payload is not decodable base64
+#   LOG_FILE_2    path used by the SECOND read (the conflict-retry case)
+#   PUT           ok | conflict-then-ok | conflict-twice | refused | no-commit
+#   CONFIRM_FAILS error | draft | othertag   the post-write release confirmation only
+#   BUILT         the commit being recovered
+#   REF_CREATE    ok | refused        (tag-and-release.sh's one refusable operation)
+set -u
+log() { [ -n "${CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$CALL_LOG"; return 0; }
+state="${CALL_LOG:-/dev/null}.state"
+created() { [ -f "${state}.ref" ]; }
+rel_created() { [ -f "${state}.rel" ]; }
+
+path=""
+for a in "$@"; do case "$a" in repos/*|user|graphql) path="$a"; break ;; esac; done
+
+# --- auth and identity ---
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then
+  log "auth-status"
+  case "${AUTH:-ok}" in
+    fail) echo "You are not logged into any GitHub hosts." >&2; exit 1 ;;
+    fine-grained) echo "  ✓ Logged in to github.com account tester (keyring)" ;;
+    no-workflow-scope) printf "  ✓ Logged in to github.com account tester (keyring)\n  - Token scopes: 'gist', 'read:org', 'repo'\n" ;;
+    *) printf "  ✓ Logged in to github.com account tester (keyring)\n  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'\n" ;;
+  esac
+  exit 0
+fi
+if [ "${1:-}" = "api" ] && [ "$path" = "user" ]; then
+  log "whoami"
+  # A credential that authenticates but cannot read its own account — a GitHub App installation
+  # token behaves this way. The release-log commit's author is the only record of who ran the
+  # recovery, so this must stop the run rather than write `unknown`.
+  [ -n "${WHOAMI_FAILS:-}" ] && { echo 'gh: HTTP 403: Resource not accessible by integration' >&2; exit 1; }
+  [[ "$*" == *".id"* ]] && { echo "4242"; exit 0; }
+  echo "tester"; exit 0
+fi
+
+# --- the release log ---
+log_payload() { # <file>
+  LC_ALL=C base64 < "$1" | LC_ALL=C tr -d '\n'
+}
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/contents/*.txt* ]]; then
+  if [[ "$*" == *"-X PUT"* ]]; then
+    log "log-put"
+    # The message and committer are part of the contract: internal post-processing triggers on
+    # commits to this repository, and the dispatch path's commit is the shape it has always seen.
+    for a in "$@"; do
+      case "$a" in
+        message=*) [[ "${a#message=}" =~ ^[a-z0-9.-]+-[0-9]+\.[0-9]+\.[0-9]+$ ]] && log "log-put-message-ok" ;;
+      esac
+    done
+    [[ "$*" == *"committer[name]=github-actions[bot]"* ]] && log "log-put-committer-ok"
+    # The author is the operator, so the commit says who did this: the reconciler leaves no run in
+    # Actions to say it instead.
+    [[ "$*" == *"author[name]=tester"* ]] && [[ "$*" == *"author[email]=4242+tester@"* ]] \
+      && log "log-put-author-ok"
+    [[ "$*" == *"-f branch="* ]] && log "log-put-branch-ok"
+    [[ "$*" == *"-f sha="* ]] && log "log-put-with-sha" || log "log-put-without-sha"
+    # Keep what was written, so a test can assert the bytes rather than the intention.
+    for a in "$@"; do
+      case "$a" in content=*) printf '%s' "${a#content=}" | LC_ALL=C base64 -d > "${state}.written" 2>/dev/null ;; esac
+    done
+    n=1; [ -f "${state}.puts" ] && n=$(( $(cat "${state}.puts") + 1 )); echo "$n" > "${state}.puts"
+    case "${PUT:-ok}" in
+      refused)   echo 'gh: HTTP 403: Resource not accessible' >&2; exit 1 ;;
+      conflict-twice) echo 'gh: HTTP 409: is at another sha' >&2; exit 1 ;;
+      conflict-then-ok)
+        [ "$n" -eq 1 ] && { echo 'gh: HTTP 409: is at another sha' >&2; exit 1; } ;;
+      no-commit) echo '{"content":{"sha":"newblob"}}'; exit 0 ;;
+    esac
+    echo '{"content":{"sha":"newblob"},"commit":{"sha":"cafebabe0000000000000000000000000000dead"}}'
+    exit 0
+  fi
+  log "log-read"
+  [ -n "${LOG_UNREADABLE:-}" ] && { echo 'gh: HTTP 500: server error' >&2; exit 1; }
+  [ -n "${LOG_MISSING:-}" ] && { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+  n=1; [ -f "${state}.reads" ] && n=$(( $(cat "${state}.reads") + 1 )); echo "$n" > "${state}.reads"
+  file="${LOG_FILE:?LOG_FILE must be set}"
+  sha="blob1"
+  if [ "$n" -ge 2 ] && [ -n "${LOG_FILE_2:-}" ]; then file="$LOG_FILE_2"; sha="blob2"; fi
+  if [ -n "${LOG_BASE64_TRUNCATED:-}" ]; then
+    jq -n --arg s "$sha" '{sha:$s, content:"!!!not base64!!!"}'
+  else
+    jq -n --arg s "$sha" --arg c "$(log_payload "$file")" '{sha:$s, content:$c}'
+  fi
+  exit 0
+fi
+
+# --- the target repository ---
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/compare/* ]]; then
+  log "compare"
+  case "${COMPARE:-behind}" in
+    fail) echo 'gh: HTTP 500' >&2; exit 1 ;;
+    *) printf '%s\n' "${COMPARE:-behind}" ;;
+  esac
+  exit 0
+fi
+
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/commits/v* ]]; then
+  # the tag, resolved to a commit
+  log "tag-resolve"
+  if created; then printf '%s\n' "${BUILT:?BUILT must be set}"; exit 0; fi
+  case "${TAG_STATE:-absent}" in
+    at-built) printf '%s\n' "${BUILT:?BUILT must be set}" ;;
+    at-other) printf 'cccccccccccccccccccccccccccccccccccccccc\n' ;;
+    *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+  esac
+  exit 0
+fi
+
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/commits/* ]]; then
+  log "commit-lookup"
+  [ "${COMMIT_EXISTS:-yes}" = "yes" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+  printf '%s\n' "${BUILT:?BUILT must be set}"
+  exit 0
+fi
+
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/git/ref/tags/* ]]; then
+  log "ref-lookup"
+  # Not a 404: the reconciler must refuse rather than read this as "no tag" and create one.
+  [ "${TAG_STATE:-absent}" = "error" ] && { echo 'gh: HTTP 500: server error' >&2; exit 1; }
+  if [ "${TAG_STATE:-absent}" = "absent" ] && ! created; then
+    echo 'gh: Not Found (HTTP 404)' >&2; exit 1
+  fi
+  echo '{"ref":"refs/tags/x"}'; exit 0
+fi
+
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/git/refs ]]; then
+  log "ref-create"
+  [ "${REF_CREATE:-ok}" = "ok" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+  : > "${state}.ref"
+  echo "refs/tags/created"; exit 0
+fi
+
+if [ "${1:-}" = "api" ] && [[ "$path" == repos/* ]] && [ "${#}" -le 4 ]; then
+  log "repo-meta"; echo "main"; exit 0
+fi
+
+# --- releases ---
+if [ "${1:-}" = "release" ]; then
+  case "${2:-}" in
+    view)
+      # The reconciler reads the JSON object; tag-and-release.sh asks the same question with
+      # `--jq`, which makes gh print the bare value. Distinguishing them here is what keeps a
+      # scenario honest about which caller it is exercising.
+      if [[ "$*" == *"--json isDraft"* ]] && [[ "$*" != *"--jq"* ]]; then
+        log "release-json"
+        # CONFIRM_FAILS makes only the LAST of these calls fail — the confirmation the reconciler
+        # makes after tag-and-release.sh succeeded, and before it touches the release log. Without
+        # it that gate is unreachable from a test: every other way of breaking the release also
+        # breaks tag-and-release.sh, which stops the run earlier for a different reason.
+        if [ -n "${CONFIRM_FAILS:-}" ] && [ -f "${state}.rel" ]; then
+          case "${CONFIRM_FAILS}" in
+            draft)   echo '{"isDraft":true,"tagName":"'"${3:-}"'"}'; exit 0 ;;
+            othertag) echo '{"isDraft":false,"tagName":"v9.9.9"}'; exit 0 ;;
+            *)       echo 'gh: HTTP 500: server error' >&2; exit 1 ;;
+          esac
+        fi
+        st="${REL_STATE:-absent}"
+        rel_created && [ "$st" = absent ] && st=published
+        # A draft that has since been published reads as published, which is what the reconciler
+        # confirms before it touches the release log.
+        [ -f "${state}.published" ] && st=published
+        case "$st" in
+          error)  echo 'gh: HTTP 500: server error' >&2; exit 1 ;;
+          # A 200 whose body carries no isDraft: anything but an explicit false must not read as
+          # published, or the plan reports a state nobody confirmed.
+          unreadable) jq -n --arg t "${3:-}" '{tagName:$t}' ;;
+          absent) echo 'release not found' >&2; exit 1 ;;
+          draft)  jq -n --arg t "${3:-}" '{isDraft:true,  tagName:$t}' ;;
+          *)      jq -n --arg t "${3:-}" '{isDraft:false, tagName:$t}' ;;
+        esac
+        exit 0
+      fi
+      if [[ "$*" == *"--json isDraft"* ]]; then
+        log "draft-query"
+        if [ -f "${state}.published" ]; then echo false
+        elif [ "${REL_STATE:-absent}" = draft ]; then echo true
+        else echo false; fi
+        exit 0
+      fi
+      if [[ "$*" == *"--json assets"* ]]; then log "assets-query"; exit 0; fi
+      log "release-view"
+      st="${REL_STATE:-absent}"
+      rel_created && [ "$st" = absent ] && st=published
+      case "$st" in
+        absent) echo 'release not found' >&2; exit 1 ;;
+        *) echo "release"; exit 0 ;;
+      esac ;;
+    create) log "release-create"; : > "${state}.rel"; exit 0 ;;
+    edit)   log "release-publish"; : > "${state}.rel"; : > "${state}.published"; exit 0 ;;
+    upload) log "release-upload"; exit 0 ;;
+  esac
+fi
+
+if [ "${1:-}" = "api" ] && [ "$path" = "graphql" ]; then log "graphql"; echo "REF_x"; exit 0; fi
+
+echo "stub gh: unexpected invocation: $*" >&2
+exit 99
