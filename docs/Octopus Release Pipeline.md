@@ -164,7 +164,8 @@ fails **after** publishing never registers: route B is gated on the release run 
 
 By default every Maven publication a build declares goes to Maven Central and nowhere else. A
 publication can be sent to **GitHub Packages instead** by naming it in
-`github-packages-publications`.
+`github-packages-publications`, as a project-qualified selector — `":automation:shadow"` for a
+subproject, `":shadow"` for the root, split at the last colon exactly as a Gradle task path reads.
 
 This exists for a **distribution artifact that must remain resolvable by Maven coordinates** — a
 shadow jar, a Spring Boot executable jar. Such an artifact is fetched by a build tool rather than
@@ -172,26 +173,28 @@ depended on by a project, so it spends Central quota that nothing consumes as a 
 cannot simply move to a GitHub release asset either, because the tool that fetches it resolves
 coordinates, not URLs.
 
-The decision is made **per publication, per project**:
+Each selector is resolved at configuration time, and every mismatch is an error rather than a
+silent no-op:
 
 ```mermaid
 flowchart TD
-    P["a MavenPublication<br/>in some project"] --> Q1{"named in<br/>github-packages-publications?"}
-    Q1 -->|no| SON["sonatype<br/>(Maven Central)"]
-    Q1 -->|yes| Q2{"does THIS project declare<br/>a repository named<br/>GitHubPackages?"}
-    Q2 -->|no| SON
-    Q2 -->|yes| GHP["GitHubPackages<br/>— and nowhere else"]
+    S["selector :project:publication"] --> Q1{"project-qualified?"}
+    Q1 -->|no| E1["fails: bare names are rejected"]
+    Q1 -->|yes| Q2{"does that project exist?"}
+    Q2 -->|no| E2["fails, listing the paths that do"]
+    Q2 -->|yes| Q3{"does it declare<br/>that publication?"}
+    Q3 -->|no| E3["fails, listing the ones it declares"]
+    Q3 -->|yes| Q4{"does it declare a repository<br/>named GitHubPackages?"}
+    Q4 -->|no| E4["fails: nowhere to publish to"]
+    Q4 -->|yes| GHP["GitHubPackages — and the same<br/>publication is disabled everywhere else"]
 ```
 
-> Before any of that, one build-level check: a name in the input that matches **no** publication in
-> **any** project fails the release outright, at configuration time, before anything is published.
-> That is the typo guard.
-
-Per project, not per name, because **a publication name is not unique across a multi-project
-build**. A repository whose modules all name their publication the same way — a common shape — has
-one project with a `GitHubPackages` repository and several without. Matching the name globally
-would disable the namesake in every other module, none of which has a GitHub target either,
-publishing them nowhere and reporting nothing.
+A publication nobody names keeps its existing destinations. Selectors are qualified because **a
+publication name is not unique across a multi-project build**: a repository whose modules all name
+their publication the same way — a common shape — would otherwise have the project inferred from
+whichever one happened to declare a `GitHubPackages` repository. That made two things silent: a
+named publication in a project without that repository routed nowhere and said nothing, and adding
+the repository to a second module started routing it without the input changing.
 
 > A publication routed to GitHub Packages is disabled for **every** other target, including
 > `publishToMavenLocal`. That last one matters: the publication guard below inspects mavenLocal as

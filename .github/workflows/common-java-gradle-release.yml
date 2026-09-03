@@ -76,7 +76,7 @@ on:
         type: string
         default: ''
       github-packages-publications:
-        description: 'Comma-separated Gradle publication names to send to GitHub Packages instead of Maven Central — for a distribution artifact that must remain resolvable by Maven coordinates without spending Central quota, such as a shadow jar. Needs a publishing repository named GitHubPackages. That registry has no anonymous read: consumers need a token with read:packages. Callers must grant packages:write.'
+        description: 'Comma-separated, project-qualified selectors for publications to send to GitHub Packages instead of Maven Central — for a distribution artifact that must remain resolvable by Maven coordinates without spending Central quota, such as a shadow jar. A selector is <project path>:<publication>, split at the last colon as a Gradle task path reads: ":automation:shadow" for a subproject, ":shadow" for the root project. Quote it — a YAML value starting with a colon parses, but reads badly. A bare name is rejected: publication names are not unique across a multi-project build. The named project must declare a publishing repository called GitHubPackages, or the release fails. That registry has no anonymous read: consumers need a token with read:packages, and callers must grant packages:write.'
         required: false
         type: string
         default: ''
@@ -566,34 +566,63 @@ jobs:
       - name: Prepare publication routing init script
         run: |
           cat > "$RUNNER_TEMP/publication-routing.init.gradle" <<'GRADLE'
-          def wanted = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
-                  .split(',').collect { it.trim() }.findAll { it } as Set
+          def raw = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
+                  .split(',').collect { it.trim() }.findAll { it }
           gradle.projectsEvaluated { g ->
               // An init script also applies to buildSrc and to included builds, which publish
-              // nothing — without this the check below fails there for want of the publication.
+              // nothing — without this the checks below fail there for want of the publication.
               if (gradle.parent != null) { return }
               def repoType = org.gradle.api.publish.maven.tasks.PublishToMavenRepository
               def anyType = org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
-              def selected = []
-              // Routing is decided PER PROJECT. A publication name is not unique across a
-              // multi-project build — every octopus-release-management-service module declares one
-              // called `maven` — so a name matched globally would disable a namesake in a project
-              // that has no GitHub target, publishing it nowhere and saying nothing.
-              def routedIn = [:]
-              g.rootProject.allprojects.each { proj ->
-                  def here = proj.tasks.withType(repoType).findAll {
-                      it.repository?.name == 'GitHubPackages' && wanted.contains(it.publication?.name)
+
+              // Selectors are project-qualified — <project path>:<publication>, split at the LAST
+              // colon, exactly as a Gradle task path reads: ':bootJava' is the root project's,
+              // ':automation:shadow' a subproject's. Qualifying is not ceremony. A publication name
+              // is not unique across a multi-project build, and inferring the project from whichever
+              // one happened to declare a GitHubPackages repository made "I named it and nothing
+              // routed" a silent outcome. Named, every mismatch below is an error instead.
+              def selectors = raw.collect { sel ->
+                  if (!sel.startsWith(':')) {
+                      throw new GradleException("github-packages-publications entry '${sel}' is not " +
+                              "project-qualified. Write <project path>:<publication> — ':automation:shadow' " +
+                              "for a subproject, ':shadow' for the root project.")
                   }
-                  routedIn[proj.path] = here.collect { it.publication.name } as Set
-                  selected.addAll(here)
+                  def cut = sel.lastIndexOf(':')
+                  def name = sel.substring(cut + 1)
+                  if (!name) {
+                      throw new GradleException("github-packages-publications entry '${sel}' names no " +
+                              "publication after the last colon.")
+                  }
+                  [selector: sel, path: cut == 0 ? ':' : sel.substring(0, cut), name: name]
               }
-              // Unknown names are still checked globally: a publication routed in any project is
-              // a real name, and one routed nowhere is a typo.
-              def missing = wanted - selected.collect { it.publication.name }
-              if (missing) {
-                  throw new GradleException("No GitHubPackages publish task for publication(s) ${missing}. " +
-                          "Check github-packages-publications against the publications this build declares.")
+
+              def byPath = g.rootProject.allprojects.collectEntries { [(it.path): it] }
+              def routedIn = byPath.keySet().collectEntries { [(it): [] as Set] }
+              def selected = []
+
+              selectors.each { s ->
+                  def proj = byPath[s.path]
+                  if (proj == null) {
+                      throw new GradleException("'${s.selector}' names project '${s.path}', which this " +
+                              "build does not have. Projects: ${byPath.keySet().sort().join(', ')}")
+                  }
+                  def named = proj.tasks.withType(repoType).findAll { it.publication?.name == s.name }
+                  if (!named) {
+                      def known = (proj.tasks.withType(repoType).collect { it.publication?.name } as Set)
+                              .findAll { it }.sort()
+                      throw new GradleException("Project '${s.path}' declares no publication named " +
+                              "'${s.name}'. It declares: ${known ? known.join(', ') : '(none)'}")
+                  }
+                  def gh = named.findAll { it.repository?.name == 'GitHubPackages' }
+                  if (!gh) {
+                      throw new GradleException("Project '${s.path}' declares no repository named " +
+                              "'GitHubPackages', so '${s.selector}' cannot be published there. Declare " +
+                              "that repository in the project, or drop the selector.")
+                  }
+                  routedIn[s.path] = routedIn[s.path] + s.name
+                  selected.addAll(gh)
               }
+
               g.rootProject.allprojects.each { proj ->
                   def routed = routedIn[proj.path]
                   proj.tasks.withType(anyType).each { t ->

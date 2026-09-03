@@ -117,7 +117,7 @@ check() {
 }
 
 echo "-- the selected publication, and only it, reaches GitHub Packages ---------"
-route fatJava publishSelectedPublicationsToGitHubPackages
+route ":fatJava, :sub:fatJava" publishSelectedPublicationsToGitHubPackages
 check "publishes without touching the unselected publication" \
   "this is the signing regression: an aggregate over ALL publications pulls libJava's sign task, which has no key"
 
@@ -132,17 +132,30 @@ check "publishes without touching the unselected publication" \
   "signLibJavaPublication entered the graph — disabling a publish task does not drop its dependencies, and that task has no key in the release step"
 
 echo "-- the selected publication is blocked from every other repository --------"
-route fatJava publishAllPublicationsToSonatypeRepository
+route ":fatJava, :sub:fatJava" publishAllPublicationsToSonatypeRepository
 check "publishes to Sonatype with the fat publication disabled" "the Sonatype side failed outright"
 ! find "$fixture/out-sonatype" -name '*-all.jar' | grep -q .; check \
   "keeps the fat jar off Sonatype" "the fat jar reached the Sonatype repository — the one thing the routing exists to prevent"
 [ -f "$fixture/out-sonatype/org/fixture/routing-root/routing-root/9.9.9-fixture/routing-root-9.9.9-fixture.jar" ]; check \
   "still publishes the thin jar to Sonatype" "the ordinary publication stopped working"
 
-echo "-- a name matching no publication fails loudly ----------------------------"
-route fatJvaTypo publishSelectedPublicationsToGitHubPackages
-[ $? -ne 0 ] && grep -q 'No GitHubPackages publish task for publication' "$tmp/log"; check \
+echo "-- every mismatch in a selector is a named error --------------------------"
+route ":fatJvaTypo" publishSelectedPublicationsToGitHubPackages
+[ $? -ne 0 ] && grep -q "declares no publication named" "$tmp/log"; check \
   "rejects an unknown publication name" "an unmatched name published nothing and said nothing, which is the silent failure this replaced"
+route "fatJava" publishSelectedPublicationsToGitHubPackages
+[ $? -ne 0 ] && grep -q 'is not project-qualified' "$tmp/log"; check \
+  "rejects a bare, unqualified name" \
+  "a bare name was accepted, so the project is inferred again and the silence qualification removes is back"
+route ":nosuch:fatJava" publishSelectedPublicationsToGitHubPackages
+[ $? -ne 0 ] && grep -q 'does not have' "$tmp/log"; check \
+  "rejects an unknown project path" "a selector naming a project this build does not have was accepted"
+route ":sub:nosuch" publishSelectedPublicationsToGitHubPackages
+[ $? -ne 0 ] && grep -q "declares no publication named" "$tmp/log"; check \
+  "rejects a publication the named project does not declare" "the publication name went unchecked against the named project"
+route ":" publishSelectedPublicationsToGitHubPackages
+[ $? -ne 0 ] && grep -q 'names no publication' "$tmp/log"; check \
+  "rejects a selector naming only a project" "a selector with nothing after the last colon was accepted"
 
 echo "-- a blank input is a no-op ----------------------------------------------"
 # Every repository that does not use this input gets the init script anyway, so it must change
@@ -158,7 +171,7 @@ echo "-- the Central guard does not see a routed publication -------------------
 # that list is keyed by artifactId, which the thin and fat publications of one module share.
 guard="$tmp/guard-m2"
 rm -rf "$guard"
-( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=fatJava \
+( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava, :sub:fatJava" \
     ./gradlew --project-dir "$fixture" publishToMavenLocal -Dmaven.repo.local="$guard" \
     --init-script "$INIT" \
     -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
@@ -207,7 +220,7 @@ G
 
 asym_run() {
   rm -rf "$asym/out-github" "$asym/out-sonatype"
-  ( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=fatJava \
+  ( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava" \
       ./gradlew --project-dir "$asym" "$1" --init-script "$INIT" \
       -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
   ) > "$tmp/log" 2>&1
@@ -223,6 +236,16 @@ check "publishes to Sonatype in an asymmetric build" "the Sonatype side failed o
 
 asym_run publishSelectedPublicationsToGitHubPackages
 check "publishes to GitHub Packages in an asymmetric build" "the aggregate task failed"
+
+# The case qualification exists for. Under the old inference this selector matched nothing and
+# said nothing; the subproject then published to neither registry.
+( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":sub:fatJava" \
+    ./gradlew --project-dir "$asym" publishSelectedPublicationsToGitHubPackages --init-script "$INIT" \
+    -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
+) > "$tmp/log" 2>&1
+[ $? -ne 0 ] && grep -q "declares no repository named" "$tmp/log"; check \
+  "rejects a project that declares no GitHubPackages repository" \
+  "the selector was accepted for a project with nowhere to publish to, which is the silence qualification removes"
 [ -f "$asym/out-github/org/asym/asym-root/asym-root-fat/9.9.9-fixture/asym-root-fat-9.9.9-fixture-all.jar" ]; check \
   "routes the fat jar of the project that has a GitHub target" "the root fat jar did not reach GitHub Packages"
 [ "$(find "$asym/out-github" -name '*-all.jar' 2>/dev/null | wc -l | tr -d ' ')" = "1" ]; check \
@@ -259,7 +282,7 @@ signing { sign(publishing.publications['fatJava']) }
 G
 # --dry-run, because the point is which tasks reach the graph. Executing would need a real key,
 # which is exactly what the workflow supplies and this fixture cannot.
-( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=fatJava \
+( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava" \
     ./gradlew --project-dir "$signed" publishSelectedPublicationsToGitHubPackages --dry-run \
     --init-script "$INIT" \
     -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \

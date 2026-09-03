@@ -308,7 +308,7 @@ flowchart TD
 
 | How is it obtained? | Fix |
 |---|---|
-| A build tool resolves it by Maven coordinates | Route it: `github-packages-publications: <publication>` |
+| A build tool resolves it by Maven coordinates | Route it: `github-packages-publications: ":<project>:<publication>"` |
 | A person or script downloads a URL | Attach it to a GitHub release instead |
 | Nobody — it is deployed, not consumed | Stop publishing it: declare no `MavenPublication`, or `publish-to-nexus: false` for a whole repository |
 
@@ -317,8 +317,9 @@ publication off Central entirely:
 
 ```yaml
       # The automation module's shadow jar is resolved by coordinates, so it keeps them —
-      # on GitHub Packages rather than Central.
-      github-packages-publications: shadow
+      # on GitHub Packages rather than Central. Selectors name the project too: publication
+      # names are not unique across a multi-project build. Use ":shadow" for the root project.
+      github-packages-publications: ":automation:shadow"
 ```
 
 > Consumers then need a token with `read:packages`: that registry has no anonymous read, unlike
