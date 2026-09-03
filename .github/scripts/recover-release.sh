@@ -234,8 +234,12 @@ version_le() { # <a> <b>  → true when a <= b, comparing X.Y.Z as three numbers
   [ "$a3" -le "$b3" ]
 }
 
-log_read() { # → prints the decoded file on stdout, the blob sha on fd 3; rc 2 = no such file
-  local body sha encoded decoded
+# Prints the blob sha on stdout and writes the decoded file to $1. Returning two values that way,
+# rather than through a file descriptor, keeps the caller free of a temp file inside the working
+# tree — this script runs from a checkout of octopus-base and must not litter it.
+# rc 0 = read, rc 1 = unreadable, rc 2 = no such file.
+log_read() { # <content-outfile>
+  local out="$1" body sha encoded
   if ! body="$(gh api "repos/${RELEASE_LOG_REPO}/contents/${MODULE}.txt?ref=${RELEASE_LOG_REF}" 2>&1)"; then
     grep -qE 'HTTP 404|"status": ?"404"' <<<"$body" && return 2
     printf '%s\n' "$body" >&2
@@ -249,32 +253,32 @@ log_read() { # → prints the decoded file on stdout, the blob sha on fd 3; rc 2
   [ -n "$encoded" ] && [ "$encoded" != "null" ] \
     && [ $(( ${#encoded} % 4 )) -eq 0 ] && [[ "$encoded" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || { note "The release log for ${MODULE} could not be decoded."; return 1; }
-  decoded="$(LC_ALL=C base64 -d <<<"$encoded" 2>/dev/null)" || return 1
-  printf '%s' "$sha" >&3
-  printf '%s' "$decoded"
+  LC_ALL=C base64 -d <<<"$encoded" > "$out" 2>/dev/null || return 1
+  printf '%s' "$sha"
 }
 
 declare -a log_lines=()
 log_sha="" log_state="" log_position="" log_dups="" insert_at=""
 log_rc=0
-log_text="$( { log_read 3>"$here/.log_sha.$$"; } )" || log_rc=$?
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+log_sha="$(log_read "$WORK/log")" || log_rc=$?
 if [ "$log_rc" -eq 2 ]; then
   log_state="no file yet"
   # The version becomes the only line, so it is also the first one: post-processing reads that.
   insert_at=0
 elif [ "$log_rc" -ne 0 ]; then
-  rm -f "$here/.log_sha.$$"
   refuse "Release log unreadable" "${RELEASE_LOG_REPO}/${MODULE}.txt could not be read. Refusing to write on unverified state: the position of an entry in that file is what this is here to get right."
-else
-  log_sha="$(cat "$here/.log_sha.$$")"
 fi
-rm -f "$here/.log_sha.$$"
 
 if [ "$log_state" != "no file yet" ]; then
-  while IFS= read -r line; do
+  # `|| [ -n "$line" ]` so a file whose last byte is not a newline does not lose its last line.
+  # Every module file ends in one today, but that is a property of the data, not an invariant, and
+  # dropping a version here would delete it from the log.
+  while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     log_lines+=("$line")
-  done <<<"$log_text"
+  done < "$WORK/log"
   # Every line has to be X.Y.Z, or the comparison that places the new one is meaningless.
   for i in "${!log_lines[@]}"; do
     [[ "${log_lines[$i]}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
@@ -418,7 +422,7 @@ else
     return 0
   }
 
-  work="$(mktemp -d)"
+  work="$WORK"
   attempt=0
   while :; do
     attempt=$((attempt+1))
@@ -461,18 +465,19 @@ else
     note "The release log changed under this write; re-reading before retrying."
     prev_sha="$log_sha"
     log_rc=0
-    log_text="$( { log_read 3>"$work/sha"; } )" || log_rc=$?
+    log_sha="$(log_read "$work/log")" || log_rc=$?
     if [ "$log_rc" -ne 0 ]; then
       log_outcome="FAILED — could not re-read after a conflict"; rc=1; break
     fi
-    log_sha="$(cat "$work/sha")"
     if [ "$log_sha" = "$prev_sha" ]; then
       printf '%s\n' "$put_out" >&2
       log_outcome="FAILED — the write was refused and the file had not changed, so this is not a conflict"; rc=1
       break
     fi
     log_lines=()
-    while IFS= read -r line; do [ -n "$line" ] || continue; log_lines+=("$line"); done <<<"$log_text"
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] || continue; log_lines+=("$line")
+    done < "$work/log"
     for line in ${log_lines[@]+"${log_lines[@]}"}; do
       if [ "$line" = "$VERSION" ]; then
         log_outcome="written by someone else meanwhile"
@@ -485,7 +490,6 @@ else
     done
     log_state="absent"
   done
-  rm -rf "$work"
 fi
 
 # ---------------------------------------------------------------------------
