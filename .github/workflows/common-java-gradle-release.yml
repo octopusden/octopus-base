@@ -56,7 +56,12 @@ on:
         type: boolean
         default: true
       fat-jar-publication-allowlist:
-        description: 'Comma-separated artifactIds exempt from the Maven Central publication guard (fat jar or oversized artifact). Any other artifact that trips the guard fails the release before upload. Use only for artifacts a consumer genuinely resolves from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner.'
+        description: 'DEPRECATED — exempts artifactIds from the Maven Central publication guard on BOTH axes at once, which is why it cannot be precise: it is keyed by artifactId, and a module''s thin and fat jars share one, so exempting the fat jar stops the guard checking the thin one too. A recognized executable artifact now has a destination — use github-packages-publications. A genuinely large library uses oversize-library-allowlist. Using this input still works and emits a deprecation warning; the executable-artifact bypass will be removed.'
+        required: false
+        type: string
+        default: ''
+      oversize-library-allowlist:
+        description: 'Comma-separated artifactIds exempt from the Maven Central SIZE limit only. Every other check still applies, so this cannot admit a shadow or executable artifact. Use for a genuine Maven dependency that is legitimately large.'
         required: false
         type: string
         default: ''
@@ -644,6 +649,7 @@ jobs:
         if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         env:
           FAT_JAR_ALLOWLIST: ${{ inputs.fat-jar-publication-allowlist }}
+          OVERSIZE_ALLOWLIST: ${{ inputs.oversize-library-allowlist }}
           MAX_ARTIFACT_MB: ${{ inputs.max-central-artifact-mb }}
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
         run: |
@@ -675,10 +681,36 @@ jobs:
           from pathlib import Path
 
           repo = Path(sys.argv[1])
-          allowed = {a.strip() for a in os.environ.get("FAT_JAR_ALLOWLIST", "").split(",") if a.strip()}
+
+          def names(var):
+              return {a.strip() for a in os.environ.get(var, "").split(",") if a.strip()}
+
+          # Two axes, two lists. "Not a library" (a shadow or executable artifact) has a
+          # destination now, so its bypass is deprecated. "A big library" is still legitimate and
+          # gets its own narrow list, which cannot admit an executable artifact.
+          fat_allowed = names("FAT_JAR_ALLOWLIST")
+          size_allowed = names("OVERSIZE_ALLOWLIST")
           max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
 
-          published, offenders = [], []
+          # A jar carrying a Main-Class AND bundling several third-party package roots is a shadow
+          # jar whose classifier was stripped, so no name pattern can see it. WARNED, never failed:
+          # Main-Class alone is ordinary — a thin CLI jar sets it — and a package-root count is a
+          # heuristic. A hard rule built on it could block a legitimate release with no way through.
+          def looks_shaded(path):
+              try:
+                  with zipfile.ZipFile(path) as z:
+                      entries = z.namelist()
+                      if "META-INF/MANIFEST.MF" not in entries:
+                          return 0
+                      manifest = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+                      if "Main-Class:" not in manifest:
+                          return 0
+                      roots = {n.split("/", 1)[0] for n in entries if n.endswith(".class") and "/" in n}
+                      return len(roots) if len(roots) > 3 else 0
+              except (zipfile.BadZipFile, KeyError):
+                  return 0
+
+          published, offenders, deprecated, shaded = [], [], [], []
           # .zip is included because automation modules can publish shadow distributions and
           # TeamCity plugin bundles, which cost the same quota as a jar.
           for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in repo.rglob(ext)):
@@ -686,43 +718,69 @@ jobs:
               artifact_id = path.parent.parent.name
               size_mb = path.stat().st_size / 1048576
               published.append((artifact_id, path.name, size_mb))
-              reasons = []
+
+              executable, oversize = [], []
               # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
               if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
-                  reasons.append("shadow/uber artifact (-all classifier)")
+                  executable.append("shadow/uber artifact (-all classifier)")
               else:
                   try:
                       with zipfile.ZipFile(path) as z:
                           if any(n.startswith("BOOT-INF/") for n in z.namelist()):
-                              reasons.append("Spring Boot executable jar (BOOT-INF/)")
+                              executable.append("Spring Boot executable jar (BOOT-INF/)")
                   except zipfile.BadZipFile:
                       pass
-              # Size is the signal that catches what the markers miss — e.g. a shadow jar
-              # published with the classifier stripped, which is indistinguishable from a
-              # library jar by name and has no BOOT-INF/ either.
               if size_mb > max_mb:
-                  reasons.append(f"exceeds {max_mb:g} MB")
-              if reasons and artifact_id not in allowed:
-                  offenders.append((artifact_id, path.name, size_mb, "; ".join(reasons)))
+                  oversize.append(f"exceeds {max_mb:g} MB")
+
+              blocked = []
+              if executable and artifact_id not in fat_allowed:
+                  blocked += executable
+              if oversize and artifact_id not in size_allowed and artifact_id not in fat_allowed:
+                  blocked += oversize
+              if blocked:
+                  offenders.append((artifact_id, path.name, size_mb, "; ".join(blocked)))
+              if artifact_id in fat_allowed and (executable or oversize):
+                  deprecated.append((artifact_id, path.name,
+                                     "executable artifact" if executable else "size",
+                                     "; ".join(executable + oversize)))
+              roots = looks_shaded(path) if path.suffix == ".jar" else 0
+              if roots:
+                  shaded.append((artifact_id, path.name, size_mb, roots))
 
           print(f"Inspected {len(published)} artifact(s) that would be published to Maven Central "
                 f"(size limit {max_mb:g} MB):")
           for artifact_id, name, size_mb in published:
               print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
-          if allowed:
-              print(f"Explicitly allowed: {', '.join(sorted(allowed))}")
+          if fat_allowed:
+              print(f"fat-jar-publication-allowlist (deprecated): {', '.join(sorted(fat_allowed))}")
+          if size_allowed:
+              print(f"oversize-library-allowlist: {', '.join(sorted(size_allowed))}")
+
+          for artifact_id, name, axis, reason in deprecated:
+              print(f"::warning title=fat-jar-publication-allowlist is deprecated::{artifact_id}: "
+                    f"{name} bypassed the {axis} check ({reason}). Route a distribution artifact "
+                    f"with github-packages-publications; move a genuinely large library to "
+                    f"oversize-library-allowlist. This bypass will be removed.", flush=True)
+
+          for artifact_id, name, size_mb, roots in shaded:
+              print(f"::warning title=Unclassified jar looks like a shadow jar::{artifact_id}: "
+                    f"{name} ({size_mb:.2f} MB) declares Main-Class and bundles {roots} top-level "
+                    f"package roots, so no -all classifier or BOOT-INF/ marker can identify it. If "
+                    f"it is a distribution artifact, route it with github-packages-publications "
+                    f"rather than holding it on Central with a size exception.", flush=True)
 
           if offenders:
               print("\n::error::Artifact(s) unfit for Maven Central would be published", flush=True)
               for artifact_id, name, size_mb, reason in offenders:
                   print(f"  {artifact_id}: {name} ({size_mb:.2f} MB) — {reason}", file=sys.stderr)
               print(
-                  "\nCentral is for artifacts consumed as a Maven dependency. Either stop publishing "
-                  "this module (declare no MavenPublication for it, or set publish-to-nexus: false for "
-                  "a repository nobody consumes), or — if a consumer really resolves this artifact from "
-                  "a Maven repository, e.g. a TeamCity metarunner — add its artifactId to the "
-                  "fat-jar-publication-allowlist input with that justification. Raise "
-                  "max-central-artifact-mb only if a genuinely consumed library is legitimately large.",
+                  "\nCentral is for artifacts consumed as a Maven dependency. For a distribution "
+                  "artifact, pick by how it is obtained: resolved by Maven coordinates -> "
+                  "github-packages-publications; downloaded from a URL -> a GitHub release asset; "
+                  "obtained by nobody -> stop publishing it (declare no MavenPublication, or set "
+                  "publish-to-nexus: false for a repository nobody consumes). Only a genuine "
+                  "dependency that is legitimately large belongs in oversize-library-allowlist.",
                   file=sys.stderr,
               )
               sys.exit(1)

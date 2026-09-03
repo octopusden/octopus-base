@@ -77,6 +77,13 @@ jobs:
         shell: bash
         run: bash .github/scripts/test/publication-routing-fixture.sh
 
+      # The guard only reads files, so crafted archives cover every branch in a second — including
+      # the combination that matters most: the size-only allowlist must not admit an executable
+      # artifact, or splitting the two lists bought nothing.
+      - name: Central publication guard scenarios
+        shell: bash
+        run: bash .github/scripts/test/central-guard-fixture.sh
+
   quality:
     name: quality
     runs-on: ubuntu-latest
