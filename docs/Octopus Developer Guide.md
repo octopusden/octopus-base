@@ -198,7 +198,8 @@ instead, or see the token options in
 ## Maven Central publishing
 
 > This section describes the **Gradle** release workflow. The Maven one publishes through the
-> OSSRH path and has none of `publish-to-nexus`, the publication guard or `resume-deployment-id`;
+> OSSRH path and has none of `publish-to-nexus`, the Central preflight, the publication guard or
+> `resume-deployment-id`;
 > see [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for the differences.
 
 Publish to Central only what other projects consume as a **Maven dependency**. Deployables
@@ -323,7 +324,7 @@ situations look identical in Sonatype's message and are not:
 | What the preflight finds | What it means | What to do |
 |---|---|---|
 | Published, and tag + GitHub release exist | The previous release published and was tagged; this dispatch resolved a stale version | Release the next version — but check `octopus-release-log` for the published version first. Registration is a separate job (`register-release-immediately`, off by default) and then a separate run gated on the release having succeeded, so the entry can be missing while the tag and release are present; #189 records a version left exactly like that. From internal CI, the manual release build takes its version from the last **finished** compile build, which can predate the previous release's bump |
-| Published, but the tag or release is missing | An earlier run published and died before recording it | Recovery, not a re-dispatch — see `octopus-base#189`. Tag the commit that run **built** (its log names it; the current head usually is not it), create the release, register it in `octopus-release-log` |
+| Published, but the tag or release is missing | An earlier run published and died before recording it | Recovery, not a re-dispatch — see `octopus-base#189`. Run `.github/scripts/recover-release.sh` from an `octopus-base` checkout: it completes the tag, the release and the `octopus-release-log` entry. Pass the commit that run **built** — its `Built commit` annotation names it, and the current head usually is not it |
 
 Everything short of "all coordinates published" lets the release run, and says why in the log:
 
