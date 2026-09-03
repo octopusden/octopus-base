@@ -166,6 +166,12 @@ jobs:
       - name: Publication guard step scenarios
         shell: bash
         run: bash .github/scripts/test/publication-guard-step-scenarios.sh
+      # The retry around `mvn` lives in the workflow's own `run:` body, so these scenarios
+      # extract that body and execute it against a stubbed mvn. Both halves are easy to break
+      # silently: a transfer blip must cost a second attempt, and a compile error must not.
+      - name: Maven build retry scenarios
+        shell: bash
+        run: bash .github/scripts/test/maven-build-retry-scenarios.sh
 
   security:
     name: security

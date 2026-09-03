@@ -29,5 +29,101 @@ jobs:
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           
+      # Retrying is not a convenience. Without it a single corrupted TLS record while Maven
+      # resolves a dependency fails the build, and this workflow runs in the octopus-test
+      # canary, which is a required check on every octopus-base pull request — so one packet
+      # blocks a merge. Observed on 2026-08-31: the parent POM download died with
+      # `(bad_record_mac) Received fatal alert: bad_record_mac` from repo.maven.apache.org,
+      # reddening octopus-test run 33423149904 and with it octopus-base#205's merge gate, while
+      # every release-smoke job in the same run passed.
+      #
+      # Why the retry is around the process and not inside Maven. Maven's own retry cannot
+      # reach this failure class, in three steps:
+      #   1. `maven.wagon.http.retryHandler.*` is inert on the Maven this job actually runs —
+      #      3.9.0 moved the default to the resolver's native transport, and wagon is used
+      #      only under `-Dmaven.resolver.transport=wagon`. Nothing here pins a Maven; it is
+      #      the `ubuntu-latest` image that ships 3.9.x (3.9.16 as of this change), so the
+      #      claim is about that image, not about Maven in general — under 3.8.x wagon is
+      #      still the default and those properties would have worked;
+      #   2. the native transport's own retry count defaults to 3, so a retry WAS in force
+      #      during the failure above. The property is `aether.connector.http.retryHandler.count`
+      #      under Resolver 1.9.x (`ConfigurationProperties` builds it from the
+      #      `aether.connector.` prefix; Resolver 2.x renamed it to
+      #      `aether.transport.http.retryHandler.count`, so citing one namespace without the
+      #      version is how this gets misread). Note the boundary is NOT 3.9.0: that shipped
+      #      resolver 1.9.4, which retried nothing at all — the count arrived with 1.9.6
+      #      (MRESOLVER-326, for MNG-7708) and reached Maven in 3.9.1 with resolver 1.9.7;
+      #   3. it hands that count to HttpClient's `StandardHttpRequestRetryHandler` (the
+      #      `retryHandler.name` default is "standard"), which extends
+      #      `DefaultHttpRequestRetryHandler` and inherits its nonRetriableClasses list —
+      #      five classes, one of them `SSLException`, rejected by `isInstance` so subclasses
+      #      go with it. `bad_record_mac` arrives as an `SSLException`. No count retries it.
+      # A fresh process is therefore the only layer at which this blip is recoverable.
+      #
+      # Two attempts, not more: this covers a blip, not an outage. And only when the log
+      # carries a transfer signature — a compile error or a failing test must cost one build,
+      # never two. Every retry announces itself, because a silent retry hides a recurring
+      # cost; TD-002 tracks what is still uncovered.
+      #
+      # Not in tension with ADR 0004 ("only unambiguous infrastructure failures are marked
+      # retryable"), which governs a different layer: whether a failed RELEASE run may be
+      # re-dispatched against an immutable registry, where an over-eager retry wedges a
+      # component. This retries a dependency GET inside a build, before anything is staged —
+      # the case that ADR calls retryable. The release path deliberately gets no equivalent,
+      # because retrying an UPLOAD mid-publish does touch staging state; that decision is
+      # TD-002's next step, not this change's.
       - name: Maven build
-        run: mvn --batch-mode --update-snapshots package ${{ inputs.mvn-parameters }}
+        shell: bash
+        env:
+          # Passed through the environment rather than interpolated into the script, so a
+          # consumer's parameters cannot become shell syntax.
+          MVN_PARAMETERS: ${{ inputs.mvn-parameters }}
+        run: |
+          # `shell: bash` is `bash --noprofile --norc -eo pipefail {0}`, so errexit is already
+          # ON when this script starts, and `set -uo pipefail` does NOT clear it. The retry has
+          # to SEE mvn fail rather than die with it, so errexit is cleared here deliberately —
+          # every failure path below exits explicitly instead. Removing this line makes the
+          # whole step a no-op: the shell leaves inside the loop on the first failure, before
+          # the exit code is read, before the log is classified, before anything is retried.
+          set +e
+          set -uo pipefail
+
+          # Failures worth a second process, and nothing else. Anchored on Maven's and
+          # HttpClient's own wording, not on ours.
+          transient='Could not transfer artifact|Connection reset|Connection timed out|Read timed out|Premature end of Content-Length|NoHttpResponseException|SSLException|bad_record_mac|Transfer failed for|status code: 50[0-9]'
+          # A transfer that Maven WARNs about and then works around — a mirror fallback, a 401
+          # on one repository — is not why the build failed. So the signature only counts on a
+          # line Maven itself reports as the failure, and these two deterministic causes veto a
+          # retry outright even if a transfer warning is somewhere in the log.
+          deterministic='^\[ERROR\] COMPILATION ERROR|^\[ERROR\] Tests run:.*(Failures|Errors): [1-9]|^\[ERROR\] There are test failures'
+
+          log="${RUNNER_TEMP:-/tmp}/maven-build.log"
+          max_attempts=2
+          attempt=1
+
+          while :; do
+            # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
+            # `:-` so that dropping the env: mapping above, or renaming the input, degrades to
+            # "no extra parameters" instead of killing the pipeline subshell under `set -u`,
+            # where the failure reads as a Maven failure with mvn never having run.
+            mvn --batch-mode --update-snapshots package ${MVN_PARAMETERS:-} 2>&1 | tee "$log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && exit 0
+
+            if grep -qE "$deterministic" "$log"; then
+              echo "Maven failed on the code under test, not on a transfer; not retrying." >&2
+              exit "$rc"
+            fi
+            if ! grep -qE "^\[(ERROR|FATAL)\].*($transient)" "$log"; then
+              echo "Maven failed with no transfer error on an ERROR or FATAL line; not retrying." >&2
+              exit "$rc"
+            fi
+
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error title=Maven transfer failed on every attempt::A transfer error survived ${max_attempts} attempt(s); this is an outage rather than a blip. See TD-002." >&2
+              exit "$rc"
+            fi
+
+            echo "::warning title=Maven transfer retried::Attempt ${attempt} failed on a transfer error, not on the code under test; retrying once. Recurrence is a cost, not a fix — see TD-002."
+            attempt=$((attempt + 1))
+          done
