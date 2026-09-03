@@ -220,6 +220,26 @@ jobs:
             echo "target_sha=$target_sha"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Record the built commit
+        env:
+          BUILT_SHA: ${{ steps.version.outputs.target_sha }}
+          RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          TARGET_REF: ${{ inputs.target-ref }}
+        run: |
+          # Leave the commit where a failed run's reader will find it: as an annotation on the
+          # run page and in the step summary. A run that dies after Central accepted the upload
+          # is recovered by tagging THIS commit (octopus-base#189). Unlike the reusable Gradle
+          # flow, a resume here does not reuse an earlier checkout: it resolves the branch head
+          # again, so if the branch moved the sha below is not the one that was built.
+          set -euo pipefail
+          if [ -n "${RESUME_DEPLOYMENT_ID}" ]; then
+            echo "::notice title=Built commit belongs to an earlier run::This run resumed Portal deployment ${RESUME_DEPLOYMENT_ID}. It recomputed ${BUILT_SHA} from branch ${TARGET_REF}; if the branch moved since the earlier run, that is NOT the built commit. Use the earlier run's Built commit entry, or its checkout sha, and attest that."
+            { echo "### Built commit"; echo ""; echo "Recomputed from \`${TARGET_REF}\` on a resume of deployment \`${RESUME_DEPLOYMENT_ID}\`: take the commit from the earlier run, not \`${BUILT_SHA}\`."; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice title=Built commit::${BUILT_SHA}"
+            { echo "### Built commit"; echo ""; echo "\`${BUILT_SHA}\`"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Ensure target tag does not exist
         shell: bash
         run: |

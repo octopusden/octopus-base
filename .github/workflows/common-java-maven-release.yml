@@ -148,6 +148,13 @@ jobs:
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          # Leave the commit where a failed run's reader will find it: as an annotation on the
+          # run page and in the step summary, not only in a job output that a failed job does
+          # not expose. A run that dies after Central accepted the upload is recovered by
+          # tagging THIS commit (octopus-base#189). This flow has no resume path, so HEAD is
+          # always the built commit here.
+          echo "::notice title=Built commit::${sha}"
+          { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"
 
       # A release must be able to tag the commit it builds — and for some commits the
       # Actions GITHUB_TOKEN cannot. GitHub refuses any ref update, REST or git push,
