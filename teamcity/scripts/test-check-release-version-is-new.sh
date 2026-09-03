@@ -25,6 +25,7 @@ check "empty version"                  "identity='releaselog_bad_version'"    ""
 check "non-version"                    "identity='releaselog_bad_version'"    "x.y"  2.0.16
 check "empty last-release"             "identity='releaselog_bad_lastrelease'" 2.0.16 ""
 check "quote is service-msg escaped"   "\|'"                                  "2.0.'16" 2.0.16
+check "problem also logs an ERROR line" "##teamcity\[message text=.*status='ERROR'\]" 2.0.15 2.0.16
 
 # Non-zero exit on every real problem, zero on both good outcomes.
 for c in "2.0.16 2.0.16 0" "2.0.17 2.0.16 0" "2.0.15 2.0.16 1" "x 2.0.16 1"; do

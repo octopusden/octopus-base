@@ -8,7 +8,15 @@ build="${1-}"; last="${2-}"
 # TeamCity service-message values are single-quoted; ' | [ ] and newlines must be escaped
 # or the message is silently mangled and the build problem never appears.
 esc() { local s=$1; s=${s//|/||}; s=${s//\'/|\'}; s=${s//$'\n'/|n}; s=${s//[/|[}; s=${s//]/|]}; printf '%s' "$s"; }
-problem() { printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"; exit 1; }
+# buildProblem alone only fills the build's problem list; the log gets no error-severity
+# line, so `log.stderr.as.errors` on the neighbouring step has no equivalent here. Emit both:
+# the message macro puts the reason in the log, the problem marks the build and carries the
+# identity used to filter or mute it.
+problem() {
+  printf "##teamcity[message text='%s' status='ERROR']\n" "$(esc "$1")"
+  printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
+  exit 1
+}
 ok()      { printf "##teamcity[buildStatus text='%s']\n" "$(esc "$1")"; }
 
 echo "buildNumber: ${build}"
