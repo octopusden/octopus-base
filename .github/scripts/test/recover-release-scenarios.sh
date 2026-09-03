@@ -15,6 +15,13 @@
 #   * the log is written only after the tag and the release are confirmed, because it is the only
 #     ledger with a consumer outside this repository.
 #
+# Three guards in the script are deliberately NOT pinned here: the `mktemp -d` check, the
+# line-count check in build_content, and the emptiness check on the encoded payload. All three
+# defend against local I/O failing — a full disk, an unwritable scratch directory — and none can be
+# produced from outside without a fault-injection knob in production code. A `TMPDIR` seam does not
+# work either: on macOS `mktemp -d` ignores an unusable TMPDIR and falls back, so such a test would
+# pass on Linux and mean nothing here. They stay as defence in depth, unpinned and said so.
+#
 # Usage: bash .github/scripts/test/recover-release-scenarios.sh   (from the repo root)
 
 set -uo pipefail
@@ -216,7 +223,7 @@ run "a file without a trailing newline is rewritten with one" 0 "" "" "log-put" 
 echo "-- apply: the file this must not touch -----------------------------------"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published
 LOG_FILE="$fixtures/out-of-order.txt"
-run "an out-of-order file is refused, not silently repaired" 1 "is out of order" "log-put"
+run "an out-of-order file is refused, not silently repaired" 1 "which is not descending" "log-put"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published
 LOG_FILE="$fixtures/malformed-line.txt"
 run "a line that is not a version is refused, naming it" 1 "line 2 is .not-a-version., not an X.Y.Z" "log-put"
@@ -242,10 +249,20 @@ run "a file that keeps changing under the write fails red rather than looping" 1
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-then-ok
 LOG_FILE_2="$fixtures/out-of-order.txt"
 run "a conflict whose winner left the file out of order refuses, it does not retry over it" 1 \
-  "is out of order"
+  "which is not descending"
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-then-ok
 LOG_FILE_2="$fixtures/malformed-line.txt"
 run "a conflict whose winner left an unusable line refuses too" 1 "not an X.Y.Z"
+# And it still reports per ledger. Refusing by exiting on this path would drop the summary that
+# says the tag and the release ARE in place — which is precisely how the operator of 2.0.15 came
+# to believe the recovery was finished.
+base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-then-ok
+LOG_FILE_2="$fixtures/out-of-order.txt"
+run "a refusal after the tag and release are written still reports every ledger" 1 \
+  "release log    FAILED" "" ""
+base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-then-ok
+LOG_FILE_2="$fixtures/out-of-order.txt"
+run "and says the tag and release are already in place" 1 "tag v2.0.15    already in place"
 # A 422 is not only a conflict: it also covers a malformed request. Retrying that would burn the
 # one retry on a bug and report the wrong cause.
 base; APPLY_FLAG="--apply"; TAG_STATE=at-built REL_STATE=published; PUT=conflict-twice
