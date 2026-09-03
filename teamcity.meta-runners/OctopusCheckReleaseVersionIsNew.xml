@@ -9,6 +9,9 @@
       <runner name="Check release version is new" type="simpleRunner">
         <parameters>
           <param name="use.custom.script" value="true" />
+          <!-- Matches the neighbouring Fetch Release Version step: anything failing inside
+               the script reaches the log at error severity, not only what it emits itself. -->
+          <param name="log.stderr.as.errors" value="true" />
           <!-- Bound as environment variables on purpose. A %PARAM% inside script.content is
                substituted into the script SOURCE before the agent runs it, so a value
                containing $(...) or a quote would execute. -->
@@ -27,27 +30,34 @@
 set -uo pipefail
 
 build="${BUILD_NUMBER-}"; last="${LAST_RELEASE_VERSION-}"
+# That first line may carry a CR: the release log can be committed CRLF. The sibling helper
+# .github/scripts/release-log-has-version.sh strips CR for the same reason.
+build="${build%$'\r'}"; last="${last%$'\r'}"
 
-# TeamCity service-message values are single-quoted; ' | [ ] and newlines must be escaped
-# or the message is silently mangled and the build problem never appears.
-esc() { local s=$1; s=${s//|/||}; s=${s//\'/|\'}; s=${s//$'\n'/|n}; s=${s//[/|[}; s=${s//]/|]}; printf '%s' "$s"; }
-# buildProblem alone only fills the build's problem list; the log gets no error-severity
-# line, so `log.stderr.as.errors` on the neighbouring step has no equivalent here. Emit both:
-# the message macro puts the reason in the log, the problem marks the build and carries the
-# identity used to filter or mute it.
+# TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped
+# or the message is silently mangled. This applies to the values ECHOED below just as much as
+# to the ones in messages: a first line of "##teamcity[setParameter name='ALREADY_PROCESSED'
+# ...]" would otherwise be parsed as a service message and set the very parameter this step
+# exists to control, before validation ever looked at it.
+esc() {
+  local s=$1
+  s=${s//|/||}; s=${s//$'\r'/|r}; s=${s//$'\n'/|n}; s=${s//\'/|\'}; s=${s//[/|[}; s=${s//]/|]}
+  printf '%s' "$s"
+}
+
+# buildProblem alone only fills the build's problem list; the log gets no error-severity line.
+# Emit both: the message macro puts the reason in the log, the problem marks the build and
+# carries the identity used to filter or mute it.
 problem() {
   printf "##teamcity[message text='%s' status='ERROR']\n" "$(esc "$1")"
   printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
   exit 1
 }
-ok()      { printf "##teamcity[buildStatus text='%s']\n" "$(esc "$1")"; }
+ok() { printf "##teamcity[buildStatus text='%s']\n" "$(esc "$1")"; }
 
-echo "buildNumber: ${build}"
-echo "lastRelease: ${last}"
+echo "buildNumber: $(esc "$build")"
+echo "lastRelease: $(esc "$last")"
 
-# Both values are compared as versions, so refuse anything that is not one rather than
-# letting a comparison silently order it. build comes from `head -n 1 <module>.txt`, so an
-# empty or corrupt first line lands here.
 ver='^[0-9]+(\.[0-9]+)*$'
 [[ "$build" =~ $ver ]] || problem "Release log first line is not a version: '${build}'. Nothing can be processed until the module file starts with a plain x.y.z line." "releaselog_bad_version"
 
@@ -62,9 +72,9 @@ fi
 [[ "$last" =~ $ver ]] || problem "LAST_RELEASE_VERSION is not a version: '${last}'. Fix the project parameter." "releaselog_bad_lastrelease"
 
 # Compared in bash rather than through `sort -V`. This script runs without `set -e`, and a
-# command substitution inside `[ ]` discards the exit status - so a sort that cannot do -V
-# returned nothing, the "went backwards" branch was skipped, and post-processing proceeded on
-# a version older than the last one. Silently. Both values are digits and dots by now.
+# command substitution inside `[ ]` throws away the exit status - so a sort that could not do
+# -V returned nothing, the "went backwards" branch was skipped, and post-processing proceeded
+# on a version OLDER than the last one. Silently. Both values are digits and dots by now.
 # Missing trailing segments count as 0, so 2.0 and 2.0.0 are the same version.
 newer() {
   local -a l r; local i n x y
