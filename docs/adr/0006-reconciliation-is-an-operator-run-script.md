@@ -40,6 +40,13 @@ Four properties of the workflow design are given up, and they are real:
   [ADR 0005](0005-reconciliation-writes-the-release-log-directly.md) gives. The tag is a lightweight
   ref and has no author at all. The run's own report is printed and not stored.
 
+The provenance the reconciler needs — which commit was built — moved from an uploaded artifact with
+an explicit 90-day retention to an annotation on the run. Those are not the same mechanism, and
+until 1 October 2026 they had different lifetimes; from that date runs, checks and statuses follow
+the same Actions retention setting artifacts do. This organisation's setting is 90 days, so the two
+match: measured from the `expires_at` of a fresh artifact, since the setting is not exposed through
+the API. If it is ever lowered, this trade stops being free and the runbook's 90 days becomes wrong.
+
 One assumption is not verifiable from this repository: that internal release post-processing
 triggers on a **commit** to `octopus-release-log`, and therefore reacts to a direct write exactly as
 it reacts to the dispatch path's commit. The evidence for it is
