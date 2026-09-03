@@ -506,8 +506,8 @@ if [ "$rc" -ne 0 ]; then
   note "release log is what #189 records for octopus-sonar-automation 2.0.15."
 else
   note "All three records are in place for ${MODULE} ${VERSION}."
-  case "$MODULE" in
-    *) note "If this component's releases carry a released pom.xml asset (the Maven flow attaches one), it is deliberately not restored here. Attach it by hand now, before the release becomes immutable." ;;
-  esac
+  # Printed for every component, because nothing in the arguments says which flow released this
+  # one, and the omission is unrecoverable once the release is immutable.
+  note "If this component's releases carry a released pom.xml asset (the Maven flow attaches one), it is deliberately not restored here. Attach it by hand now, before the release becomes immutable."
 fi
 exit "$rc"
