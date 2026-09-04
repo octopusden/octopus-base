@@ -193,6 +193,11 @@ Granting `security-events: write` at workflow level instead also works, and is w
 does — but that hands the write scope to every job in the file, including the one that builds and
 tests the repository's own code. Keeping it on the security job is the least-privilege form.
 
+The workflow-level `permissions: contents: read` does nothing for the security job above — a
+job-level block replaces the set, so the job never sees it. It is there for the next job added to
+the file: a job that declares no block of its own gets the repository's default token, which can
+be write-all, and the workflow-level line is what keeps that from happening silently.
+
 ### Gradle prerequisites in consumer repository
 
 - `qualityStatic` task for static checks
