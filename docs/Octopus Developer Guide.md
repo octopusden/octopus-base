@@ -242,7 +242,8 @@ workflow's `artifact-pattern` at a module that is still published.
 
 ### The publication guard
 
-Before uploading, the release inspects what would reach Central and **fails** on:
+Before uploading, the release inspects what would reach Central and **fails** on either of two
+complaints:
 
 - **a version other than the one being released** — most often Gradle's `unspecified`, which is
   its value when nothing set one. A release publishes exactly one version, and a publication at
@@ -259,36 +260,91 @@ Before uploading, the release inspects what would reach Central and **fails** on
   Under `dry-run: true` this one reports and continues rather than failing. A dry run has no
   upload to save, so it has nothing to gain from failing — and consumer repositories run a dry
   release as a required merge check, so a refusal there would turn a green check red on nothing
-  but an `octopus-base` ref bump. The fat-jar and size rules below keep failing under dry-run, as
-  they always have.
+  but an `octopus-base` ref bump. The two complaints below keep failing under dry-run, as they
+  always have.
 
-- a shadow/uber artifact (`-all` classifier);
-- a Spring Boot executable jar, detected by a `BOOT-INF/` entry inside the archive — its file
-  name is indistinguishable from a library's;
-- anything larger than `max-central-artifact-mb` (default 8), which catches a shadow jar
-  published with the classifier stripped.
+- **not a library** — an `-all` classifier, or a `BOOT-INF/` entry inside the archive, since a
+  Spring Boot jar's filename is indistinguishable from a library's;
+- **too big** — over `max-central-artifact-mb` (default 8).
 
 A fat jar often appears without anyone asking for it: the shadow plugin exposes
 `shadowRuntimeElements` as a variant of the `java` component, so `from(components.java)`
 publishes the fat jar alongside the thin one.
 
-If the guard fails your release, pick one:
+What the guard does with each artifact, and which exception applies:
+
+```mermaid
+flowchart TD
+    A["an artifact that would<br/>reach Maven Central"] --> K1{"named -all.jar<br/>OR contains BOOT-INF/ ?"}
+    K1 -->|yes| EXF{"in<br/>fat-jar-publication-allowlist?"}
+    EXF -->|yes| WARN["allowed, with a warning:<br/>deprecated — route it instead"]
+    EXF -->|no| FAILF["release fails"]
+    K1 -->|no| K2{"over max-central-artifact-mb?"}
+    K2 -->|no| OK["allowed on Central"]
+    K2 -->|yes| EXO{"in<br/>oversize-library-allowlist?"}
+    EXO -->|yes| OK
+    EXO -->|no| FAILO["release fails"]
+```
+
+The diagram covers the two complaints about the artifact itself. There is a third, about the
+version it carries. The fix depends on which one you hit.
+
+**"This carries the wrong version"** — a publication at any version other than the one being
+released. There is no allowlist for it, deliberately: `fat-jar-publication-allowlist` says an
+artifact may be a fat jar, which says nothing about it carrying a foreign version, and
+`unspecified` is a defect rather than a choice. Set the version for every project that declares a
+publication.
+
+**"This is not a library"** — an `-all` classifier, or a `BOOT-INF/` entry. Central is the wrong
+destination at any size. Choose by **how anyone obtains the artifact**:
+
+```mermaid
+flowchart TD
+    B["blocked from Maven Central"] --> Q{"how does anyone<br/>obtain this artifact?"}
+    Q -->|"a build tool resolves it<br/>by Maven coordinates"| GHP["GitHub Packages:<br/>github-packages-publications"]
+    Q -->|"a person or script<br/>downloads a URL"| REL["a GitHub release asset"]
+    Q -->|"nobody — it is deployed,<br/>not consumed"| NONE["do not publish it:<br/>declare no MavenPublication, or<br/>publish-to-nexus: false"]
+```
+
+| How is it obtained? | Fix |
+|---|---|
+| A build tool resolves it by Maven coordinates | Route it: `github-packages-publications: ":<project>:<publication>"` |
+| A person or script downloads a URL | Attach it to a GitHub release instead |
+| Nobody — it is deployed, not consumed | Stop publishing it: declare no `MavenPublication`, or `publish-to-nexus: false` for a whole repository |
+
+Routing needs a publishing repository named `GitHubPackages` in the build script, and moves that
+publication off Central entirely:
+
+```yaml
+      # The automation module's shadow jar is resolved by coordinates, so it keeps them —
+      # on GitHub Packages rather than Central. Selectors name the project too: publication
+      # names are not unique across a multi-project build. Use ":shadow" for the root project.
+      github-packages-publications: ":automation:shadow"
+```
+
+> Consumers then need a token with `read:packages`: that registry has no anonymous read, unlike
+> `ghcr.io`. Callers also need `packages: write` on the calling job.
+
+**"This library is too big"** — over `max-central-artifact-mb`, but a genuine dependency that
+projects compile against. Two options:
 
 | Situation | Fix |
 |---|---|
-| A publication carries a version other than the release version | Set the version for every project that declares a publication. There is no allowlist for this one, deliberately: `fat-jar-publication-allowlist` says an artifact may be a fat jar, which says nothing about it carrying a foreign version, and `unspecified` is a defect rather than a choice |
-| The module is a deployable nobody depends on | Stop publishing it |
-| The whole repository is a deployable | `publish-to-nexus: false` |
-| A consumer really resolves this fat jar from a Maven repository — e.g. an automation module fetched by a TeamCity metarunner | Add its artifactId to `fat-jar-publication-allowlist` |
-| A genuinely consumed library is legitimately large | Raise `max-central-artifact-mb` |
+| One artifact is legitimately large | Add its artifactId to `oversize-library-allowlist` |
+| The limit itself is wrong for this repository | Raise `max-central-artifact-mb` |
 
-The allowlist keeps a legitimate exception explicit and reviewed instead of silent:
+`oversize-library-allowlist` waives the size limit **only**. Every other check still applies, so
+it cannot be used to hold a shadow or executable artifact on Central.
 
-```yaml
-      # The automation module's fat jar is resolved by its TeamCity metarunner
-      # (-Dartifact=<group>:<name>:<version>:jar:all), so it must stay on Central.
-      fat-jar-publication-allowlist: automation
-```
+> **`fat-jar-publication-allowlist` is deprecated.** It waived both artifact complaints at once, and being
+> keyed by artifactId — which a module's thin and fat jars share — exempting the fat jar stopped
+> the guard checking the thin one too. It still works and emits a deprecation warning; the
+> executable-artifact bypass will be removed once consumers have migrated. Use routing for a
+> distribution artifact, `oversize-library-allowlist` for a large library.
+
+> A shadow jar published with its classifier **stripped** trips no name rule — it occupies the
+> unclassified `jar` slot and looks like a library. Only the size limit catches it, so such an
+> artifact must not be given a size exception: fix the build to classify it, or route it.
 
 The guard runs in dry-run too, so `dry-run: true` rehearses it before a real release. Callers
 pin `octopus-base` by tag, so the guard starts applying to a repository only when it bumps that

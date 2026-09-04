@@ -56,6 +56,7 @@ pad() { local f="$1"; local mb="$2"; dd if=/dev/zero bs=1048576 count="$mb" >> "
 # content would push the file just over, which is how this fixture first read as "exceeds".
 sized() { truncate -s $(( $2 * 1048576 )) "$1"; }
 
+
 # run <name> <expected-rc> <must-match> [<must-not-match>]  — fixture built by $SETUP
 run() {
   local name="$1" erc="$2" want="$3" nowant="${4:-}"
@@ -64,7 +65,7 @@ run() {
   local out; out="$(mktemp)"
   # Omitted rather than emptied when NO_MAX is set: the script's fallback fires on unset OR
   # empty, but only omitting it proves the fallback rather than the empty-string branch.
-  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}" "DRY_RUN=${DRY:-false}")
+  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}" "OVERSIZE_ALLOWLIST=${OVERSIZE:-}" "DRY_RUN=${DRY:-false}")
   [ "${NO_MAX:-}" = "1" ] || envs+=("MAX_ARTIFACT_MB=${MAX_MB:-8}")
   env "${envs[@]}" python3 "$SCRIPT" "$repo" >"$out" 2>&1
   local rc=$? ok=true
@@ -135,7 +136,7 @@ SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' \
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
   run "accepts an allowlisted shadow artifact" 0 "automation-2\.0\.105-all\.jar +[0-9]" "unfit for Maven Central"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST='other, automation' \
-  run "tolerates spaces in the allowlist, as YAML writes it" 0 "Explicitly allowed" "unfit for Maven Central"
+  run "tolerates spaces in the allowlist, as YAML writes it" 0 "allowlist \(deprecated\): automation, other" "unfit for Maven Central"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.zip' \
   run "refuses a shadow distribution ZIP, not only a jar" 1 "shadow/uber"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.tar.gz' \
@@ -211,6 +212,24 @@ if grep -qE '^Env: .*DRY_RUN' "$SCRIPT"; then
 else
   echo "FAIL  DRY_RUN is named in the script's own env contract"; fail=$((fail+1))
 fi
+
+# --- the two exceptions are separate ------------------------------------------------------
+# The guard makes two unrelated complaints, and one list used to waive both. Keyed by
+# artifactId — which a module's thin and fat jars share — an exception admitting the fat jar
+# also stopped the thin one being checked. The size list must therefore be UNABLE to admit an
+# executable artifact, which is the assertion the split exists for.
+SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
+  OVERSIZE=biglib run "size list admits a legitimately large library" 0 "biglib" "unfit for Maven Central"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' OVERSIZE=automation \
+  run "size list does NOT admit an executable artifact" 1 "shadow/uber"
+SETUP='jar "$repo" "$G" app 2.0.105 app-2.0.105.jar BOOT-INF/classes/x.class' OVERSIZE=app \
+  run "size list does NOT admit a Spring Boot jar" 1 "BOOT-INF"
+
+# --- the deprecated list still works, and says so -----------------------------------------
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
+  run "warns that the fat-jar list is deprecated" 0 "is deprecated" "unfit for Maven Central"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
+  run "points at the replacement" 0 "github-packages-publications"
 
 echo
 echo "passed=$pass failed=$fail"

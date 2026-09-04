@@ -17,7 +17,7 @@ being published contains, which differs from what this build produced when
 resume-deployment-id names another deployment.
 
 Usage: inspect-publication-set.py <local-repo-dir>
-Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, MAX_ARTIFACT_MB, DRY_RUN
+Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, OVERSIZE_ALLOWLIST, MAX_ARTIFACT_MB, DRY_RUN
      DRY_RUN=true downgrades the version refusal from exit 1 to exit 0 (a warning); the
      fat-jar refusals are unaffected and still exit 1. A direct caller that omits it gets
      the strict behaviour, which is the safe default.
@@ -29,7 +29,16 @@ import os, re, sys, zipfile
 from pathlib import Path
 
 repo = Path(sys.argv[1])
-allowed = {a.strip() for a in os.environ.get("FAT_JAR_ALLOWLIST", "").split(",") if a.strip()}
+def _names(var):
+    return {a.strip() for a in os.environ.get(var, "").split(",") if a.strip()}
+
+# Two axes, two lists. "Not a library" (a shadow or executable artifact) has a destination now,
+# so its bypass is deprecated. "A big library" is still legitimate and gets its own narrow list,
+# which cannot admit an executable artifact.
+# TD-003: remove the executable-artifact bypass once consumers have migrated
+# (see docs/Octopus Tech Debt Register.md).
+allowed = _names("FAT_JAR_ALLOWLIST")
+size_allowed = _names("OVERSIZE_ALLOWLIST")
 max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
 release_version = os.environ.get("BUILD_VERSION", "").strip()
 # A dry run publishes nothing, so there is no upload for this refusal to save and no reason for
@@ -41,7 +50,9 @@ release_version = os.environ.get("BUILD_VERSION", "").strip()
 dry_run = os.environ.get("DRY_RUN", "").strip().lower() == "true"
 
 publications, published, offenders, wrong_version = [], [], [], []
+deprecated = []
 archived = set()
+
 
 # Publications are enumerated from their POMs, not from the archives below. Every Maven
 # publication writes a POM whether or not it has an archive, so this is the only enumeration
@@ -85,24 +96,31 @@ for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in
         "{}:{}".format(str(path.parent.parent.parent.relative_to(repo)).replace("/", "."), artifact_id),
         path.parent.name,
     ))
-    reasons = []
+    executable, oversize = [], []
     # Covers both the jar and the shadow distribution archive (-all.zip/-all.tar).
     if re.search(r"-all\.(jar|zip|tar(\.gz)?)$", path.name):
-        reasons.append("shadow/uber artifact (-all classifier)")
+        executable.append("shadow/uber artifact (-all classifier)")
     else:
         try:
             with zipfile.ZipFile(path) as z:
                 if any(n.startswith("BOOT-INF/") for n in z.namelist()):
-                    reasons.append("Spring Boot executable jar (BOOT-INF/)")
+                    executable.append("Spring Boot executable jar (BOOT-INF/)")
         except zipfile.BadZipFile:
             pass
-    # Size is the signal that catches what the markers miss — e.g. a shadow jar
-    # published with the classifier stripped, which is indistinguishable from a
-    # library jar by name and has no BOOT-INF/ either.
     if size_mb > max_mb:
-        reasons.append(f"exceeds {max_mb:g} MB")
-    if reasons and artifact_id not in allowed:
-        offenders.append((artifact_id, path.name, size_mb, "; ".join(reasons)))
+        oversize.append(f"exceeds {max_mb:g} MB")
+
+    blocked = []
+    if executable and artifact_id not in allowed:
+        blocked += executable
+    if oversize and artifact_id not in size_allowed and artifact_id not in allowed:
+        blocked += oversize
+    if blocked:
+        offenders.append((artifact_id, path.name, size_mb, "; ".join(blocked)))
+    if artifact_id in allowed and (executable or oversize):
+        deprecated.append((artifact_id, path.name,
+                           "executable artifact" if executable else "size",
+                           "; ".join(executable + oversize)))
 
 # "Nothing to inspect" means no POM either. A publication with no archive is a normal,
 # checked publication — a BOM, or the marker java-gradle-plugin creates — and its version has
@@ -126,7 +144,16 @@ for coordinate, version in publications:
 for artifact_id, name, size_mb in published:
     print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
 if allowed:
-    print(f"Explicitly allowed: {', '.join(sorted(allowed))}")
+    print(f"fat-jar-publication-allowlist (deprecated): {', '.join(sorted(allowed))}")
+if size_allowed:
+    print(f"oversize-library-allowlist: {', '.join(sorted(size_allowed))}")
+
+for artifact_id, name, axis, reason in deprecated:
+    print(f"::warning title=fat-jar-publication-allowlist is deprecated::{artifact_id}: {name} "
+          f"bypassed the {axis} check ({reason}). Route a distribution artifact with "
+          f"github-packages-publications; move a genuinely large library to "
+          f"oversize-library-allowlist. This bypass will be removed.", flush=True)
+
 
 if wrong_version:
     level, verb = ("warning", "would be") if dry_run else ("error", "would be")
@@ -149,12 +176,12 @@ if offenders:
     for artifact_id, name, size_mb, reason in offenders:
         print(f"  {artifact_id}: {name} ({size_mb:.2f} MB) — {reason}", file=sys.stderr)
     print(
-        "\nCentral is for artifacts consumed as a Maven dependency. Either stop publishing "
-        "this module (declare no MavenPublication for it, or set publish-to-nexus: false for "
-        "a repository nobody consumes), or — if a consumer really resolves this artifact from "
-        "a Maven repository, e.g. a TeamCity metarunner — add its artifactId to the "
-        "fat-jar-publication-allowlist input with that justification. Raise "
-        "max-central-artifact-mb only if a genuinely consumed library is legitimately large.",
+        "\nCentral is for artifacts consumed as a Maven dependency. For a distribution "
+        "artifact, pick by how it is obtained: resolved by Maven coordinates -> "
+        "github-packages-publications; downloaded from a URL -> a GitHub release asset; "
+        "obtained by nobody -> stop publishing it (declare no MavenPublication, or set "
+        "publish-to-nexus: false for a repository nobody consumes). Only a genuine dependency "
+        "that is legitimately large belongs in oversize-library-allowlist.",
         file=sys.stderr,
     )
     sys.exit(1)

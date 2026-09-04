@@ -25,6 +25,11 @@ Releasing a component means doing **two** separate things, in two different plac
 2. **Write down that you did**, so the rest of the org knows: a git tag, a GitHub Release, and a
    line in a shared list called `octopus-release-log`.
 
+A publication can be sent to **GitHub Packages instead of Central** — see
+[Routing](#routing-which-registry-each-publication-goes-to). It sits between the two halves:
+a version cannot be re-published there either, but unlike Central it can be **deleted**, so a
+failure there is repairable by hand.
+
 The catch is that these two are not one operation, and they behave differently when something
 goes wrong. Maven Central has **no undo** — a version that lands there stays there forever, and
 the same version can never be uploaded twice. The bookkeeping, by contrast, can be redone as many
@@ -155,6 +160,84 @@ fails **after** publishing never registers: route B is gated on the release run 
 
 ## Phase A — publish to Maven Central
 
+### Routing: which registry each publication goes to
+
+By default every Maven publication a build declares goes to Maven Central and nowhere else. A
+publication can be sent to **GitHub Packages instead** by naming it in
+`github-packages-publications`, as a project-qualified selector — `":module:shadow"` for a
+subproject, `":shadow"` for the root, split at the last colon exactly as a Gradle task path reads.
+
+This exists for a **distribution artifact that must remain resolvable by Maven coordinates** — a
+shadow jar, a Spring Boot executable jar. Such an artifact is fetched by a build tool rather than
+depended on by a project, so it spends Central quota that nothing consumes as a dependency; but it
+cannot simply move to a GitHub release asset either, because the tool that fetches it resolves
+coordinates, not URLs.
+
+Each selector is resolved at configuration time, and every mismatch is an error rather than a
+silent no-op:
+
+```mermaid
+flowchart TD
+    S["selector :project:publication"] --> Q1{"project-qualified?"}
+    Q1 -->|no| E1["fails: bare names are rejected"]
+    Q1 -->|yes| Q2{"does that project exist?"}
+    Q2 -->|no| E2["fails, listing the paths that do"]
+    Q2 -->|yes| Q3{"does it declare<br/>that publication?"}
+    Q3 -->|no| E3["fails, listing the ones it declares"]
+    Q3 -->|yes| Q4{"does it declare a repository<br/>named GitHubPackages?"}
+    Q4 -->|no| E4["fails: nowhere to publish to"]
+    Q4 -->|yes| GHP["GitHubPackages — and the same<br/>publication is disabled everywhere else"]
+```
+
+A publication nobody names keeps its existing destinations. Selectors are qualified because **a
+publication name is not unique across a multi-project build**: a repository whose modules all name
+their publication the same way — a common shape — would otherwise have the project inferred from
+whichever one happened to declare a `GitHubPackages` repository. That made two things silent: a
+named publication in a project without that repository routed nowhere and said nothing, and adding
+the repository to a second module started routing it without the input changing.
+
+> A publication routed to GitHub Packages is disabled for **every** other target, including
+> `publishToMavenLocal`. That last one matters: the publication guard below inspects mavenLocal as
+> a proxy for what Central would receive, so a routed publication must not appear there or the
+> guard would demand a `fat-jar-publication-allowlist` entry for an artifact Central never sees.
+
+Routing is derived from the input by a generated init script, applied wherever the release runs
+Gradle: the validation step, the guard, the Sonatype upload and the GitHub Packages publish.
+Nothing in a consumer's build script names publish tasks, so a renamed publication cannot silently
+start publishing to the wrong registry. Covered by
+`.github/scripts/test/publication-routing-fixture.sh`.
+
+> `nexusPublishing` binds every publication to the `sonatype` repository, and the upload runs the
+> aggregate `publishToSonatype`. That is why the routing has to be applied to the Sonatype step as
+> well — without it a routed publication still reaches Central.
+
+### What runs when
+
+| step | runs when |
+|---|---|
+| Central preflight | `publish-to-nexus` and no `resume-deployment-id` |
+| Validate publication routing | `github-packages-publications` non-blank — **nothing else** |
+| Publication guard | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run** |
+| Publish to Sonatype | not dry-run, `publish-to-nexus`, no `resume-deployment-id` |
+| Publish via Central Portal | not dry-run and `publish-to-nexus` |
+| Publish to GitHub Packages | not dry-run and `github-packages-publications` non-blank |
+
+So `publish-to-nexus: false` with a non-blank `github-packages-publications` makes GitHub Packages
+a repository's **only** Maven target. That combination is also why the validation step is gated on
+the input alone: every other Gradle invocation is skipped, so a misspelled publication name would
+otherwise survive a green dry run.
+
+The GitHub Packages step runs **after** the Central publish has fully succeeded — not because the
+two registries are equally permanent. They are not: Central is immutable, while a GitHub package
+version can be deleted, for a public package until it passes 5,000 downloads. The order buys the
+**failure state we would rather be in**. Central fails in far more ways, so putting it first means
+the common failure happens before anything is written to GitHub Packages and leaves nothing to
+clean up; the rarer reverse case leaves a package version that can be deleted and retried.
+
+> Consuming from GitHub Packages needs a token with `read:packages`. That registry has **no
+> anonymous read**, even for public packages — unlike `ghcr.io`, which is the same product family
+> and does allow anonymous pulls. Publishing needs no PAT: the ambient `GITHUB_TOKEN` suffices.
+
 ### Build, guard, stage, close
 
 The job checks out (the default ref for `public`, `commit-hash` for `hybrid`), verifies the
@@ -204,12 +287,18 @@ Both ceilings fall open: exceeding either is a warning, never a failure.
 > Skipped entirely by `publish-to-nexus: false` and by `resume-deployment-id`.
 
 Before the upload, the **publication guard** inspects what would reach Central by publishing to a
-throwaway local repository first, and fails on **a publication carrying a version other than
-the one being released** — most often Gradle's `unspecified` — or on a shadow/uber artifact, a
-Spring Boot executable jar, or anything larger than `max-central-artifact-mb` (default 8). The
-version refusal is the one that also fires for a publication with no archive at all, a BOM or a
-plugin marker, because the set is enumerated from the generated POMs. See the Developer Guide
-for the allowlist and the four remedies.
+throwaway local repository first. It refuses two independent things.
+
+**A publication carrying a version other than the one being released** — most often Gradle's
+`unspecified`. That refusal also fires for a publication with no archive at all, a BOM or a plugin
+marker, because the set is enumerated from the generated POMs.
+
+**An artifact unfit for Central as a dependency**, on either of two complaints, each with its own
+exception: *not a library* — an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over
+`max-central-artifact-mb` (default 8). `oversize-library-allowlist` waives the size limit only, so
+it cannot admit an executable artifact. `fat-jar-publication-allowlist` waives both and is
+**deprecated**: it still works and warns, and the executable-artifact bypass will be removed
+(TD-003). See the Developer Guide for which remedy fits which complaint.
 
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never
@@ -337,6 +426,20 @@ caller must expose it in its own `workflow_dispatch` inputs to use it — but co
 files are `repository_dispatch`-only. Using it today means editing the consumer workflow first.
 The Maven flow has no such input at all.
 
+> **A repository that also routes a publication should expose it.** Splitting a release across two
+> registries adds a state a resume can repair — Central published, the package missing — so the
+> knob is worth more there than in a Central-only repository, and it still has to be wired in by
+> hand.
+
+Resume composes with routing. The Portal publish treats an already-`PUBLISHED` deployment as
+success and verifies it, and the GitHub Packages step is **not** gated on `resume-deployment-id`,
+so a resumed run reaches it and can finish a half-published release.
+
+> With one caveat that decides whether a resume works at all: if the earlier run had already
+> published to GitHub Packages, the resumed run tries the same version again and the registry
+> refuses it. **Delete that package version first** — see
+> [Failure shapes](#failure-shapes) — or the resume dies on the step that had already succeeded.
+
 ---
 
 ## Phase B — record the release
@@ -417,7 +520,8 @@ bookkeeping.
 ## Failure shapes
 
 What each kind of failure leaves behind. The columns are the four independent facts that make up
-the release state.
+the release state. A fifth destination exists when a publication is routed — see the GitHub
+Packages rows at the end.
 
 | Failure | Central | tag | Release | log | Recoverable by the pipeline? |
 |---|:---:|:---:|:---:|:---:|---|
@@ -428,6 +532,8 @@ the release state.
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
 | Registration fails | yes | yes | yes | no | No. The entry must be added by hand. |
+| **GitHub Packages publish fails** after Central succeeded | yes | no | no | no | No, and the state is the one above *plus* an absent package. Recover the release by hand; the version can then be published to GitHub Packages only by re-running that step, since the version cannot be re-published there either. |
+| Run dies **after** the GitHub Packages publish | yes | no | no | no | No. Central and the package are both permanent-as-published; **delete the package version before retrying**, or the retry fails on a version that already exists. |
 
 The rows marked **No** are the same underlying state: the artifacts are permanent, the record is
 absent, and the next release computes the same version — which the preflight stops before the
@@ -436,6 +542,11 @@ rather than letting it die at the close step; if the publication set has changed
 check cannot complete, the build still runs and still dies there. Recovery is manual: create the tag on
 the commit that was actually built, create the release, and dispatch the registration. Tracking
 issue: octopus-base#189.
+
+A routed publication adds one repairable step to that recovery. A GitHub package version **can**
+be deleted — for a public package until it passes 5,000 downloads, after which it needs GitHub
+Support — so a half-finished release that left a package behind is cleaned up by deleting that
+version before retrying. Central offers no equivalent.
 
 ---
 
@@ -451,6 +562,28 @@ pinned to an `octopus-base` tag — never `@main`. The calling job must **not** 
 the caller adds a second approval gate.
 
 **Pass `secrets: inherit`**, or registration cannot authenticate.
+
+**`github-packages-publications`** (optional): Gradle publication names to send to GitHub Packages
+instead of Central. Requires a publishing repository named `GitHubPackages` in the build script.
+Publishing needs no extra secret — it uses the run's own `GITHUB_TOKEN` — but consumers of the
+resulting package need a token with `read:packages`.
+
+**Permissions**, when using that input. A reusable workflow can only *narrow* the permissions its
+caller grants; it can never widen them. State them on the calling job:
+
+```yaml
+jobs:
+  release:
+    permissions:
+      contents: write   # tag and GitHub Release
+      packages: write   # publish to GitHub Packages
+    uses: octopusden/octopus-base/.github/workflows/common-java-gradle-release.yml@vX.Y.Z
+```
+
+> Nothing is blocked in this organisation today: the default token evidently already grants package
+> write, which is what lets the existing GHCR push work. It is stated because the failure is
+> invisible until it happens — tightening that default, or adopting the input in an organisation
+> whose default is read-only, breaks publication with an error that names permissions nowhere.
 
 ---
 
@@ -474,8 +607,9 @@ the caller adds a second approval gate.
 - **`skip-extra-tasks` appends, it does not replace.** In hybrid flow the effective value is
   `-x test -x <extra>`, because hybrid already skips tests.
 - **The concurrency key must be extended whenever a caller varies a new input.** It currently
-  distinguishes run id, attempt, flow type, docker image and `publish-to-nexus` only. Two dry-run
-  variants differing in anything else will cancel each other.
+  distinguishes run id, attempt, flow type, docker image, `publish-to-nexus` and
+  `github-packages-publications`. Two dry-run variants differing in anything else will cancel each
+  other — GitHub keeps only one pending run per group.
   **Maven:** there is no concurrency group at all, so two overlapping public-flow Maven releases
   can compute and publish the same version.
 - **A Maven dry-run compiles and tests nothing** — the only build is inside `mvn deploy`, which
