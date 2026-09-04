@@ -165,9 +165,13 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   security:
     permissions:
+      contents: read
       security-events: write
     uses: octopusden/octopus-base/.github/workflows/common-java-gradle-security-reports.yml@<octopus-base-tag>
     with:
@@ -175,6 +179,19 @@ jobs:
       enable-dependency-check: false
       dependency-check-command: ./gradlew securityReport --no-daemon --stacktrace
 ```
+
+**A job-level `permissions` block has to list every scope the called workflow needs**, including
+the ones it would otherwise have inherited. `jobs.<id>.permissions` *replaces* the token scope
+handed to that job instead of extending it, so `security-events: write` on its own takes away the
+`contents: read` that `common-java-gradle-security-reports.yml` declares at its own top level —
+and a caller granting less than the callee asks for is rejected before anything runs. The run
+ends as `startup_failure`: no jobs, no log, the same shape a syntax error produces, which is what
+makes it slow to trace back to permissions. This page used to show exactly that incomplete block,
+and `octopusden/octopus-wl-tool#15` hit it.
+
+Granting `security-events: write` at workflow level instead also works, and is what `octopus-test`
+does — but that hands the write scope to every job in the file, including the one that builds and
+tests the repository's own code. Keeping it on the security job is the least-privilege form.
 
 ### Gradle prerequisites in consumer repository
 
@@ -203,6 +220,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     uses: octopusden/octopus-base/.github/workflows/common-java-gradle-quality-gates.yml@<octopus-base-tag>
@@ -211,6 +231,7 @@ jobs:
 
   security:
     permissions:
+      contents: read
       security-events: write
     uses: octopusden/octopus-base/.github/workflows/common-java-gradle-security-reports.yml@<octopus-base-tag>
     with:
