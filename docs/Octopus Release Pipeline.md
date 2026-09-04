@@ -164,7 +164,7 @@ fails **after** publishing never registers: route B is gated on the release run 
 
 By default every Maven publication a build declares goes to Maven Central and nowhere else. A
 publication can be sent to **GitHub Packages instead** by naming it in
-`github-packages-publications`, as a project-qualified selector — `":automation:shadow"` for a
+`github-packages-publications`, as a project-qualified selector — `":module:shadow"` for a
 subproject, `":shadow"` for the root, split at the last colon exactly as a Gradle task path reads.
 
 This exists for a **distribution artifact that must remain resolvable by Maven coordinates** — a

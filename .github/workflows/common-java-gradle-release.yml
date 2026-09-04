@@ -76,7 +76,7 @@ on:
         type: string
         default: ''
       github-packages-publications:
-        description: 'Comma-separated, project-qualified selectors for publications to send to GitHub Packages instead of Maven Central — for a distribution artifact that must remain resolvable by Maven coordinates without spending Central quota, such as a shadow jar. A selector is <project path>:<publication>, split at the last colon as a Gradle task path reads: ":automation:shadow" for a subproject, ":shadow" for the root project. Quote it — a YAML value starting with a colon parses, but reads badly. A bare name is rejected: publication names are not unique across a multi-project build. The named project must declare a publishing repository called GitHubPackages, or the release fails. That registry has no anonymous read: consumers need a token with read:packages, and callers must grant packages:write.'
+        description: 'Comma-separated, project-qualified selectors for publications to send to GitHub Packages instead of Maven Central — for a distribution artifact that must remain resolvable by Maven coordinates without spending Central quota, such as a shadow jar. A selector is <project path>:<publication>, split at the last colon as a Gradle task path reads: ":module:shadow" for a subproject, ":shadow" for the root project. Quote it — a YAML value starting with a colon parses, but reads badly. A bare name is rejected: publication names are not unique across a multi-project build. The named project must declare a publishing repository called GitHubPackages, or the release fails. That registry has no anonymous read: consumers need a token with read:packages, and callers must grant packages:write.'
         required: false
         type: string
         default: ''
@@ -576,15 +576,15 @@ jobs:
               def anyType = org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 
               // Selectors are project-qualified — <project path>:<publication>, split at the LAST
-              // colon, exactly as a Gradle task path reads: ':bootJava' is the root project's,
-              // ':automation:shadow' a subproject's. Qualifying is not ceremony. A publication name
+              // colon, exactly as a Gradle task path reads: ':shadow' is the root project's,
+              // ':module:shadow' a subproject's. Qualifying is not ceremony. A publication name
               // is not unique across a multi-project build, and inferring the project from whichever
               // one happened to declare a GitHubPackages repository made "I named it and nothing
               // routed" a silent outcome. Named, every mismatch below is an error instead.
               def selectors = raw.collect { sel ->
                   if (!sel.startsWith(':')) {
                       throw new GradleException("github-packages-publications entry '${sel}' is not " +
-                              "project-qualified. Write <project path>:<publication> — ':automation:shadow' " +
+                              "project-qualified. Write <project path>:<publication> — ':module:shadow' " +
                               "for a subproject, ':shadow' for the root project.")
                   }
                   def cut = sel.lastIndexOf(':')
