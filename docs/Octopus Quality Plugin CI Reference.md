@@ -30,10 +30,43 @@ below are what the plugin build itself pins and tests against.
 | kover | `0.9.4` | `koverVersion` | Consumer-declared (Kotlin-only repos); configured in `SubprojectConfigurer.configureKover`. The plugin's own `kover {}` block notes the "Kover 0.9.4 DSL" |
 | checkstyle | `10.17.0` | `checkstyleVersion` | `BuildConstants.CHECKSTYLE_VERSION` → `SubprojectConfigurer.configureCheckstyle` (`ext.toolVersion`) |
 | pmd | `6.55.0` | `pmdVersion` | `BuildConstants.PMD_VERSION` → `SubprojectConfigurer.configurePmd` (`ext.toolVersion`) |
-| spotbugs-gradle-plugin | `6.0.26` | `spotbugsGradleVersion` | Bundled as `implementation` in `build.gradle.kts` (no Kotlin coupling) |
+| spotbugs-gradle-plugin | `6.0.26` | `spotbugsGradleVersion` | Bundled as `implementation` in `build.gradle.kts` (no Kotlin coupling). Resolved from the Gradle Plugin Portal, like ErrorProne below — this coordinate is not on Maven Central either |
+| gradle-errorprone-plugin | `5.1.1` | `errorproneGradleVersion` | Bundled as `implementation` in `build.gradle.kts` (no Kotlin coupling; its own bytecode is Java 8). Resolved from the Gradle Plugin Portal (Maven Central carries this coordinate only up to `0.0.6`) — the same as the bundled SpotBugs plugin above, so the documented consumer wiring already lists `gradlePluginPortal()` |
+| ErrorProne analysis engine | `2.31.0` (overridable) | `errorproneVersion` | `BuildConstants.ERRORPRONE_VERSION` → the convention of `java.errorProneVersion`, added to the module's `errorprone` configuration by `SubprojectConfigurer.configureErrorProne`. **Opt-in** (`java { errorProne.set(true) }`), never applied otherwise. No single pin covers every JDK in the org — see the table below — so a repo on a newer JDK overrides it with `java { errorProneVersion.set("…") }` |
 | spotbugs analysis engine | `4.9.8` | `spotbugsVersion` | `BuildConstants.SPOTBUGS_VERSION` → `SubprojectConfigurer.configureSpotBugs` (`ext.toolVersion.set(...)`). Pinned above the plugin default `4.8.x` because only `4.9.x` ships ASM 9.9 / BCEL 6.11, which can read Java 25 bytecode (class file v69); the `4.8.x` default aborts on v69 |
 | codenarc | **not pinned** | — | `SubprojectConfigurer.configureCodeNarc` applies the `codenarc` plugin but never sets `toolVersion`, so CodeNarc uses the Gradle CodeNarc plugin's built-in default for the running Gradle version |
 | jacoco | **not pinned** | — | Gradle built-in plugin (`SubprojectConfigurer.configureJaCoCo` / `TaskRegistrar.registerJacocoOverallTasks`); uses the JaCoCo tool version bundled with the running Gradle |
+
+#### ErrorProne engine vs build JDK
+
+The engine is coupled to javac internals: outside a release's supported range it does not degrade,
+it **crashes**, and the crash is a javac-plugin failure rather than a finding — so
+`java { failOnViolation = false }` does not suppress it. Measured directly against each JDK:
+
+| Engine | JDK 11 | JDK 17 | JDK 21 | JDK 22 | JDK 23 | JDK 24 | JDK 25 |
+|--------|--------|--------|--------|--------|--------|--------|--------|
+| `2.31.0` (the default) | runs | runs | runs | runs | runs | crash | crash |
+| `2.50.0` | crash | — | runs | — | — | — | runs |
+
+`2.31.0` on JDK 24+ fails as `NoSuchFieldError: TypeTag.UNKNOWN` from `ASTHelpers.<clinit>` —
+JDK 24's javac removed that field. `2.50.0` on JDK 11 fails as `UnsupportedClassVersionError`
+(class file 65). Note where the boundaries fall against the LTS line: the default covers **21**,
+the current LTS, and dies on **25**, the next one.
+
+No single pin spans the range, which is why the version is a consumer-overridable property rather
+than a fixed constant. The default is the low end deliberately: it is the last release with Java 11
+bytecode, so it stays usable at the JDK 11 floor this plugin documents, and it is what lets the
+plugin's own functional tests — which run on the JDK 11 toolchain — execute the analyser instead of
+only inspecting the task graph. A repository building on a JDK the default cannot serve raises
+`java { errorProneVersion.set("…") }` rather than giving up the gate — the plugin checks that floor
+at compile time and fails with a message naming both versions, rather than letting javac die with a
+bare `UnsupportedClassVersionError`.
+
+Measured floors, from each release's bytecode target: `2.31.0` needs JDK 11+, `2.32.0` through
+`2.37.0` need 17+, `2.50.0` needs 21+. Note the boundary is **2.32.0**, not 2.36.0 — there is no
+Java 11 pin between 2.31.0 and the 17 generation. The upper bound is not enforced, only documented:
+a floor follows objectively from the jar's bytecode, whereas a ceiling is an empirical per-JDK
+result that would produce false failures if guessed for unmeasured releases.
 
 ### Kotlin / JDK generation targeted
 
@@ -101,6 +134,7 @@ explicitly so you do not configure collectors for files that will never exist.
 | pmd | `build/reports/pmd/*.xml` | `build/reports/pmd/*.html` | — | `configurePmd`: `xml` + `html` = true |
 | spotbugs | `build/reports/spotbugs/*.xml` | `build/reports/spotbugs/*.html` | — | `configureSpotBugs`: `xml` + `html` = true (via `reports.maybeCreate`) |
 | codenarc | `build/reports/codenarc/*.xml` | `build/reports/codenarc/*.html` | — | `configureCodeNarc`: `xml` + `html` = true |
+| errorprone | **none** | **none** — findings are javac diagnostics on the `compileJava` console output | no report file of any kind | `configureErrorProne`: runs inside javac, so there is nothing to collect; do not configure a collector path for it |
 | kover (per module) | `build/reports/kover/report.xml` (via `koverXmlReport`) | `build/reports/kover/html/` — **not produced by `qualityCoverage`** (which depends on `koverXmlReport` only), but generated on `check`/`build` when `coverage.enabled=true` (see note below) | — | `qualityCoverage` wires `koverXmlReport` + `koverVerify` only (`TaskRegistrar.registerQualityCoverage`); the verify threshold is set in `configureKover` |
 | jacoco (per module) | `build/reports/jacoco/test/jacocoTestReport.xml` | `build/reports/jacoco/test/html/` | — | `configureJaCoCo`: `xml` + `html` = true |
 

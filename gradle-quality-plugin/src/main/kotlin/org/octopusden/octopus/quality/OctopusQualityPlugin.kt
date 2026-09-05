@@ -47,6 +47,8 @@ import org.octopusden.octopus.quality.internal.TaskRegistrar
  *   has `.java` sources (`hasJava`) — they are Java-only analysers and are skipped entirely on Kotlin-only/Groovy-only modules
  * - **SpotBugs** (Java module with no Kotlin): bytecode analyser — skipped on any module
  *   containing Kotlin (it false-positives on Kotlin bytecode)
+ * - **ErrorProne** (Java-source modules, opt-in via `java { errorProne.set(true) }`): compile-time
+ *   analyser, on-by-default ERROR checks only
  * - **CodeNarc** (Groovy): bundled by plugin
  * - **Coverage**: JaCoCo (Java/mixed, applied by plugin) or Kover (Kotlin-only, applied by consumer)
  *
