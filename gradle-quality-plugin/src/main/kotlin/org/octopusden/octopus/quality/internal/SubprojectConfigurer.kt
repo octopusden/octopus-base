@@ -12,6 +12,22 @@ import java.io.File
 @Suppress("TooManyFunctions") // One configurer per supported tool — splitting would just relocate the count.
 internal object SubprojectConfigurer {
     /**
+     * Minimum JDK an ErrorProne engine release can RUN on, derived from its bytecode target — an
+     * objective property of the jar, unlike the upper bound, which is a per-JDK empirical result and
+     * is therefore documented rather than enforced.
+     *
+     * Entries descend, and the floor only ever rises across releases, so the first entry at or below
+     * the requested version gives the answer — including for a future release newer than anything
+     * listed here.
+     */
+    private val ERRORPRONE_JDK_FLOORS =
+        listOf(
+            listOf(2, 50, 0) to 21,
+            listOf(2, 32, 0) to 17,
+            listOf(0, 0, 0) to 11,
+        )
+
+    /**
      * Phase 1 — synchronous, runs during root script evaluation (before any subproject
      * `afterEvaluate`). Registers `plugins.withId(...)` callbacks for tools whose tasks
      * read settings during their own configuration (ktlint, detekt). Settings made here
@@ -56,6 +72,13 @@ internal object SubprojectConfigurer {
         if (languages.hasJava) {
             configureCheckstyle(project, configDir, extension)
             configurePmd(project, configDir, extension)
+            // Opt-in (octopusQuality { java { errorProne.set(true) } }): applied ONLY when asked
+            // for. Applying it "disabled" is not free — it still registers the javac plugin and
+            // forks the compiler — so an opted-out repo neither pays for it nor risks a compile
+            // that behaves differently from a plain javac one.
+            if (extension.java.errorProne.get()) {
+                configureErrorProne(project, extension)
+            }
         }
         if (languages.hasJava && !languages.hasKotlin) {
             configureSpotBugs(project, extension)
@@ -138,6 +161,106 @@ internal object SubprojectConfigurer {
             task.reports.html.required
                 .set(true)
         }
+    }
+
+    /**
+     * ErrorProne runs inside javac, so unlike SpotBugs it sees only `.java` SOURCE — a Kotlin
+     * module is invisible to it and needs no exclusion, which is why this sits under `hasJava`
+     * alone rather than SpotBugs' `hasJava && !hasKotlin`.
+     *
+     * `disableAllWarnings` narrows the run to the on-by-default ERROR checks. That is the whole
+     * point of the default configuration: those checks are the ones ErrorProne considers always
+     * a bug, so they need no baseline and no tuning, whereas its warning set on legacy code is a
+     * wall of findings nobody triages. `allErrorsAsWarnings` then hands the pass/fail decision to
+     * the same `java.failOnViolation` switch checkstyle/pmd/spotbugs already obey — for every
+     * check that permits it. ErrorProne applies that demotion only to checks declaring
+     * `disableable = true` (`ScannerSupplier.applyOverrides`), so a non-disableable ERROR such as
+     * `UnicodeDirectionalityCharacters` fails the compile whatever this switch says. That is the
+     * upstream contract, not something this configuration can override.
+     *
+     * `--add-exports`/`--add-opens` for JDK 16+ are added by the Gradle plugin itself
+     * (`ErrorProneJvmArgumentProvider`); nothing here needs to configure forking.
+     *
+     * TD-003 records that the tests below JDK 16 never reach the forked-compiler path consumers
+     * take (see docs/Octopus Tech Debt Register.md).
+     *
+     * KNOWN LIMITATION of applying from this (afterEvaluate) phase: `options.errorprone` does not
+     * exist while the consumer's subproject script evaluates, so a repository cannot tune
+     * individual checks there — see the documented `afterEvaluate` workaround in
+     * `docs/Octopus JVM Style Guidelines.md`. Applying the plugin from `registerEarly` instead and
+     * driving `options.errorprone.isEnabled` from a lazy Provider would restore that surface; it is
+     * not done yet because it would apply the plugin to every module rather than only the opted-in
+     * Java ones, and nothing has opted in. Revisit when the first consumer needs per-check tuning.
+     */
+    private fun configureErrorProne(
+        project: Project,
+        extension: OctopusQualityExtension,
+    ) {
+        project.pluginManager.apply("net.ltgt.errorprone")
+        project.dependencies.add(
+            "errorprone",
+            "com.google.errorprone:error_prone_core:${extension.java.errorProneVersion.get()}",
+        )
+        // Read eagerly: this runs from the subproject afterEvaluate, so the consumer's
+        // octopusQuality { } block has already been processed.
+        val errorsAsWarnings = !extension.java.failOnViolation.get()
+        val engineVersion = extension.java.errorProneVersion.get()
+        project.tasks.withType(org.gradle.api.tasks.compile.JavaCompile::class.java).configureEach { task ->
+            // Floor guard, at EXECUTION time so the toolchain is resolved (the Gradle JVM is not
+            // necessarily the compile JVM) and so a task that never compiles is unaffected.
+            // Without it, an engine newer than the compile JDK fails inside javac as a bare
+            // UnsupportedClassVersionError naming neither ErrorProne nor `errorProneVersion`.
+            task.doFirst {
+                val compileJdk =
+                    task.javaCompiler.orNull
+                        ?.metadata
+                        ?.languageVersion
+                        ?.asInt()
+                        ?: org.gradle.api.JavaVersion
+                            .current()
+                            .majorVersion
+                            .toInt()
+                val floor = errorProneJdkFloor(engineVersion)
+                if (compileJdk < floor) {
+                    throw org.gradle.api.GradleException(
+                        "ErrorProne engine $engineVersion requires JDK $floor or newer, but " +
+                            "${task.path} compiles on JDK $compileJdk. Either lower " +
+                            "octopusQuality { java { errorProneVersion } } or raise this module's " +
+                            "Java toolchain. Engine/JDK matrix: " +
+                            "docs/Octopus Quality Plugin CI Reference.md",
+                    )
+                }
+            }
+            // `CompileOptions` is ExtensionAware only at runtime — the compile-time type does not
+            // declare it — so the extension is fetched through an explicit cast.
+            val options =
+                (task.options as org.gradle.api.plugins.ExtensionAware)
+                    .extensions
+                    .getByType(net.ltgt.gradle.errorprone.ErrorProneOptions::class.java)
+            options.disableAllWarnings.set(true)
+            options.allErrorsAsWarnings.set(errorsAsWarnings)
+        }
+    }
+
+    private fun errorProneJdkFloor(version: String): Int {
+        val parsed =
+            version
+                .split('.', '-')
+                .mapNotNull { it.toIntOrNull() }
+        return ERRORPRONE_JDK_FLOORS
+            .first { (from, _) -> compareVersions(parsed, from) >= 0 }
+            .second
+    }
+
+    private fun compareVersions(
+        left: List<Int>,
+        right: List<Int>,
+    ): Int {
+        for (i in 0 until maxOf(left.size, right.size)) {
+            val diff = (left.getOrElse(i) { 0 }) - (right.getOrElse(i) { 0 })
+            if (diff != 0) return diff
+        }
+        return 0
     }
 
     private fun configureSpotBugs(

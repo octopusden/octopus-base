@@ -73,6 +73,8 @@ val ktlintGradleVersion: String by project
 val koverVersion: String by project
 val spotbugsGradleVersion: String by project
 val spotbugsVersion: String by project
+val errorproneGradleVersion: String by project
+val errorproneVersion: String by project
 val checkstyleVersion: String by project
 val pmdVersion: String by project
 
@@ -92,6 +94,10 @@ dependencies {
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:${property("kotlinGradlePluginVersion")}")
     // SpotBugs has no Kotlin version coupling — safe to bundle.
     implementation("com.github.spotbugs.snom:spotbugs-gradle-plugin:$spotbugsGradleVersion")
+    // ErrorProne likewise: it analyses Java via javac, so no Kotlin coupling. Its own bytecode is
+    // Java 8, so bundling it does not raise the JVM this plugin can be LOADED on — only a repo that
+    // opts in pulls the engine, whose floor is `errorproneVersion`.
+    implementation("net.ltgt.gradle:gradle-errorprone-plugin:$errorproneGradleVersion")
 
     // Same deps for TestKit classpath (not published, only for tests)
     externalPlugins("io.gitlab.arturbosch.detekt:detekt-gradle-plugin:$detektVersion")
@@ -135,6 +141,7 @@ val generateBuildConstants by tasks.registering {
     inputs.property("checkstyleVersion", checkstyleVersion)
     inputs.property("pmdVersion", pmdVersion)
     inputs.property("spotbugsVersion", spotbugsVersion)
+    inputs.property("errorproneVersion", errorproneVersion)
     doLast {
         val pkgDir = outDir.get().dir("org/octopusden/octopus/quality/internal").asFile
         pkgDir.mkdirs()
@@ -146,6 +153,7 @@ val generateBuildConstants by tasks.registering {
                 const val CHECKSTYLE_VERSION = "$checkstyleVersion"
                 const val PMD_VERSION = "$pmdVersion"
                 const val SPOTBUGS_VERSION = "$spotbugsVersion"
+                const val ERRORPRONE_VERSION = "$errorproneVersion"
             }
             """.trimIndent() + "\n",
         )

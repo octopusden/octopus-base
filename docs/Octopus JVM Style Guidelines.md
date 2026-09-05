@@ -27,7 +27,7 @@ Where:
 ## Recommended Tool Matrix
 
 - Kotlin-heavy repositories: `detekt`, `ktlint`, `kover` or `jacoco`
-- Java-heavy repositories: `checkstyle`, `pmd`, `spotbugs`, `jacoco`
+- Java-heavy repositories: `checkstyle`, `pmd`, `spotbugs`, `errorprone` (opt-in), `jacoco`
 - Groovy repositories: `codenarc`, `jacoco`
 - Mixed repositories: use only tools that are already integrated, but keep one common entrypoint: `qualityStatic` and `qualityCoverage`
 
@@ -50,6 +50,67 @@ Use this JVM guide as the shared contract for language mix, CI entrypoints, and 
 
 - Enable bug-prone and correctness categories first.
 - Tune noise with explicit suppressions instead of disabling full rule groups.
+
+### `errorprone`
+
+Opt-in per repository:
+
+```groovy
+octopusQuality {
+    java {
+        failOnViolation = true
+        errorProne = true
+    }
+}
+```
+
+- Applies to every module with `.java` source. Unlike SpotBugs it reads Java *source* inside
+  javac, so a Kotlin module is simply invisible to it and needs no exclusion.
+- Only ErrorProne's **on-by-default ERROR checks** run — the plugin sets `disableAllWarnings`.
+  That set is the part ErrorProne treats as always-a-bug, so it needs no baseline and no tuning.
+  The warning set on legacy code is a wall of findings nobody triages, which is why it is off.
+- **Per-check tuning is not available from your build script.** The plugin applies
+  `net.ltgt.errorprone` from its own `afterEvaluate`, so `options.errorprone` does not yet exist
+  while your subproject script evaluates: a top-level
+  `tasks.withType<JavaCompile> { options.errorprone.disable("X") }` throws
+  `UnknownDomainObjectException`. Silence a finding with `@SuppressWarnings("CheckName")` at the
+  narrowest scope instead. If a repository genuinely needs to configure the extension, it must
+  queue its own `afterEvaluate` (which runs after the plugin's):
+
+  ```groovy
+  afterEvaluate {
+      tasks.withType(JavaCompile).configureEach {
+          options.errorprone.disable("SomeCheck")
+      }
+  }
+  ```
+- Whether a finding fails the build follows the same `java.failOnViolation` switch as
+  checkstyle/pmd/spotbugs. With it off, findings are printed as warnings — **except** for the
+  small set of ERROR checks ErrorProne marks non-disableable (e.g.
+  `UnicodeDirectionalityCharacters`), which fail the compile regardless. ErrorProne demotes only
+  checks declaring `disableable = true`; suppress a non-disableable one at the call site.
+- **There is no report file.** Findings are javac diagnostics on the `compileJava` output, and that
+  has a consequence the other analysers do not share: when `compileJava` is `UP-TO-DATE` or
+  `FROM-CACHE`, the findings are simply absent. Checkstyle/PMD/SpotBugs leave an XML report on disk
+  as a task output, which a skipped or cached run still restores; ErrorProne leaves nothing. So in
+  warn-only mode (`failOnViolation = false`) a clean-looking build is not evidence of clean code —
+  it may just be a compile that never re-ran. **Prefer `failOnViolation = true`**, where a violation
+  fails the compile and the failure is never cached as a success; treat warn-only as a short
+  migration step, not a steady state, and re-read it from a clean build.
+- The engine supports a bounded JDK range and crashes outside it, in a way `failOnViolation` cannot
+  downgrade. The default pin serves JDK 11-23; a repo on a newer JDK sets
+  `java { errorProneVersion = "..." }` (2.50.0 covers 21 and 25). Too *low* a compile JDK for the
+  chosen engine is caught for you, with a message naming both; too high is not — check the
+  engine/JDK table in `docs/Octopus Quality Plugin CI Reference.md` before bumping.
+- **Pre-check before opting in a module that already uses annotation processors.** The ErrorProne
+  Gradle plugin makes `annotationProcessor` extend the `errorprone` configuration, so the engine's
+  own tree (Guava, protobuf-java, dataflow-errorprone, pcollections, auto-common) joins your
+  processor path and Gradle conflict resolution may bump a shared dependency there. Lombok in
+  particular has known upstream friction with ErrorProne.
+- A module counts as "having Java" when `src/main/java` or `src/test/java` **exists** — the check is
+  the directory, not its contents, shared with checkstyle/pmd. An empty or leftover `src/main/java`
+  therefore opts a module in, which for ErrorProne means resolving the engine and forking javac to
+  analyse nothing. Delete stale source directories.
 
 ### `codenarc` (Groovy)
 
@@ -156,13 +217,15 @@ octopusQuality {
 | Language detected | Tools configured | Coverage |
 |-------------------|-----------------|----------|
 | Kotlin (no Java) | detekt + ktlint | Kover (consumer applies kover plugin) |
-| Java (no Kotlin) | checkstyle + pmd + spotbugs | JaCoCo (plugin applies jacoco) |
+| Java (no Kotlin) | checkstyle + pmd + spotbugs (+ errorprone when opted in) | JaCoCo (plugin applies jacoco) |
 | Groovy (no Java) | codenarc | JaCoCo (plugin applies jacoco) |
-| Mixed Java + Kotlin | detekt + ktlint + checkstyle + pmd | JaCoCo |
+| Mixed Java + Kotlin | detekt + ktlint + checkstyle + pmd (+ errorprone when opted in) | JaCoCo |
 
 > **Checkstyle/PMD** are Java-only tools — they are applied only to modules that have Java source. A Kotlin-only module gets detekt + ktlint; a Groovy-only module gets codenarc; only Java (Java-only or mixed Java + Kotlin/Groovy) gets checkstyle + pmd.
 >
 > **SpotBugs** is wired only on modules that have Java **and no Kotlin** (Java-only or Java+Groovy). It analyses *bytecode* and false-positives heavily on compiled Kotlin (lateinit / DSL getters / synthetic accessors), so any module containing Kotlin is skipped.
+>
+> **ErrorProne** is **off unless the repo opts in** (`java { errorProne = true }`) and is applied only then — applying it "disabled" would still put the analyser on javac's plugin path and fork the compiler. Once on, it covers every Java-source module, mixed ones included: it reads Java source inside javac, so Kotlin is invisible to it rather than a source of false positives.
 
 ### What stays local in each repo
 

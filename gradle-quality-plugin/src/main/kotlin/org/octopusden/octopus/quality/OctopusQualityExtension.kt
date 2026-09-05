@@ -163,8 +163,38 @@ open class JavaExtension
     constructor(
         objects: ObjectFactory,
     ) {
-        /** Whether Java tools (checkstyle, pmd, spotbugs) fail the build on violations. */
+        /** Whether Java tools (checkstyle, pmd, spotbugs, errorprone) fail the build on violations. */
         val failOnViolation = objects.property(Boolean::class.java).convention(false)
+
+        /**
+         * Run ErrorProne on every module that has Java source. Off by default, so bumping the
+         * plugin never starts failing a repository that has not opted in — and because the pinned
+         * engine needs a build JVM of at least 11, which the repos still building on 8 do not meet.
+         *
+         * Only ErrorProne's on-by-default ERROR checks run; its warnings are suppressed, because
+         * that ERROR set is the part designed to flag things that are always a bug. Whether a
+         * finding stops the build is governed by [failOnViolation], like every other Java analyser
+         * here — with ONE exception this switch cannot reach: ErrorProne demotes an ERROR check
+         * only when the check declares `disableable = true`, so the small non-disableable set
+         * (e.g. `UnicodeDirectionalityCharacters`) still fails the compile even with
+         * [failOnViolation] off. Suppress those at the call site if one ever fires.
+         */
+        val errorProne = objects.property(Boolean::class.java).convention(false)
+
+        /**
+         * ErrorProne analysis engine version, when the pinned default does not fit.
+         *
+         * The engine is coupled to javac internals, so each release supports a bounded JDK range
+         * and CRASHES outside it — `NoSuchFieldError` out of `ASTHelpers`, a javac-plugin failure
+         * that [failOnViolation] cannot downgrade because it is not a finding. The default is
+         * pinned low enough to stay usable on this plugin's documented JDK floor; a repository
+         * building on a newer JDK than the default supports raises it here rather than losing the
+         * gate. See the engine/JDK table in `docs/Octopus Quality Plugin CI Reference.md`.
+         */
+        val errorProneVersion =
+            objects
+                .property(String::class.java)
+                .convention(org.octopusden.octopus.quality.internal.BuildConstants.ERRORPRONE_VERSION)
     }
 
 open class GroovyExtension
