@@ -30,12 +30,13 @@ silently withdrew the check from another.
 Splitting it cannot be done by renaming: the exception that waives size must be **unable** to
 admit an executable artifact, or the policy is advisory.
 
-Enforcement is staged. Seven repositories relied on the combined switch when this was written,
-every one of them for a distribution a build tool fetches by coordinates — six shadow jars, one
-fat jar published with its classifier stripped, and, in one of those repositories, additionally a
-plugin bundle nothing resolves. **None** relied on it for a large library, so the narrow size
-exception begins with no legitimate user. Until those seven have somewhere to go, removing the
-bypass would break them; it is deprecated and warns first.
+Enforcement is staged, and the survey behind that is what makes the split safe to make: every
+artifact then held on Central by the combined switch was a distribution a build tool fetches by
+coordinates. **None** was a large library — so the narrow size exception begins with no legitimate
+user, and nothing is being taken away from anyone by making it unable to admit an executable
+artifact. Removing the bypass outright would break every repository still on it, so it is
+deprecated and warns first. Which repositories those are, and the order they move in, is rollout
+state and is tracked outside this repository.
 
 One shape the policy cannot recognise: a shadow jar published with its classifier stripped
 occupies the unclassified `jar` slot and carries no marker a rule can rely on. Only the size limit
