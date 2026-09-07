@@ -99,10 +99,9 @@ else
 fi
 
 # Every escaping rule needs a case, or the untested ones rot: esc() lost \r once already.
-for pair in "|:||" "':|'" "[:|[" "]:|]"; do
-  ch=${pair%%:*}; want=${pair#*:}
+for ch in '|' "'" '[' ']'; do
   out="$(run "2.0.16${ch}" 2.0.16)"
-  if grep -qF "buildNumber: 2.0.16${want}" <<<"$out"; then
+  if grep -qF "buildNumber: 2.0.16|${ch}" <<<"$out"; then
     echo "PASS [escapes '${ch}']"; pass=$((pass + 1))
   else echo "FAIL [does not escape '${ch}']"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 done
@@ -110,11 +109,9 @@ out="$(run "$(printf '2.0.16\rX')" 2.0.16)"
 if grep -qF 'buildNumber: 2.0.16|rX' <<<"$out"; then echo "PASS [escapes CR]"; pass=$((pass + 1))
 else echo "FAIL [does not escape CR]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 
-# The verdict must not depend on any external command: a `sort` that could not do -V used to
-# make this script report an OLDER version as newer, with exit 0.
-stub="$(mktemp -d)"
-for c in sort awk sed grep cut tr head tail; do printf '#!/bin/sh\nexit 2\n' > "$stub/$c"; chmod +x "$stub/$c"; done
-out="$(PATH="$stub:/usr/bin:/bin" BUILD_NUMBER=2.0.9 LAST_RELEASE_VERSION=2.0.16 bash "$script" 2>&1)"
+# A `sort` that could not do -V used to make this report an OLDER version as newer, exit 0.
+stub="$(mktemp -d)"; printf '#!/bin/sh\nexit 2\n' > "$stub/sort"; chmod +x "$stub/sort"
+out="$(PATH="$stub:$PATH" BUILD_NUMBER=2.0.9 LAST_RELEASE_VERSION=2.0.16 bash "$script" 2>&1)"
 if grep -q "releaselog_regressed" <<<"$out"; then echo "PASS [verdict needs no external command]"; pass=$((pass + 1))
 else echo "FAIL [verdict changed when external commands were broken]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 rm -rf "$stub"

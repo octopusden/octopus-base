@@ -7,12 +7,9 @@
 # BEFORE any line below runs - and BUILD_NUMBER comes from the first line of a release-log
 # file, so the value is repository content. The two existing meta-runners in this directory
 # pass values the same way, as kotlinArgs.
-set -uo pipefail
 
 build="${BUILD_NUMBER-}"; last="${LAST_RELEASE_VERSION-}"
-# That first line may carry a CR: the release log can be committed CRLF. The sibling helper
-# .github/scripts/release-log-has-version.sh strips CR for the same reason.
-build="${build%$'\r'}"; last="${last%$'\r'}"
+build="${build%$'\r'}"; last="${last%$'\r'}"   # the release log can be committed CRLF
 
 # TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped
 # or the message is silently mangled. This applies to the values ECHOED below just as much as
@@ -33,7 +30,6 @@ problem() {
   printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
   exit 1
 }
-ok() { printf "##teamcity[buildStatus text='%s']\n" "$(esc "$1")"; }
 
 echo "buildNumber: $(esc "$build")"
 echo "lastRelease: $(esc "$last")"
@@ -51,11 +47,8 @@ if [ -z "$last" ]; then
 fi
 [[ "$last" =~ $ver ]] || problem "LAST_RELEASE_VERSION is not a version: '${last}'. Fix the project parameter." "releaselog_bad_lastrelease"
 
-# Compared in bash rather than through `sort -V`. This script runs without `set -e`, and a
-# command substitution inside `[ ]` throws away the exit status - so a sort that could not do
-# -V returned nothing, the "went backwards" branch was skipped, and post-processing proceeded
-# on a version OLDER than the last one. Silently. Both values are digits and dots by now.
-# Missing trailing segments count as 0, so 2.0 and 2.0.0 are the same version.
+# Compared in bash, so no external command's failure can change the verdict: `sort -V` used
+# to, silently. Segments are numeric by now; missing ones count as 0, so 2.0 equals 2.0.0.
 newer() {
   local -a l r; local i n x y
   IFS=. read -ra l <<<"$1"; IFS=. read -ra r <<<"$2"
@@ -76,8 +69,7 @@ elif newer "$last" "$build"; then
   # line, so this is the only automatic detector of a corrupted log.
   problem "Release log went backwards: first line is '${build}' but '${last}' was already processed. Expected the newest version first - an old version was prepended instead of inserted in order." "releaselog_regressed"
 else
-  # The ordinary outcome of any commit to the module file that adds no newer version:
-  # a manual release-log repair, or a rerun. Nothing to process, and nothing wrong.
-  ok "${build} already processed - nothing to do"
+  # Ordinary: a commit to the module file that added no newer version - a repair, or a rerun.
+  printf "##teamcity[buildStatus text='%s']\n" "$(esc "${build} already processed - nothing to do")"
   echo "##teamcity[setParameter name='ALREADY_PROCESSED' value='true']"
 fi
