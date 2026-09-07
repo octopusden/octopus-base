@@ -298,7 +298,7 @@ exception: *not a library* — an `-all` classifier or a `BOOT-INF/` entry — a
 `max-central-artifact-mb` (default 8). `oversize-library-allowlist` waives the size limit only, so
 it cannot admit an executable artifact. `fat-jar-publication-allowlist` waives both and is
 **deprecated**: it still works and warns, and the executable-artifact bypass will be removed
-(TD-003). See the Developer Guide for which remedy fits which complaint.
+(TD-005). See the Developer Guide for which remedy fits which complaint.
 
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never

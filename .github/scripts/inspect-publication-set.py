@@ -35,7 +35,7 @@ def _names(var):
 # Two axes, two lists. "Not a library" (a shadow or executable artifact) has a destination now,
 # so its bypass is deprecated. "A big library" is still legitimate and gets its own narrow list,
 # which cannot admit an executable artifact.
-# TD-003: remove the executable-artifact bypass once consumers have migrated
+# TD-005: remove the executable-artifact bypass once consumers have migrated
 # (see docs/Octopus Tech Debt Register.md).
 allowed = _names("FAT_JAR_ALLOWLIST")
 size_allowed = _names("OVERSIZE_ALLOWLIST")
