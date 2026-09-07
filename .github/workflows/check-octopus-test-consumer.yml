@@ -129,6 +129,12 @@ jobs:
       - name: Validate workflow naming convention
         shell: bash
         run: bash .github/scripts/validate-workflow-naming.sh .
+      # The meta-runner carries its own copy of this script - TeamCity cannot source one
+      # from a repository - so the runner's last cases assert the copy has not drifted and
+      # cannot be made injectable. That is what this step is here for.
+      - name: Test TeamCity check-release-version-is-new
+        shell: bash
+        run: bash teamcity/scripts/test-check-release-version-is-new.sh
       # Exercises the Portal publish state machine against a stubbed Central API,
       # covering paths that cannot be triggered on demand against the live service
       # (FAILED validation, ambiguous publish responses, wrong deployment ids).
