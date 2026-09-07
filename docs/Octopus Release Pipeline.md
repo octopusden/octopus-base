@@ -548,9 +548,8 @@ It plans by default and writes nothing. `--apply` re-reads every fact first.
 | Credential cannot modify workflows | The token lacks `workflow` scope, and GitHub refuses a tag on a commit that touches a workflow file (#180). `gh auth refresh -s workflow`. |
 
 **Warnings it prints and continues past:** adjacent duplicate lines already in the module file
-(four real files have them), and a commit that no branch reaches — legitimate when a release branch
-was squash-merged and deleted, and never a reason to refuse, because the commit is your attestation
-either way.
+(four real files have them). They are left exactly as they are — a repeated dispatch is how they got
+there, and repairing them is not part of recording this version.
 
 **The order of the writes matters.** The tag and the release come first, and the release-log entry
 only after both are confirmed. That entry is the one thing with a consumer outside these
@@ -560,6 +559,11 @@ top — it is the newest — that post-processing should run for it, and the scr
 it did. When it is inserted below, post-processing runs and stops at its own "release version is
 new" check, which is expected and harmless.
 
-**What it deliberately does not do:** restore the released `pom.xml` asset that the Maven flow
-attaches from its build job's artifact. If the component's releases carry one, attach it by hand
+**What it deliberately does not do:** check whether `<built-sha>` is reachable from the default
+branch. A release branch that was squash-merged and deleted leaves a legitimate commit no branch
+reaches, so the answer could never refuse anything — and it would be reassuring in the one case
+worth catching, since a branch head reports as reachable too. The commit is your attestation
+([ADR 0007](adr/0007-recovery-coordinates-are-attested-not-derived.md)); what the script verifies is
+that it exists. It also does not restore the released `pom.xml` asset that the Maven flow attaches
+from its build job's artifact. If the component's releases carry one, attach it by hand
 straight away, before the release becomes immutable.
