@@ -236,9 +236,9 @@ version can be deleted, for a public package until it passes 5,000 downloads. Th
 the common failure happens before anything is written to GitHub Packages and leaves nothing to
 clean up; the rarer reverse case leaves a package version that can be deleted and retried.
 
-> Consuming from GitHub Packages needs a token with `read:packages`. That registry has **no
-> anonymous read**, even for public packages — unlike `ghcr.io`, which is the same product family
-> and does allow anonymous pulls. Publishing needs no PAT: the ambient `GITHUB_TOKEN` suffices.
+> Publishing needs no PAT: the ambient `GITHUB_TOKEN` suffices. **Reading does** — that registry
+> authenticates every read, so a routed artifact is not reachable the way a Central one is. How
+> that credential is provisioned is a rollout concern and is maintained outside this repository.
 
 ### Build, guard, stage, close
 
@@ -567,8 +567,8 @@ the caller adds a second approval gate.
 
 **`github-packages-publications`** (optional): Gradle publication names to send to GitHub Packages
 instead of Central. Requires a publishing repository named `GitHubPackages` in the build script.
-Publishing needs no extra secret — it uses the run's own `GITHUB_TOKEN` — but consumers of the
-resulting package need a token with `read:packages`.
+Publishing needs no extra secret — it uses the run's own `GITHUB_TOKEN`. Reading the result does
+need one; arranging that is a rollout concern, not part of this contract.
 
 **Permissions**, when using that input. A reusable workflow can only *narrow* the permissions its
 caller grants; it can never widen them. State them on the calling job:

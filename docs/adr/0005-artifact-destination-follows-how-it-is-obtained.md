@@ -13,10 +13,11 @@ quota; a distribution downloaded from a URL belongs in a release asset; a distri
 obtains should not be published at all.
 
 Two rules follow. A **recognized executable artifact must not be excepted back onto Central** — it
-has a destination now, so an exception would only re-create the problem. One bypass still admits
-one, deprecated and warning; see Consequences. And **only a genuine
+has a destination now, so an exception would only re-create the problem. And **only a genuine
 dependency that is legitimately large may take a size exception**: size is a property of
 libraries, not a category of its own.
+
+One deprecated bypass still admits an executable artifact, and warns; see Consequences.
 
 ## Consequences
 

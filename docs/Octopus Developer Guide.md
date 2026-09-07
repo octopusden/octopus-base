@@ -326,8 +326,9 @@ and splits one module's release across two registries:
       github-packages-publications: ":module:shadow"
 ```
 
-> Consumers then need a token with `read:packages`: that registry has no anonymous read, unlike
-> `ghcr.io`. Callers also need `packages: write` on the calling job.
+> Callers need `packages: write` on the calling job. Note that the destination authenticates
+> every read, so whoever fetches the artifact needs a credential — arranged outside this
+> repository, not here.
 
 **"This library is too big"** — over `max-central-artifact-mb`, but a genuine dependency that
 projects compile against. Two options:
