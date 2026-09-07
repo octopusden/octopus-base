@@ -33,7 +33,6 @@
 # Inputs (env, all optional):
 #   RELEASE_LOG_REPO  default octopusden/octopus-release-log
 #   RELEASE_LOG_REF   branch to write the log entry on, default main
-#   REPO1_BASE, REPO1_NET  as repo1-coordinate.sh documents
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -107,8 +106,6 @@ add_coord() {
   # No leading hyphen: these are interpolated into a URL and passed as arguments downstream.
   [[ "$c" =~ ^[A-Za-z0-9_.][A-Za-z0-9_.-]*:[A-Za-z0-9_.][A-Za-z0-9_.-]*$ ]] \
     || refuse "Unusable coordinate" "'${c}' is not a group:artifact coordinate."
-  local existing
-  for existing in ${coords[@]+"${coords[@]}"}; do [ "$existing" = "$c" ] && return 0; done
   coords+=("$c")
 }
 while IFS= read -r line; do add_coord "$line"; done <<<"${COORDINATES//,/$'\n'}"
@@ -133,16 +130,6 @@ else
   note "NOTE: this credential does not report scopes (a fine-grained token). It needs Contents: write and Workflows: write on ${TARGET_REPO}; if it lacks the latter, creating the tag fails with a masked 404 (#180)."
 fi
 
-# Where this code came from. An org-wide credential is about to run it, so an uncommitted local
-# edit is worth seeing in the record rather than discovering afterwards.
-self_sha="$(git -C "$here" rev-parse HEAD 2>/dev/null || echo unknown)"
-self_dirty=""
-if [ "$self_sha" != "unknown" ]; then
-  git -C "$here" diff --quiet HEAD -- "$here" 2>/dev/null || self_dirty=" (with uncommitted changes)"
-else
-  self_dirty=" (not a git checkout — provenance unknown)"
-fi
-
 # Who is doing this. Refused rather than defaulted: the release-log commit's author is the only
 # record that this recovery happened and who ran it — there is no run in Actions to say it instead
 # (ADR 0006) — and `author=unknown` would quietly cancel that. A credential that authenticates but
@@ -163,29 +150,17 @@ cat >&2 <<EOF
   tag/release  ${TAG}
   coordinates  ${coords[*]}
   release log  ${RELEASE_LOG_REPO}/${MODULE}.txt on ${RELEASE_LOG_REF}
-  reconciler   ${self_sha}${self_dirty}
 
 EOF
 
 # ---------------------------------------------------------------------------
-# Fact 1 — the commit exists, and where it sits
+# Fact 1 — the commit exists. Nothing proves the artifacts were built from it; Central cannot say,
+# and no branch can either — a squash-merged release branch that has since been deleted leaves a
+# legitimate commit no branch reaches. The commit is the operator's attestation (ADR 0007), so the
+# only thing worth refusing on is a commit that does not exist at all.
 # ---------------------------------------------------------------------------
 gh api "repos/${TARGET_REPO}/commits/${COMMIT}" --jq '.sha' >/dev/null 2>&1 \
   || refuse "Commit not found" "${TARGET_REPO} has no commit ${COMMIT}, or it could not be read. Refusing to tag a commit that cannot be confirmed to exist."
-
-# Reported, never gated. Central proves the artifacts exist; nothing proves they came from this
-# commit, so the commit is the operator's attestation either way — and a squash-merged release
-# branch that has since been deleted leaves a commit no branch reaches, which is legitimate.
-default_branch="$(gh api "repos/${TARGET_REPO}" --jq '.default_branch' 2>/dev/null || true)"
-commit_position="not compared"
-if [ -n "$default_branch" ]; then
-  case "$(gh api "repos/${TARGET_REPO}/compare/${default_branch}...${COMMIT}" --jq '.status' 2>/dev/null || true)" in
-    identical) commit_position="is the head of ${default_branch}" ;;
-    behind)    commit_position="is an ancestor of ${default_branch}" ;;
-    ahead|diverged) commit_position="is NOT on ${default_branch} — expected if its branch was squash-merged or deleted; you are attesting it" ;;
-    *)         commit_position="could not be compared with ${default_branch}" ;;
-  esac
-fi
 
 # ---------------------------------------------------------------------------
 # Fact 2 — Maven Central. Fails closed, unlike the release preflight that shares this probe:
@@ -405,7 +380,6 @@ esac
 printf '  %-14s %-28s %s\n' \
   "fact" "state now" "$([ "$APPLY" = true ] && echo "action" || echo "would do")" >&2
 printf '  %-14s %-28s %s\n' "central" "all ${#coords[@]} coordinate(s) present" "nothing — read only" >&2
-printf '  %-14s %-28s %s\n' "commit" "${commit_position}" "nothing — you attest it" >&2
 printf '  %-14s %-28s %s\n' "tag" "${tag_state}" "${tag_action}" >&2
 printf '  %-14s %-28s %s\n' "release" "${release_state}" "${release_action}" >&2
 printf '  %-14s %-28s %s\n' "release log" "${log_state}" "${log_action}" >&2

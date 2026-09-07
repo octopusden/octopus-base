@@ -29,10 +29,13 @@ not that nothing else was published. That is accepted, because the failure it gu
 opposite one — recovering a version that was never published at all.
 
 Central's answer proves the artifacts exist. It cannot prove they were built from the commit the
-operator named; nothing outside the run's own record can. The commit is an attestation too, which is
-why the reconciler reports where it sits relative to the default branch and never refuses on that
-basis: a squash-merged release branch that has since been deleted leaves a legitimate commit that no
-branch reaches.
+operator named; nothing outside the run's own record can. The commit is an attestation too, so the
+only thing the reconciler refuses on is a commit that does not exist in the repository at all. It
+deliberately does not check whether the commit is reachable from the default branch: a
+squash-merged release branch that has since been deleted leaves a legitimate commit that no branch
+reaches, and the mistake such a check looks like it would catch — tagging the branch head instead
+of the commit that was built, as nearly happened to octopus-cve-automation 2.0.3 — is precisely the
+case where the branch head answers that it is reachable.
 
 A partly published version — some coordinates present, some absent — is refused for both paths.
 Central will not accept the missing ones alongside the ones that exist, so neither recovering nor

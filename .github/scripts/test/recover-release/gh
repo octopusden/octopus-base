@@ -9,7 +9,6 @@
 #   AUTH          ok | fail | fine-grained | no-workflow-scope
 #   WHOAMI_FAILS  non-empty => `gh api user` is refused although auth succeeds
 #   COMMIT_EXISTS yes | no
-#   COMPARE       identical | behind | ahead | fail
 #   TAG_STATE     absent | at-built | at-other | error   (error = the ref lookup itself fails)
 #   REL_STATE     absent | draft | published | error | unreadable  (200 with no isDraft)
 #   LOG_FILE      path to the module file's content; unset with LOG_MISSING/LOG_UNREADABLE
@@ -103,15 +102,6 @@ if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/contents/*.txt* ]]; then
 fi
 
 # --- the target repository ---
-if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/compare/* ]]; then
-  log "compare"
-  case "${COMPARE:-behind}" in
-    fail) echo 'gh: HTTP 500' >&2; exit 1 ;;
-    *) printf '%s\n' "${COMPARE:-behind}" ;;
-  esac
-  exit 0
-fi
-
 if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/commits/v* ]]; then
   # the tag, resolved to a commit
   log "tag-resolve"
@@ -146,10 +136,6 @@ if [ "${1:-}" = "api" ] && [[ "$path" == repos/*/git/refs ]]; then
   [ "${REF_CREATE:-ok}" = "ok" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
   : > "${state}.ref"
   echo "refs/tags/created"; exit 0
-fi
-
-if [ "${1:-}" = "api" ] && [[ "$path" == repos/* ]] && [ "${#}" -le 4 ]; then
-  log "repo-meta"; echo "main"; exit 0
 fi
 
 # --- releases ---

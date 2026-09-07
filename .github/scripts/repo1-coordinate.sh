@@ -16,17 +16,10 @@
 # all look alike here, and none of them is evidence about the version. What a caller does with
 # that is the caller's decision.
 #
-# Overridable by the caller before sourcing or calling:
-#   REPO1_BASE   default https://repo1.maven.org/maven2
-#   REPO1_NET    curl options as an array; default HEAD with short ceilings, because only the
-#                status code is read and the requests are serial
-
-REPO1_BASE="${REPO1_BASE:-https://repo1.maven.org/maven2}"
-# `${VAR+x}` rather than `${#VAR[@]}`: the latter is an error on an unset array under `set -u`
-# in bash 3.2, which is what a developer running the scenario suites on a Mac has.
-if [ -z "${REPO1_NET+x}" ]; then
-  REPO1_NET=(-sS --head --connect-timeout 10 --max-time 20)
-fi
+REPO1_BASE="https://repo1.maven.org/maven2"
+# HEAD with short ceilings: only the status code is read and the requests are serial. The scenario
+# suites reach this through a `curl` stub on PATH, so neither value needs to be overridable.
+REPO1_NET=(-sS --head --connect-timeout 10 --max-time 20)
 
 repo1_coordinate_state() {
   local ga="$1" version="$2" grp art url code

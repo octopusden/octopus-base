@@ -76,7 +76,7 @@ run() {
 }
 
 base() {
-  export AUTH=ok COMMIT_EXISTS=yes COMPARE=behind
+  export AUTH=ok COMMIT_EXISTS=yes
   export TAG_STATE=absent REL_STATE=absent REF_CREATE=ok PUT=ok
   export LOG_FILE="$fixtures/octopus-test.txt"
   # Exported empty rather than unset: a case below assigns to these by name, and an assignment to
@@ -133,11 +133,6 @@ run "a partly published version refuses both paths and explains why" 1 "only par
 echo "-- the commit ------------------------------------------------------------"
 base; COMMIT_EXISTS=no
 run "a commit that does not exist stops the run" 1 "has no commit" "ref-create,log-put"
-# Reported, never gated: a squash-merged branch that was deleted leaves a commit no branch reaches.
-base; COMPARE=ahead
-run "a commit no branch reaches is reported, not refused" 0 "you are attesting it"
-base; COMPARE=fail
-run "a comparison that fails does not stop the plan" 0 "could not be compared"
 
 echo "-- a plan writes nothing -------------------------------------------------"
 base
