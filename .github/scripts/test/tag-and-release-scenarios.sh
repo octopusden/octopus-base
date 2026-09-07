@@ -53,6 +53,10 @@ base() {
   export BUILT_SHA="$SHA_BUILT" RELEASE_ASSET=""
   export REF_STATE=absent REF_SHA="$SHA_BUILT" REF_CREATE=ok
   export REL_STATE=absent REL_ASSETS="" ASSETS_READ=ok UPLOAD=ok GRAPHQL_REF=id
+  export REL_CREATE=ok REL_EDIT=ok DRAFT_QUERY=ok
+  # The wait succeeds on its first attempt whenever GRAPHQL_REF=id, so these only bound the cases
+  # where it is meant to fail — without them each of those would sleep for twenty seconds.
+  export WAIT_ATTEMPTS=1 WAIT_INTERVAL=0
 }
 
 # --- the ordinary paths --------------------------------------------------------------------
@@ -75,18 +79,14 @@ run "tag correct but no release: adopt the tag" 0 \
 # GitHub creates the tag only when a draft is published, so an interrupted attempt leaves a draft
 # with NO ref. The old inline Gradle body only looked for a release on the path where the ref
 # already existed, so here it created the ref and then died on "release already exists".
-base; REL_STATE=draft; export REL_STATE
-run "a draft with no tag is adopted, not collided with" 0 \
-  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view draft-query publish" \
-  "publishing it"
-
 # The ref must be created AND VISIBLE before the draft is published. Publishing a draft is itself
 # a tag-creating operation: GitHub materialises the tag from the draft's own target_commitish,
-# which need not be the commit that was built. So the GraphQL wait has to come before `publish`,
-# not only before a `release create` — the sequence below is the assertion, and it is the one path
-# neither inline copy ever reached, because both died at "release already exists" first.
+# which need not be the commit that was built. So the `graphql` wait has to come before `publish`,
+# not only before a `release create` — its position in the sequence below is the assertion, and
+# this is the one path neither inline copy ever reached, because both died at "release already
+# exists" first.
 base; REL_STATE=draft; export REL_STATE
-run "the ref is waited for before the draft is published, not only before a create" 0 \
+run "a draft with no tag is adopted, and the ref is waited for before it is published" 0 \
   "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view draft-query publish" \
   "publishing it"
 
@@ -142,6 +142,44 @@ run "a release missing its asset gets one, without clobbering" 0 \
 base; REF_STATE=exists REL_STATE=published RELEASE_ASSET="$tmpasset" ASSETS_READ=error
 export REF_STATE REL_STATE RELEASE_ASSET ASSETS_READ
 run "an unreadable asset list tries the upload rather than failing the job" 0 "" "assets unreadable"
+
+# --- a failed release step may never report success -----------------------------------------
+# `set -e` is on, but the shell suspends it for the whole body of a function called as part of a
+# `||` list — and create_or_adopt_release is always called that way, so nothing inside it or the
+# functions it calls is fatal by default. Each case below fails one step in there and asserts the
+# run stops and says which ledger was left short. Reverting any of those checks turns this suite
+# red instead of shipping a green half-release: a run reporting "Created tag and release" with no
+# release is the #189 shape itself.
+
+base; GRAPHQL_REF=empty; export GRAPHQL_REF
+run "a ref that never becomes readable stops the run before any release call" 1 \
+  "ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql" \
+  "not readable after"
+
+base; REF_STATE=exists GRAPHQL_REF=empty; export REF_STATE GRAPHQL_REF
+run "the same wait failing while adopting an existing tag is fatal too" 1 "" \
+  "Release not completed"
+
+base; REL_CREATE=error; export REL_CREATE
+run "a refused release creation is reported, not announced as created" 1 "" \
+  "Release not completed"
+
+base; REF_STATE=exists REL_STATE=draft REL_EDIT=error; export REF_STATE REL_STATE REL_EDIT
+run "a draft that cannot be published fails the run" 1 "" "Draft not published"
+
+base; REF_STATE=exists REL_STATE=published DRAFT_QUERY=error; export REF_STATE REL_STATE DRAFT_QUERY
+run "an unreadable draft state is not read as 'not a draft'" 1 "" "Draft state unreadable"
+
+# The asset path is where a refused create would otherwise be masked: `attach_asset` runs next and
+# never fails, so without the check the run would carry on to publish a release that was never
+# created. The non-asset path needs no such check — the create is the last command there.
+base; RELEASE_ASSET="$tmpasset" REL_CREATE=error; export RELEASE_ASSET REL_CREATE
+run "a refused draft creation is not masked by the asset upload that follows" 1 "" \
+  "Release not completed"
+
+base; RELEASE_ASSET="$tmpasset" REL_EDIT=error; export RELEASE_ASSET REL_EDIT
+run "an asset release that cannot be published is reported as left a draft" 1 "" \
+  "Release left as a draft"
 
 echo
 echo "tag-and-release scenarios: $pass passed, $fail failed"

@@ -99,10 +99,29 @@ attach_asset() {
 
 # A draft left behind by an interrupted attempt is invisible to the stamp step's
 # `releases/tags/...` lookup, so publish it rather than treating it as done.
+# `set -e` is on (line 30) but it does NOT reach into the three functions below. The shell suspends
+# -e for the entire body of a function invoked as part of a `||` list, and create_or_adopt_release
+# is always called that way — `create_or_adopt_release || { ... }` — so the caller can say which
+# ledger was left short instead of dying with a bare non-zero. Everything it calls inherits that
+# suspension. So every command in here that must not fail silently is checked by hand, and an
+# unchecked one is ignored rather than fatal.
+#
+# It matters because this script runs when the artifacts are already immutable: a step that fails
+# while the log says "done" is the #189 shape itself — the record short a ledger, and nothing red.
 publish_if_draft() {
-  if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+  local draft_lookup=0 is_draft
+  is_draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>&1)" || draft_lookup=$?
+  if [ "$draft_lookup" -ne 0 ]; then
+    printf '%s\n' "$is_draft" >&2
+    echo "::error title=Draft state unreadable::Could not read whether release ${TAG} is a draft. A draft left unpublished is invisible to the stamp lookup, so this is not treated as 'not a draft'." >&2
+    return 1
+  fi
+  if [ "$is_draft" = "true" ]; then
     echo "Release ${TAG} exists as a draft — publishing it."
-    gh release edit "$TAG" --draft=false
+    gh release edit "$TAG" --draft=false || {
+      echo "::error title=Draft not published::${TAG} exists as a draft and publishing it failed. Registration reads a published release, so this run must not report success." >&2
+      return 1
+    }
   fi
 }
 
@@ -134,6 +153,7 @@ reconcile_existing_release() {
   fi
   # After the asset, never before: publishing first would put the release beyond reach of an
   # asset once immutable releases are enabled on the repository, permanently.
+  # Last command again, so its status is this function's status.
   publish_if_draft
 }
 
@@ -146,7 +166,7 @@ create_or_adopt_release() {
   local rel_lookup=0 rel_out
   rel_out="$(gh release view "$TAG" 2>&1)" || rel_lookup=$?
   if [ "$rel_lookup" -eq 0 ]; then
-    reconcile_existing_release
+    reconcile_existing_release || return 1
     return 0
   fi
   # Fail closed: gh exits non-zero for a missing release and for a rate limit, auth error or 5xx
@@ -157,7 +177,7 @@ create_or_adopt_release() {
     echo "::error title=Release lookup failed::Could not determine whether release ${TAG} exists. Refusing to act on unverified state; re-run when the API is reachable." >&2
     exit 1
   fi
-  wait_for_tag
+  wait_for_tag || return 1
   if [ -n "$RELEASE_ASSET" ]; then
     # Draft, then asset, then publish. GitHub's immutable releases refuse an asset added after
     # publication, so attaching afterwards would silently stop working the day immutability is
@@ -166,10 +186,15 @@ create_or_adopt_release() {
     # path above publishes on the next attempt. This is why `gh release create` is not given the
     # file directly: that makes it draft, upload and publish as one step, where an interrupted
     # upload leaves a draft nothing ever finishes.
-    gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes
+    gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes || return 1
     attach_asset
-    gh release edit "$TAG" --draft=false
+    gh release edit "$TAG" --draft=false || {
+      echo "::error title=Release left as a draft::${TAG} was created as a draft and publishing it failed. The stamp lookup cannot see a draft, so registration would never run." >&2
+      return 1
+    }
   else
+    # No `|| return 1`: this is the last command the function runs, so a refused create is already
+    # this function's exit status. The call sites turn that into the error and the non-zero exit.
     gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
   fi
 }
@@ -190,7 +215,10 @@ if [ "$ref_lookup" -eq 0 ]; then
     echo "::error title=Release tag conflict::Tag ${TAG} already exists at ${tag_sha}, but this run built ${built_sha}. Not moving it. Delete the tag and its release (release immutability may prevent this once published), or release a new version." >&2
     exit 1
   fi
-  create_or_adopt_release
+  create_or_adopt_release || {
+    echo "::error title=Release not completed::Tag ${TAG} is correct at ${built_sha}, but its release could not be completed. Nothing published changed. Use GitHub's 're-run failed jobs' on this run: it repeats only this job, which adopts the existing tag." >&2
+    exit 1
+  }
   echo "Tag and release $TAG are in place at $built_sha"
   exit 0
 fi
@@ -230,6 +258,12 @@ fi
 # the stale-code release this whole file exists to prevent. The path that reaches it — ref created
 # here, a draft already present with no ref of its own — is new; both inline copies died earlier,
 # at `gh release create` reporting "release already exists".
+# No `|| exit 1`: at top level `set -e` applies, so a wait that gives up stops the run here with
+# the ::error wait-for-tag-ref.sh already printed. Inside create_or_adopt_release the same call
+# does need an explicit check, because -e is suspended there.
 wait_for_tag
-create_or_adopt_release
+create_or_adopt_release || {
+  echo "::error title=Release not completed::${TAG} was created at ${built_sha}, but its release could not be completed. The artifacts are already published, so do NOT re-dispatch the release. Use GitHub's 're-run failed jobs' on this run: it repeats only this job, which adopts the tag it just created." >&2
+  exit 1
+}
 echo "Created tag and release $TAG at $built_sha"

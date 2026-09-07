@@ -221,6 +221,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Record the built commit
+        shell: bash
         env:
           BUILT_SHA: ${{ steps.version.outputs.target_sha }}
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
@@ -229,9 +230,10 @@ jobs:
         run: |
           # Leave the commit where a failed run's reader will find it: as an annotation on the
           # run page and in the step summary. A run that dies after Central accepted the upload
-          # is recovered by tagging THIS commit (octopus-base#189). Unlike the reusable Gradle
-          # flow, a resume here does not reuse an earlier checkout: it resolves the branch head
-          # again, so if the branch moved the sha below is not the one that was built.
+          # is recovered by tagging THIS commit (octopus-base#189). This workflow cannot pin the
+          # commit on a resume the way the Gradle flow's hybrid callers do with commit-hash: a
+          # non-dry-run refuses a target-ref that is not a branch, so a resume always resolves the
+          # branch head again — and if the branch moved since, the sha below is not what was built.
           set -euo pipefail
           # A workflow command ends at a newline and delimits on `::`, so an id carrying either
           # would truncate or split the annotation.

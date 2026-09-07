@@ -15,6 +15,9 @@
 #   ASSETS_READ    ok | error                   listing those assets
 #   UPLOAD         ok | error
 #   GRAPHQL_REF    id | empty                   what wait-for-tag-ref.sh sees
+#   REL_CREATE     ok | error                   whether `gh release create` succeeds
+#   REL_EDIT       ok | error                   whether `gh release edit --draft=false` succeeds
+#   DRAFT_QUERY    ok | error                   whether the isDraft lookup answers
 set -u
 log() { [ -n "${CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$CALL_LOG"; return 0; }
 
@@ -54,6 +57,9 @@ if [ "${1:-}" = "release" ]; then
     view)
       if [[ "$*" == *--json\ isDraft* ]]; then
         log "draft-query"
+        # A lookup that fails must not read as "not a draft": a draft left unpublished is invisible
+        # to the stamp lookup, so the script has to stop rather than assume.
+        [ "${DRAFT_QUERY:-ok}" = "ok" ] || { echo 'gh: HTTP 500: server error' >&2; exit 1; }
         [ "${REL_STATE:-absent}" = "draft" ] && echo "true" || echo "false"
         exit 0
       fi
@@ -75,11 +81,17 @@ if [ "${1:-}" = "release" ]; then
       # --verify-tag must be present on every path: without it gh would create the tag itself at
       # the default branch head, which is the stale-code release the script exists to prevent.
       [[ "$*" == *--verify-tag* ]] || { echo "stub gh: release create without --verify-tag: $*" >&2; exit 99; }
+      # The notes and title are part of the contract too: a release with neither is what a caller
+      # gets if these are quietly dropped, and nothing else in the suite would notice.
+      [[ "$*" == *--generate-notes* ]] || { echo "stub gh: release create without --generate-notes: $*" >&2; exit 99; }
+      [[ "$*" == *--title* ]] || { echo "stub gh: release create without --title: $*" >&2; exit 99; }
       if [[ "$*" == *--draft* ]]; then log "create-draft"; else log "create-published"; fi
+      [ "${REL_CREATE:-ok}" = "ok" ] || { echo 'gh: HTTP 422: could not create release' >&2; exit 1; }
       exit 0 ;;
     edit)
       [[ "$*" == *--draft=false* ]] || { echo "stub gh: unexpected release edit: $*" >&2; exit 99; }
       log "publish"
+      [ "${REL_EDIT:-ok}" = "ok" ] || { echo 'gh: HTTP 500: could not publish release' >&2; exit 1; }
       exit 0 ;;
     upload)
       log "upload ${4:-${3:-}}"

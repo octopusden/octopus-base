@@ -236,6 +236,7 @@ jobs:
         id: built-commit
         env:
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          COMMIT_HASH: ${{ inputs.commit-hash }}
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
           # Assign first: `echo "sha=$(git rev-parse HEAD)"` succeeds even when rev-parse
@@ -258,10 +259,20 @@ jobs:
             echo "::notice title=Built commit (dry run — nothing published)::${sha}"
             { echo "### Built commit (dry run)"; echo ""; echo "\`${sha}\` — nothing was published by this run."; } >> "$GITHUB_STEP_SUMMARY"
           elif [ -n "${RESUME_DEPLOYMENT_ID}" ]; then
-            # On a resume the artifacts were built by an EARLIER run, so this HEAD is not the
-            # commit that was published. Say so where the wrong value would otherwise be read.
-            echo "::notice title=Built commit belongs to an earlier run::This run resumed Portal deployment ${resume_id_safe}, built by an earlier run. Its HEAD (${sha}) is NOT the published commit. Use the earlier run's Built commit entry, or its checkout sha, and attest that."
-            { echo "### Built commit"; echo ""; echo "Not this run's HEAD: resumed deployment \`${resume_id_safe}\` from an earlier run. Take the commit from that run."; } >> "$GITHUB_STEP_SUMMARY"
+            # A resume publishes artifacts an EARLIER run built, so whether this sha is that
+            # run's commit depends on how this job checked out. With commit-hash the checkout is
+            # pinned to it, and a resume passes the same value, so the sha IS the built commit —
+            # saying otherwise would send the operator to discard a correct answer. The hybrid
+            # flow always has it: the guard above refuses hybrid without it. The public flow has
+            # no such input and re-resolves the branch, where the sha is right only if the branch
+            # has not moved since.
+            if [ -n "${COMMIT_HASH}" ]; then
+              echo "::notice title=Built commit (resumed deployment)::${sha} — the checkout is pinned by commit-hash, which a resume passes unchanged, so this is the commit the earlier run built. Resumed Portal deployment ${resume_id_safe}."
+              { echo "### Built commit"; echo ""; echo "\`${sha}\` — pinned by \`commit-hash\`, on a resume of deployment \`${resume_id_safe}\`."; } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::notice title=Built commit may belong to an earlier run::This run resumed Portal deployment ${resume_id_safe} and re-resolved the branch to ${sha}. If the branch moved since the earlier run, that is NOT the published commit — take that run's own Built commit entry and attest it."
+              { echo "### Built commit"; echo ""; echo "Re-resolved on a resume of deployment \`${resume_id_safe}\`: \`${sha}\` is the built commit only if the branch has not moved."; } >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "::notice title=Built commit::${sha}"
             { echo "### Built commit"; echo ""; echo "\`${sha}\`"; } >> "$GITHUB_STEP_SUMMARY"
