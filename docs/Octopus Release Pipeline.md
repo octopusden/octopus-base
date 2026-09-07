@@ -180,7 +180,9 @@ silent no-op:
 flowchart TD
     S["selector :project:publication"] --> Q1{"project-qualified?"}
     Q1 -->|no| E1["fails: bare names are rejected"]
-    Q1 -->|yes| Q2{"does that project exist?"}
+    Q1 -->|yes| Q0{"names a publication<br/>after the last colon?"}
+    Q0 -->|no| E0["fails: nothing named"]
+    Q0 -->|yes| Q2{"does that project exist?"}
     Q2 -->|no| E2["fails, listing the paths that do"]
     Q2 -->|yes| Q3{"does it declare<br/>that publication?"}
     Q3 -->|no| E3["fails, listing the ones it declares"]

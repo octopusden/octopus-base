@@ -315,13 +315,15 @@ flowchart TD
 | Nobody — it is deployed, not consumed | Stop publishing it: declare no `MavenPublication`, or `publish-to-nexus: false` for a whole repository |
 
 Routing needs a publishing repository named `GitHubPackages` in the build script, and moves that
-publication off Central entirely:
+publication off Central entirely. Name whichever publication already carries the artifact — often
+the module's only one; a second publication holding just the fat jar is rarely worth declaring,
+and splits one module's release across two registries:
 
 ```yaml
-      # The automation module's shadow jar is resolved by coordinates, so it keeps them —
-      # on GitHub Packages rather than Central. Selectors name the project too: publication
-      # names are not unique across a multi-project build. Use ":shadow" for the root project.
-      github-packages-publications: ":automation:shadow"
+      # This module's fat jar is resolved by coordinates, so it keeps them — on GitHub
+      # Packages rather than Central. Selectors name the project too: publication names are
+      # not unique across a multi-project build. Use ":shadow" for the root project.
+      github-packages-publications: ":module:shadow"
 ```
 
 > Consumers then need a token with `read:packages`: that registry has no anonymous read, unlike
