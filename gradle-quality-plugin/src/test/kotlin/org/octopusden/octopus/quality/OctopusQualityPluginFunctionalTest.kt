@@ -55,6 +55,18 @@ class OctopusQualityPluginFunctionalTest {
     private val ansiEscape = Regex("\\u001B\\[[0-9;]*m")
 
     /**
+     * `this.value = this.value` trips SelfAssignment, one of ErrorProne's on-by-default ERROR
+     * checks. Deliberately a check from that set and not a warning: the plugin runs with
+     * `disableAllWarnings`, so a warning-severity fixture would prove nothing.
+     */
+    private val selfAssignmentJava =
+        "package com.example;\n" +
+            "public class Bug {\n" +
+            "    private int value;\n" +
+            "    public void set(int value) { this.value = this.value; }\n" +
+            "}\n"
+
+    /**
      * Generated build scripts are ktlint-checked like any other source. Written without a
      * trailing newline they violate `standard:final-newline`, so `ktlintKotlinScriptCheck`
      * fails; in a test that runs the aggregate `ktlintCheck`, Gradle then aborts before
@@ -394,6 +406,196 @@ class OctopusQualityPluginFunctionalTest {
         // version that a dry-run graph check would silently pass.
         val result = runner("spotbugsMain").build()
         assertEquals(TaskOutcome.SUCCESS, result.task(":spotbugsMain")?.outcome)
+    }
+
+    // ---------------------------------------------------------------
+    // 3b. ErrorProne: opt-in only, and the failure flag follows java.failOnViolation
+    // ---------------------------------------------------------------
+
+    private fun errorProneProject(
+        name: String,
+        errorProne: Boolean,
+        failOnViolation: Boolean,
+    ) {
+        settingsFile(kotlinSettings(name))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java {
+                    failOnViolation.set($failOnViolation)
+                    errorProne.set($errorProne)
+                }
+                coverage { enabled.set(false) }
+            }
+            tasks.register("printErrorProneApplied") {
+                val applied = provider { configurations.findByName("errorprone") != null }
+                doLast { println("ERRORPRONE_APPLIED=" + applied.get()) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Bug.java").writeText(selfAssignmentJava)
+    }
+
+    @Test
+    fun `java repo - errorprone not applied by default`() {
+        errorProneProject("test-errorprone-default-off", errorProne = false, failOnViolation = true)
+
+        // The A-side of the pair below: the SAME source that fails compilation once ErrorProne is
+        // switched on must compile cleanly while it is off. Asserting only "opted-in fails" would
+        // still pass if the fixture were broken for an unrelated reason.
+        val result = runner("compileJava").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":compileJava")?.outcome)
+        assertFalse(
+            result.output.contains("SelfAssignment"),
+            "ErrorProne must not run unless the repo opts in; output was:\n${result.output}",
+        )
+        // The absence of a finding is weak evidence on its own — it also holds if the analyser ran
+        // and missed. Assert the plugin was never applied: no `errorprone` configuration exists.
+        val applied = runner("printErrorProneApplied").build()
+        assertTrue(
+            applied.output.contains("ERRORPRONE_APPLIED=false"),
+            "Opting out must not apply net.ltgt.errorprone at all; output was:\n${applied.output}",
+        )
+    }
+
+    @Test
+    fun `java repo - errorprone engine below the compile JDK fails with an actionable message`() {
+        // 2.50.0 needs JDK 21; this suite compiles on the JDK 11 toolchain, so without the guard
+        // javac dies with a bare UnsupportedClassVersionError naming neither ErrorProne nor the
+        // property to change. Runs here precisely because the mismatch is native to this suite.
+        errorProneProject("test-errorprone-floor", errorProne = true, failOnViolation = false)
+        buildFile(
+            File(projectDir, "build.gradle.kts").readText().replace(
+                "errorProne.set(true)",
+                "errorProne.set(true)\n                    errorProneVersion.set(\"2.50.0\")",
+            ),
+        )
+
+        val result = runner("compileJava").buildAndFail()
+        assertTrue(
+            result.output.contains("ErrorProne engine 2.50.0 requires JDK 21 or newer"),
+            "Expected an actionable engine/JDK message; output was:\n${result.output}",
+        )
+        assertTrue(
+            result.output.contains("errorProneVersion"),
+            "The message must name the property to change; output was:\n${result.output}",
+        )
+    }
+
+    @Test
+    fun `mixed java-kotlin repo - errorprone applies to the java half`() {
+        // The placement decision this guards: ErrorProne sits under `hasJava` alone, NOT SpotBugs'
+        // `hasJava && !hasKotlin`. It reads Java source inside javac, so Kotlin is invisible to it
+        // rather than a false-positive source, and a mixed module must still get its Java analysed.
+        settingsFile(kotlinSettings("test-errorprone-mixed"))
+        buildFile(
+            """
+            plugins {
+                kotlin("jvm") version "1.9.25"
+                id("io.gitlab.arturbosch.detekt") version "1.23.8"
+                id("org.jlleitschuh.gradle.ktlint") version "14.0.1"
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java {
+                    failOnViolation.set(true)
+                    errorProne.set(true)
+                }
+                kotlin { failOnViolation.set(false) }
+                coverage { enabled.set(false) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Bug.java").writeText(selfAssignmentJava)
+        writeKotlinFile(
+            "src/main/kotlin/com/example/Greeter.kt",
+            """
+            package com.example
+
+            class Greeter {
+                fun hi(): String = "hi"
+            }
+            """.trimIndent() + "\n",
+        )
+
+        val result = runner("compileJava").buildAndFail()
+        assertTrue(
+            result.output.contains("[SelfAssignment]"),
+            "ErrorProne must analyse the Java sources of a mixed Java+Kotlin module; output was:\n${result.output}",
+        )
+    }
+
+    @Test
+    fun `java repo - errorprone opted in fails compilation when failOnViolation`() {
+        errorProneProject("test-errorprone-fail", errorProne = true, failOnViolation = true)
+
+        // NOT --dry-run: resolves BuildConstants.ERRORPRONE_VERSION from Maven Central and runs the
+        // analyser inside javac, so a mispinned engine cannot pass as a green task graph.
+        val result = runner("compileJava").buildAndFail()
+        assertEquals(TaskOutcome.FAILED, result.task(":compileJava")?.outcome)
+        assertTrue(
+            result.output.contains("[SelfAssignment]"),
+            "Expected the SelfAssignment ERROR check to fail the compile; output was:\n${result.output}",
+        )
+    }
+
+    @Test
+    fun `java repo - errorprone engine version is overridable`() {
+        settingsFile(kotlinSettings("test-errorprone-version"))
+        buildFile(
+            """
+            plugins {
+                java
+                id("org.octopusden.octopus-quality")
+            }
+            repositories { mavenCentral() }
+            octopusQuality {
+                java {
+                    failOnViolation.set(false)
+                    errorProne.set(true)
+                    errorProneVersion.set("2.50.0")
+                }
+                coverage { enabled.set(false) }
+            }
+            // Reads the DECLARED dependency, so the assertion needs no resolution and no download:
+            // an override that reaches the configuration is the whole contract here, and 2.50.0
+            // could not be executed on this suite's JDK 11 toolchain anyway.
+            tasks.register("printErrorProneEngine") {
+                val declared = configurations.named("errorprone").map { conf ->
+                    conf.dependencies.map { "${'$'}{it.group}:${'$'}{it.name}:${'$'}{it.version}" }
+                }
+                doLast { println("ENGINE=" + declared.get().joinToString()) }
+            }
+            """.trimIndent(),
+        )
+        subDir("src/main/java/com/example")
+        File(projectDir, "src/main/java/com/example/Bug.java").writeText(selfAssignmentJava)
+
+        val result = runner("printErrorProneEngine").build()
+        assertTrue(
+            result.output.contains("ENGINE=com.google.errorprone:error_prone_core:2.50.0"),
+            "errorProneVersion must reach the errorprone configuration; output was:\n${result.output}",
+        )
+    }
+
+    @Test
+    fun `java repo - errorprone opted in only warns when not failOnViolation`() {
+        errorProneProject("test-errorprone-warn", errorProne = true, failOnViolation = false)
+
+        val result = runner("compileJava").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":compileJava")?.outcome)
+        assertTrue(
+            result.output.contains("[SelfAssignment]"),
+            "ErrorProne must still report the finding, as a warning; output was:\n${result.output}",
+        )
     }
 
     // ---------------------------------------------------------------
