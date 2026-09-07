@@ -55,11 +55,13 @@ discovered during an incident, when nobody is watching for a regression:
    design review and was caught only by a reviewer who read the receiving side.
 2. **Ask for findings against the code, and for the reviewer's own claims to be checkable** —
    file and line. A review that cannot be verified cannot be acted on.
-3. **Apply the YAGNI lens** (`ponytail`) once the change stops growing: every guard, flag, file
-   and abstraction must name a consumer that exists today. Anything that cannot is removed, and
-   what remains is measured again. Applied to octopus-base#189 this removed a coordinate-deriving
+3. **Apply the YAGNI lens once the change stops growing.** Every guard, flag, file and
+   abstraction must name a consumer that exists today; anything that cannot is removed, and what
+   remains is measured again. Nothing in this repository implements this — it is a way of reading
+   the diff, not a command to run. Applied to octopus-base#189 it removed a coordinate-deriving
    job, a provenance artefact on the hot path of every release, an allowlist, a retry budget and
-   two flags — about 40% of the change, none of it with a consumer.
+   two flags — about 40% of the change, none of it with a consumer — and on a second pass, two
+   override knobs nothing set and a report that gated nothing.
 4. **A reviewer's finding is a claim, not an instruction.** Check it against the code before
    acting: of the findings taken in #189, several were wrong in detail and two would have broken
    the Gradle publish if applied literally.

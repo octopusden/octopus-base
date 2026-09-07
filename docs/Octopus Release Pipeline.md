@@ -548,7 +548,7 @@ It plans by default and writes nothing. `--apply` re-reads every fact first.
 | Version only partly published | Some coordinates are there and some are not. Central will not accept the missing ones alongside the ones that exist, so neither recovering nor re-running this version can work. Release the next one. |
 | Maven Central did not answer | A 5xx, a rate limit or a dropped connection. Unlike the release preflight, which fails open because it can only ever save a doomed build, this writes tags — so an unanswered question stops it. |
 | Tag stands at another commit | The tag exists at a commit other than the one given. Nothing is moved: one of the two is wrong, and a tag pointing at stale code is worse than a missing one. |
-| Release log is out of order | The module file's lines are not descending. Repairing that is a separate decision from recording this version; fix the order by hand first. |
+| Release log cannot be written over | One title, two reasons, and the second line of the refusal says which. Either the module file's lines are not descending, or one of them is not an X.Y.Z version. The insertion works by comparing those three numbers and will not touch a file it cannot read; repairing the file is a separate decision from recording this version, so fix it by hand first. |
 | Credential cannot modify workflows | The token lacks `workflow` scope, and GitHub refuses a tag on a commit that touches a workflow file (#180). `gh auth refresh -s workflow`. |
 
 **Warnings it prints and continues past:** adjacent duplicate lines already in the module file
