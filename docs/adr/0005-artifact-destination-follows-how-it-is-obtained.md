@@ -12,8 +12,9 @@ Maven coordinates belongs in GitHub Packages, where it keeps its coordinates and
 quota; a distribution downloaded from a URL belongs in a release asset; a distribution nobody
 obtains should not be published at all.
 
-Two rules follow. A **recognized executable artifact cannot be excepted back onto Central** — it
-has a destination now, so an exception would only re-create the problem. And **only a genuine
+Two rules follow. A **recognized executable artifact must not be excepted back onto Central** — it
+has a destination now, so an exception would only re-create the problem. One bypass still admits
+one, deprecated and warning; see Consequences. And **only a genuine
 dependency that is legitimately large may take a size exception**: size is a property of
 libraries, not a category of its own.
 
