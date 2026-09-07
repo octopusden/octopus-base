@@ -28,10 +28,12 @@ silently withdrew the check from another.
 Splitting it cannot be done by renaming: the exception that waives size must be **unable** to
 admit an executable artifact, or the policy is advisory.
 
-Enforcement is staged. Five repositories relied on the combined switch when this was written —
-four for shadow jars a metarunner fetches, one for a plugin bundle nothing resolves — and none for
-a large library, so the narrow size exception begins with no legitimate user. Until those five
-have somewhere to go, removing the bypass would break them; it is deprecated and warns first.
+Enforcement is staged. Seven repositories relied on the combined switch when this was written,
+every one of them for a distribution a build tool fetches by coordinates — six shadow jars, one
+fat jar published with its classifier stripped, and, in one of those repositories, additionally a
+plugin bundle nothing resolves. **None** relied on it for a large library, so the narrow size
+exception begins with no legitimate user. Until those seven have somewhere to go, removing the
+bypass would break them; it is deprecated and warns first.
 
 One shape the policy cannot recognise: a shadow jar published with its classifier stripped
 occupies the unclassified `jar` slot and carries no marker a rule can rely on. Only the size limit
