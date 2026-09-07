@@ -283,7 +283,9 @@ flowchart TD
     K2 -->|no| OK["allowed on Central"]
     K2 -->|yes| EXO{"in<br/>oversize-library-allowlist?"}
     EXO -->|yes| OK
-    EXO -->|no| FAILO["release fails"]
+    EXO -->|no| EXF2{"in<br/>fat-jar-publication-allowlist?"}
+    EXF2 -->|yes| WARN
+    EXF2 -->|no| FAILO["release fails"]
 ```
 
 The diagram covers the two complaints about the artifact itself. There is a third, about the

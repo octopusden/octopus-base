@@ -225,6 +225,12 @@ SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' OVERSIZE=
 SETUP='jar "$repo" "$G" app 2.0.105 app-2.0.105.jar BOOT-INF/classes/x.class' OVERSIZE=app \
   run "size list does NOT admit a Spring Boot jar" 1 "BOOT-INF"
 
+# The deprecated list is BROADER on this axis: it waives size for an artifact that trips no name
+# rule at all. That is the whole reason it cannot be precise, and it is what the guard's decision
+# diagram in the Developer Guide has to show — the diagram had this branch failing.
+SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
+  ALLOWLIST=biglib run "fat-jar list also waives size for a plain library" 0 "is deprecated" "unfit for Maven Central"
+
 # --- the deprecated list still works, and says so -----------------------------------------
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
   run "warns that the fat-jar list is deprecated" 0 "is deprecated" "unfit for Maven Central"
