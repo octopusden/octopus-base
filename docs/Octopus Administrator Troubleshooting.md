@@ -143,21 +143,23 @@ an immutable version to Maven Central and only then failing with no tag.
 1. Release from a branch tip instead — any branch head is taggable, including a maintenance
    branch whose workflow files legitimately differ from the default branch.
 2. Or release a commit whose `.github/workflows` are unchanged relative to some branch head.
-3. Only if this specific historical commit must be released: create the tag manually — but read
-   the credential note below first, because this is not something an ordinary operator can do.
+3. Only if this specific historical commit must be released: create the tag yourself, with a
+   credential that may modify workflows — see the note below.
 
-### The credential this needs, which the org does not currently provision
+### The credential this needs, and where it already exists
 
-Creating a tag on such a commit requires a credential **authorized to modify workflows**: a PAT
-with `workflow` scope, or a GitHub App with `Workflows: write`. The Actions `GITHUB_TOKEN` can
-never have it, and no personal token has it by default — a classic PAT with `repo` scope alone is
-refused exactly like the workflow is.
+Creating a tag on such a commit requires a credential **authorized to modify workflows**: a
+classic or OAuth token with `workflow` scope, or a fine-grained token with `Workflows: write`. The
+Actions `GITHUB_TOKEN` can never have it, which is why the workflow itself cannot do this.
 
-At the time of writing the org has **not** decided to provision such a credential; that is an
-open question in `octopus-base` — the failing step's error message states the rule and the two
-workable remedies, but carries no issue link. So treat
-"create the tag manually" as requiring an administrator to mint a suitable token first. Do not
-plan a release around this recovery — prefer options 1 and 2 above.
+An operator's own credential usually can. The token `gh auth login` mints through its browser flow
+carries `repo` and `workflow`; check with `gh auth status`, which prints the scopes. A token
+supplied through `--with-token` or `GH_TOKEN` may not, and a fine-grained token does not report its
+permissions there at all.
+
+This is the same credential the #189 reconciler relies on
+(`.github/scripts/recover-release.sh`, see [ADR 0006](adr/0006-reconciliation-is-an-operator-run-script.md)),
+and it is the reason that reconciler runs locally rather than as a workflow.
 
 ## The rarer variant, after publishing
 
@@ -175,16 +177,91 @@ The artifacts are published and immutable, so the version cannot be republished.
 re-dispatch the release** — that would start a fresh run which tries to publish the same version
 and fails.
 
-Recovery, in this order:
+Recovery: run the reconciler, which does exactly this and then checks the release log too. The
+failing step prints the tag name and the commit sha; the run's `Built commit` annotation prints the
+commit too. The coordinates are not there — they are in the Central preflight block earlier in the
+same run, and a Maven release has no preflight at all, so take them from its `mvn deploy` output.
 
-1. Create the tag on the commit the run built — the failing step prints both the tag name and the
-   commit sha. This needs the credential described above, so unless an administrator has minted
-   one, escalate here.
-2. On the same run, use GitHub's **"Re-run failed jobs"**. Tagging and release creation live in
-   their own job (`Tag and release`), downstream of the publish, so a re-run repeats only that
-   job: it finds the tag now present on the built commit, attaches the release to it, and leaves
-   the successful publish untouched.
+```bash
+.github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...]
+# then add --apply
+```
+
+See *Recovering a published, unrecorded release* in
+[Octopus Release Pipeline](Octopus%20Release%20Pipeline.md#recovering-a-published-unrecorded-release)
+for what each refusal means. It needs the `workflow`-scoped credential described above, for the
+same reason the workflow could not create the tag.
+
+The older manual path still works if you prefer it: create the tag by hand, then use GitHub's
+**"Re-run failed jobs"** on that run. Tagging and release creation live in their own job
+(`Tag and release`), downstream of the publish, so a re-run repeats only that job: it finds the tag
+now present on the built commit, attaches the release to it, and leaves the successful publish
+untouched. It does **not** check the release-log entry, which is the step that went missing on
+`octopus-sonar-automation` 2.0.15.
 
 That job split is what makes step 2 work at all. Before it existed, publishing and tagging shared
 one job, so any re-run replayed the publish and failed on Central's immutability before ever
 reaching the tag — the recovery was undocumentable in practice.
+
+# Release fails with "already exists" and there is no tag
+
+## Symptoms
+
+A release run fails and the log names the version as already present:
+
+```
+Component with package url: 'pkg:maven/<group>/<artifact>@X.Y.Z' already exists
+RELEASE_PUBLISH_CLASS=deterministic
+```
+
+There is no `vX.Y.Z` tag, no GitHub release, and often no `octopus-release-log` entry — while the
+artifacts resolve from repo1 perfectly well. Since v2.8.0 the Central preflight catches this
+*before* the build and says which of two situations it is. **Maven releases have no preflight**, so
+there the failure still surfaces from the publish itself.
+
+## Cause
+
+An earlier run published the version and then died before recording it. Publishing to Central and
+recording a release are separate transactions against an immutable registry
+([ADR 0002](adr/0002-publishing-and-recording-are-separate-transactions.md)), so a run that dies
+between them leaves a state the pipeline cannot finish on its own — and the next release computes
+the same version from the last tag, tries to publish it again, and is refused. The refusal is
+correct: no retry can fix it, which is why it classifies as `deterministic`.
+
+Common triggers: the publish wait expiring while Central is still `PUBLISHING` (the publish then
+completes after nothing is watching), or any failure after the upload.
+
+## What NOT to do
+
+**Do not re-dispatch the release.** It cannot succeed — Central refuses a coordinate that exists —
+and each attempt costs a full build. This is the mistake the sequence in octopus-base#189 records:
+a plain re-dispatch, then a hand-made tag.
+
+## Fix
+
+Run the reconciler from an `octopus-base` checkout. It asks Central whether the version really is
+published, then completes the tag, the GitHub release and the release-log entry, in that order,
+and adopts whatever is already in place:
+
+```bash
+.github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...]
+# then, once the plan reads right:
+.github/scripts/recover-release.sh <owner/repo> <version> <built-sha> <group:artifact>[,...] --apply
+```
+
+Without `--apply` it writes nothing and prints what it would do. You need the commit that was
+**built** — the `Built commit` annotation on the failed run's page, not the branch head — and the
+coordinates that were published. The preflight's error message names both for a Gradle release;
+for Maven, take the coordinates from the `Uploading to` lines of its `mvn deploy` output. Full
+argument reference and the meaning of each refusal:
+[Octopus Release Pipeline](Octopus%20Release%20Pipeline.md#recovering-a-published-unrecorded-release).
+
+Then release the next version. Nothing about the published artifacts changes.
+
+## If only the release-log entry is missing
+
+The tag and the GitHub release are present, the version resolves on Central, and
+`octopus-release-log` has no line for it. That is the same state, one ledger wide, and the same
+script fixes it: it leaves the tag and the release alone and writes only the entry. Registration is
+a separate run gated on the release having succeeded, so this is the half that goes unnoticed — one
+component's entry was missing for four days.

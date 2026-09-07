@@ -53,16 +53,13 @@ COORDS_FILE="${COORDS_FILE:-}"
 DRY_RUN="${DRY_RUN:-false}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}"
 
-REPO1="https://repo1.maven.org/maven2"
+# Sourced from beside this script; the callers fetch the whole scripts directory.
+# shellcheck source=/dev/null
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/repo1-coordinate.sh"
 PREFLIGHT_BUDGET="${PREFLIGHT_BUDGET:-90}"
-# HEAD, not GET: only the status code is read, so there is no reason to pull every POM body
-# down — and the workflow comment and developer guide both describe this as a HEAD.
-# The per-request ceiling is deliberately short. A repo1 HEAD answers in milliseconds, while
-# the requests are serial: at a 60s ceiling a repository with eleven publications could hang
-# for eleven minutes BEFORE the build, which would cost more than the build this check exists
-# to save. PREFLIGHT_BUDGET bounds the sweep as a whole, so a partial outage cannot turn a
-# cheap question into a long one.
-NET=(-sS --head --connect-timeout 10 --max-time 20)
+# The request itself — HEAD, short ceilings, and why — lives in repo1-coordinate.sh, sourced
+# above. PREFLIGHT_BUDGET bounds the sweep as a whole, so a partial outage cannot turn a cheap
+# question into a long one.
 
 # Report the verdict and leave. In dry-run every stop degrades to a warning: a dry run
 # publishes nothing, and this is the only run type in which the logic gets exercised
@@ -124,22 +121,19 @@ for i in "${!COORDS[@]}"; do
     UNKNOWN+=("${COORDS[@]:$i}")
     break
   fi
-  grp="${ga%%:*}"; art="${ga##*:}"
-  # ${grp//.//} rather than ${grp//./\/}: a backslash-escaped replacement is stripped by
-  # bash 5 but kept literally by bash 3.2, which would build .../org\/octopusden/... and
-  # 404 every coordinate. This form means the same thing to every bash.
-  url="$REPO1/${grp//.//}/$art/$BUILD_VERSION/$art-$BUILD_VERSION.pom"
-  code=$(curl "${NET[@]}" -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
-  case "$code" in
-    200) echo "  PRESENT  $ga"; PRESENT+=("$ga") ;;
-    404) echo "  free     $ga"; ABSENT+=("$ga") ;;
+  # The probe is shared with the #189 reconciler; only the verdict below is ours. See
+  # repo1-coordinate.sh for why the split falls there.
+  state="$(repo1_coordinate_state "$ga" "$BUILD_VERSION")"
+  case "$state" in
+    present) echo "  PRESENT  $ga"; PRESENT+=("$ga") ;;
+    absent)  echo "  free     $ga"; ABSENT+=("$ga") ;;
     # Anything else answers nothing: a 5xx, a rate limit, a proxy error or an empty
     # body from a dropped connection all look alike here, and none of them is
     # evidence that the version is free.
     # One unanswered coordinate already fixes the verdict as inconclusive — the branch below
     # is checked before any other — so every further request is provably wasted. In an outage
     # that is the difference between one timeout and one per publication.
-    *)   echo "  unknown  $ga (HTTP ${code:-none})"; UNKNOWN+=("$ga")
+    *)   echo "  unknown  $ga (repo1 did not answer)"; UNKNOWN+=("$ga")
          if [ $((i + 1)) -lt "${#COORDS[@]}" ]; then
            echo "  skipped  ${COORDS[*]:$((i + 1))} (the verdict is already inconclusive)"
            UNKNOWN+=("${COORDS[@]:$((i + 1))}")
@@ -194,17 +188,22 @@ if [ -n "$GITHUB_REPOSITORY" ] && command -v gh >/dev/null 2>&1; then
   fi
 fi
 
+# The reconciler takes its coordinates as ONE comma-separated argument, so build them that way
+# rather than printing the array space-separated: an operator copying the line below during an
+# incident would otherwise get "usage" for every multi-module component.
+present_csv="$(IFS=,; printf '%s' "${PRESENT[*]}")"
+
 case "$recorded" in
   yes)
     stop "Version already released" \
-      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), with tag ${tag} and its GitHub release in place. This release would rebuild the same version and be rejected at the close step, so release the next version instead. If the dispatch came from internal CI, the version it resolved is stale: the compile build that produces the next version had not finished when the release was triggered. Before moving on, check that octopus-release-log has an entry for ${BUILD_VERSION}: registration is a separate job, off by default and then a separate run gated on the release having succeeded, so it can be missing while the tag and release are present — octopus-base#189 records a version left exactly like that."
+      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), with tag ${tag} and its GitHub release in place. This release would rebuild the same version and be rejected at the close step, so release the next version instead. If the dispatch came from internal CI, the version it resolved is stale: the compile build that produces the next version had not finished when the release was triggered. Before moving on, check that octopus-release-log has an entry for ${BUILD_VERSION}: registration is a separate job, off by default and then a separate run gated on the release having succeeded, so it can be missing while the tag and release are present — octopus-base#189 records a version left exactly like that. If it is missing, run .github/scripts/recover-release.sh from an octopus-base checkout (Release Pipeline, 'Recovering a published, unrecorded release'): it leaves the tag and the release that already exist alone and writes only the entry."
     ;;
   no)
     stop "Version published but not recorded" \
-      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), but ${tag} is not fully recorded here. This is octopus-base#189: an earlier run published and then died before tagging, so re-dispatching cannot work — Central refuses a version that exists. Recovery: create ${tag} on the commit that earlier run BUILT (its log reports it; the current head is usually NOT it), create the GitHub release, and register the release in octopus-release-log. Then release the next version."
+      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), but ${tag} is not fully recorded here. This is octopus-base#189: an earlier run published and then died before tagging, so re-dispatching cannot work — Central refuses a version that exists. Recovery: from an octopus-base checkout run .github/scripts/recover-release.sh ${GITHUB_REPOSITORY} ${BUILD_VERSION} <built-commit> ${present_csv} — it asks Central itself and then completes the tag, the release and the release-log entry, in that order. The built commit is the 'Built commit' annotation on the failed run's page; the current head is usually NOT it, and on a resumed run that annotation points at the earlier run instead. The first invocation only plans; add --apply once the plan reads right. Then release the next version."
     ;;
   *)
     stop "Version already on Maven Central" \
-      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), so this release would be rejected at the close step after a full build. Whether it is recorded here could not be determined — check whether tag ${tag}, its GitHub release and the octopus-release-log entry exist: all present means simply release the next version, any missing means octopus-base#189 and a recovery is needed."
+      "$BUILD_VERSION is already published on Maven Central (all ${#PRESENT[@]} coordinate(s)), so this release would be rejected at the close step after a full build. Whether it is recorded here could not be determined — check whether tag ${tag}, its GitHub release and the octopus-release-log entry exist: all present means simply release the next version, any missing means octopus-base#189, and .github/scripts/recover-release.sh in octopus-base is what finishes it."
     ;;
 esac
