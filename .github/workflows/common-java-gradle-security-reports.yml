@@ -38,20 +38,21 @@ on:
         type: boolean
         default: false
       codeql-languages:
-        description: CodeQL languages
+        description: >-
+          Comma-separated CodeQL languages. `actions` is in the default because every
+          consumer has .github/workflows and no default setup covers them (org policy
+          is advanced setup only). Repos with more languages append, e.g.
+          `java-kotlin,javascript-typescript,actions`.
         required: false
         type: string
-        default: java-kotlin
+        default: java-kotlin,actions
       codeql-category:
-        description: CodeQL SARIF category
+        description: >-
+          Single SARIF category for all languages in one analysis. Keep it stable —
+          a changed category shows up as a new configuration and re-creates open alerts.
         required: false
         type: string
         default: /language:java-kotlin
-      codeql-continue-on-error:
-        description: Continue workflow when CodeQL fails
-        required: false
-        type: boolean
-        default: false
       codeql-results-path:
         description: Path pattern to CodeQL SARIF artifacts
         required: false
@@ -154,7 +155,6 @@ jobs:
     name: security/codeql
     if: ${{ inputs.enable-codeql }}
     runs-on: ${{ inputs.runs-on }}
-    continue-on-error: ${{ inputs.codeql-continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - uses: actions/checkout@v4
