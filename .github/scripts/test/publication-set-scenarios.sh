@@ -56,6 +56,7 @@ pad() { local f="$1"; local mb="$2"; dd if=/dev/zero bs=1048576 count="$mb" >> "
 # content would push the file just over, which is how this fixture first read as "exceeds".
 sized() { truncate -s $(( $2 * 1048576 )) "$1"; }
 
+
 # run <name> <expected-rc> <must-match> [<must-not-match>]  — fixture built by $SETUP
 run() {
   local name="$1" erc="$2" want="$3" nowant="${4:-}"
@@ -135,7 +136,7 @@ SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' \
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
   run "accepts an allowlisted shadow artifact" 0 "automation-2\.0\.105-all\.jar +[0-9]" "unfit for Maven Central"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST='other, automation' \
-  run "tolerates spaces in the allowlist, as YAML writes it" 0 "Explicitly allowed" "unfit for Maven Central"
+  run "tolerates spaces in the allowlist, as YAML writes it" 0 "allowlist \(deprecated\): automation, other" "unfit for Maven Central"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.zip' \
   run "refuses a shadow distribution ZIP, not only a jar" 1 "shadow/uber"
 SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.tar.gz' \
@@ -148,8 +149,10 @@ SETUP='jar "$repo" "$G" lib 2.0.105 lib-2.0.105.jar BOOT-INFRASTRUCTURE/x.txt' \
   run "accepts a jar whose entry merely starts with those letters" 0 "lib-2\.0\.105\.jar +[0-9]" "BOOT-INF"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' \
   run "refuses an oversized artifact" 1 "exceeds 8 MB"
+# Raising the limit to admit it is no longer available — the ceiling is organisation-wide. The
+# scenario is kept, inverted, because it is the one someone reaches for first.
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' MAX_MB=16 \
-  run "accepts it under a raised limit" 0 "big-2\.0\.105\.jar +[0-9]" "exceeds"
+  run "cannot be admitted by raising the limit" 1 "exceeds the 8 MB ceiling"
 # The limit is a ceiling, not a floor: at exactly the limit the artifact passes. Without this
 # the comparison could be flipped to >= and nothing would notice.
 SETUP='jar "$repo" "$G" edge 2.0.105 edge-2.0.105.jar; sized "$repo/$G/edge/2.0.105/edge-2.0.105.jar" 4' MAX_MB=4 \
@@ -211,6 +214,36 @@ if grep -qE '^Env: .*DRY_RUN' "$SCRIPT"; then
 else
   echo "FAIL  DRY_RUN is named in the script's own env contract"; fail=$((fail+1))
 fi
+
+# --- the size ceiling takes no NEW exception ----------------------------------------------
+# The quota is shared organisation-wide, so a repository cannot except itself from the ceiling —
+# not even for a genuine dependency. A LOWER threshold is a stricter local choice and is fine.
+# The deprecated fat-jar list is the one bypass that still waives size; that is asserted below,
+# deliberately, because it is a property of the migration period and not of the policy.
+SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
+  run "a large library is refused, dependency or not" 1 "exceeds 8 MB"
+SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
+  run "and the refusal points at routing, not at an exception" 1 "github-packages-publications"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar' MAX_MB=4 \
+  run "a stricter local threshold is accepted" 0 "size limit 4 MB"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar; pad "$repo/$G/small/2.0.105/small-2.0.105.jar" 5' MAX_MB=4 \
+  run "and it actually bites" 1 "exceeds 4 MB"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar' MAX_MB=16 \
+  run "a value above the ceiling is rejected outright" 1 "exceeds the 8 MB ceiling"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar' MAX_MB=16 \
+  run "and says a lower value would have been fine" 1 "stricter local threshold"
+
+# The deprecated list is BROADER on this axis: it waives size for an artifact that trips no name
+# rule at all. That is the whole reason it cannot be precise, and it is what the guard's decision
+# diagram in the Developer Guide has to show — the diagram had this branch failing.
+SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
+  ALLOWLIST=biglib run "fat-jar list also waives size for a plain library" 0 "is deprecated" "unfit for Maven Central"
+
+# --- the deprecated list still works, and says so -----------------------------------------
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
+  run "warns that the fat-jar list is deprecated" 0 "is deprecated" "unfit for Maven Central"
+SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' ALLOWLIST=automation \
+  run "points at the replacement" 0 "github-packages-publications"
 
 echo
 echo "passed=$pass failed=$fail"
