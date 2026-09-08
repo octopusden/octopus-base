@@ -296,10 +296,18 @@ grep -q ':signFatJavaPublication' "$tmp/log"; check \
 awk '/- name: Publish to GitHub Packages/ { s = 1 }
      s && /^      - name:/ && !/Publish to GitHub Packages/ { exit }
      s { print }' "$WORKFLOW" > "$tmp/ghp-step"
-grep -q 'ORG_GRADLE_PROJECT_signingKey' "$tmp/ghp-step" &&
-  grep -q 'ORG_GRADLE_PROJECT_signingPassword' "$tmp/ghp-step"; check \
-  "passes the signing key to the GitHub Packages step" \
-  "the step does not set ORG_GRADLE_PROJECT_signingKey/Password, so a signed routed publication fails on 'no configured signatory'"
+# The step supplies the secrets under neutral names and sources export-signing-env.sh, which
+# exports the Gradle-facing pair only when both are non-blank — an unset secret must NOT define
+# them. So assert the mechanism, not the variable names.
+grep -q 'SIGNING_KEY' "$tmp/ghp-step" && grep -q 'SIGNING_PASSPHRASE' "$tmp/ghp-step"; check \
+  "passes the signing secrets to the GitHub Packages step" \
+  "the step supplies neither secret, so a signed routed publication fails on 'no configured signatory'"
+grep -q 'export-signing-env.sh' "$tmp/ghp-step"; check \
+  "sources the signing environment script" \
+  "without it the secrets never reach Gradle, whatever they are named"
+! grep -q 'ORG_GRADLE_PROJECT_signing' "$tmp/ghp-step"; check \
+  "does not map the secrets straight onto ORG_GRADLE_PROJECT_" \
+  "an unset GitHub secret still creates the env entry, empty, and consumers read it with containsKey"
 
 echo "-- the routing is validated even when nothing else runs Gradle -----------"
 # With dry-run and publish-to-nexus=false, the preflight, the guard and both publishes are all

@@ -13,9 +13,10 @@ quota; a distribution downloaded from a URL belongs in a release asset; a distri
 obtains should not be published at all.
 
 Two rules follow. A **recognized executable artifact must not be excepted back onto Central** — it
-has a destination now, so an exception would only re-create the problem. And **only a genuine
-dependency that is legitimately large may take a size exception**: size is a property of
-libraries, not a category of its own.
+has a destination now, so an exception would only re-create the problem. And **the size ceiling
+admits no exception at all**: the quota is shared organisation-wide, so an artifact over it is
+routed elsewhere whether or not it is a genuine dependency. A repository may set a stricter local
+threshold; it may not raise one.
 
 One deprecated bypass still admits an executable artifact, and warns; see Consequences.
 
@@ -27,16 +28,20 @@ because it was keyed by artifactId — which a module's thin and fat jars share 
 jar also stopped the guard checking the thin one. An exception meant to admit one artifact
 silently withdrew the check from another.
 
-Splitting it cannot be done by renaming: the exception that waives size must be **unable** to
-admit an executable artifact, or the policy is advisory.
+A size exception was considered and rejected. It is the more tempting of the two, because "a
+genuine dependency that happens to be large" sounds like a category the guard should accommodate —
+and an earlier revision of this ADR provided one. But a ceiling that any repository can except
+itself from is not a ceiling, and the quota it protects belongs to every repository at once. The
+destination rule already answers the case: something too large for Central is obtained the same
+way, from somewhere else. What survives is a **stricter** local threshold, which cannot harm
+anyone else.
 
-Enforcement is staged, and the survey behind that is what makes the split safe to make: every
-artifact then held on Central by the combined switch was a distribution a build tool fetches by
-coordinates. **None** was a large library — so the narrow size exception begins with no legitimate
-user, and nothing is being taken away from anyone by making it unable to admit an executable
-artifact. Removing the bypass outright would break every repository still on it, so it is
-deprecated and warns first. Which repositories those are, and the order they move in, is rollout
-state and is tracked outside this repository.
+Enforcement is staged, and the survey behind that is what makes this safe: every artifact then
+held on Central by the combined switch was a distribution a build tool fetches by coordinates.
+**None** was a large library — so refusing size exceptions takes nothing away from anyone who had
+one. Removing the bypass outright would still break every repository on it, so it is deprecated
+and warns first. Which repositories those are, and the order they move in, is rollout state and is
+tracked outside this repository.
 
 One shape the policy cannot recognise: a shadow jar published with its classifier stripped
 occupies the unclassified `jar` slot and carries no marker a rule can rely on. Only the size limit

@@ -17,7 +17,7 @@ being published contains, which differs from what this build produced when
 resume-deployment-id names another deployment.
 
 Usage: inspect-publication-set.py <local-repo-dir>
-Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, OVERSIZE_ALLOWLIST, MAX_ARTIFACT_MB, DRY_RUN
+Env: BUILD_VERSION, FAT_JAR_ALLOWLIST, MAX_ARTIFACT_MB, DRY_RUN
      DRY_RUN=true downgrades the version refusal from exit 1 to exit 0 (a warning); the
      fat-jar refusals are unaffected and still exit 1. A direct caller that omits it gets
      the strict behaviour, which is the safe default.
@@ -32,14 +32,23 @@ repo = Path(sys.argv[1])
 def _names(var):
     return {a.strip() for a in os.environ.get(var, "").split(",") if a.strip()}
 
-# Two axes, two lists. "Not a library" (a shadow or executable artifact) has a destination now,
-# so its bypass is deprecated. "A big library" is still legitimate and gets its own narrow list,
-# which cannot admit an executable artifact.
-# TD-006: remove the executable-artifact bypass once consumers have migrated
+# The size limit is a HARD organisation ceiling with no exception: a large artifact is routed
+# elsewhere, whether or not it is a genuine dependency. Only one bypass survives, for the staged
+# migration off the executable-artifact axis, and it still waives size as a side effect of being
+# keyed by artifactId — which is one more reason it is going.
+# TD-006: remove the fat-jar bypass once consumers have migrated
 # (see docs/Octopus Tech Debt Register.md).
 allowed = _names("FAT_JAR_ALLOWLIST")
-size_allowed = _names("OVERSIZE_ALLOWLIST")
-max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or 8)
+ORG_MAX_ARTIFACT_MB = 8
+max_mb = float(os.environ.get("MAX_ARTIFACT_MB") or ORG_MAX_ARTIFACT_MB)
+if max_mb > ORG_MAX_ARTIFACT_MB:
+    # A per-repository value may only be stricter. Raising it would let one repository opt out of
+    # a quota every repository shares.
+    print(f"::error title=max-central-artifact-mb above the organisation ceiling::"
+          f"{max_mb:g} MB exceeds the {ORG_MAX_ARTIFACT_MB} MB ceiling. A lower value is a "
+          f"stricter local threshold and is fine; a higher one is not available. Route the "
+          f"artifact elsewhere instead.", flush=True)
+    sys.exit(1)
 release_version = os.environ.get("BUILD_VERSION", "").strip()
 # A dry run publishes nothing, so there is no upload for this refusal to save and no reason for
 # it to fail. That is not symmetry for its own sake: consumer repositories run a dry release as
@@ -113,7 +122,7 @@ for path in sorted(p for ext in ("*.jar", "*.zip", "*.tar", "*.tar.gz") for p in
     blocked = []
     if executable and artifact_id not in allowed:
         blocked += executable
-    if oversize and artifact_id not in size_allowed and artifact_id not in allowed:
+    if oversize and artifact_id not in allowed:
         blocked += oversize
     if blocked:
         offenders.append((artifact_id, path.name, size_mb, "; ".join(blocked)))
@@ -145,14 +154,12 @@ for artifact_id, name, size_mb in published:
     print(f"  {artifact_id:<45} {name:<55} {size_mb:7.2f} MB")
 if allowed:
     print(f"fat-jar-publication-allowlist (deprecated): {', '.join(sorted(allowed))}")
-if size_allowed:
-    print(f"oversize-library-allowlist: {', '.join(sorted(size_allowed))}")
 
 for artifact_id, name, axis, reason in deprecated:
     print(f"::warning title=fat-jar-publication-allowlist is deprecated::{artifact_id}: {name} "
-          f"bypassed the {axis} check ({reason}). Route a distribution artifact with "
-          f"github-packages-publications; move a genuinely large library to "
-          f"oversize-library-allowlist. This bypass will be removed.", flush=True)
+          f"bypassed the {axis} check ({reason}). Route it with "
+          f"github-packages-publications. This bypass will be removed; there is no size "
+          f"exception to move to.", flush=True)
 
 
 if wrong_version:
@@ -180,8 +187,8 @@ if offenders:
         "artifact, pick by how it is obtained: resolved by Maven coordinates -> "
         "github-packages-publications; downloaded from a URL -> a GitHub release asset; "
         "obtained by nobody -> stop publishing it (declare no MavenPublication, or set "
-        "publish-to-nexus: false for a repository nobody consumes). Only a genuine dependency "
-        "that is legitimately large belongs in oversize-library-allowlist.",
+        "publish-to-nexus: false for a repository nobody consumes). Size has no exception: an "
+        "artifact over the ceiling is routed elsewhere even when it is a genuine dependency.",
         file=sys.stderr,
     )
     sys.exit(1)

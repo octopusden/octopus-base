@@ -65,7 +65,7 @@ run() {
   local out; out="$(mktemp)"
   # Omitted rather than emptied when NO_MAX is set: the script's fallback fires on unset OR
   # empty, but only omitting it proves the fallback rather than the empty-string branch.
-  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}" "OVERSIZE_ALLOWLIST=${OVERSIZE:-}" "DRY_RUN=${DRY:-false}")
+  local -a envs=(-u MAX_ARTIFACT_MB "BUILD_VERSION=${VERSION-2.0.105}" "FAT_JAR_ALLOWLIST=${ALLOWLIST:-}" "DRY_RUN=${DRY:-false}")
   [ "${NO_MAX:-}" = "1" ] || envs+=("MAX_ARTIFACT_MB=${MAX_MB:-8}")
   env "${envs[@]}" python3 "$SCRIPT" "$repo" >"$out" 2>&1
   local rc=$? ok=true
@@ -149,8 +149,10 @@ SETUP='jar "$repo" "$G" lib 2.0.105 lib-2.0.105.jar BOOT-INFRASTRUCTURE/x.txt' \
   run "accepts a jar whose entry merely starts with those letters" 0 "lib-2\.0\.105\.jar +[0-9]" "BOOT-INF"
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' \
   run "refuses an oversized artifact" 1 "exceeds 8 MB"
+# Raising the limit to admit it is no longer available — the ceiling is organisation-wide. The
+# scenario is kept, inverted, because it is the one someone reaches for first.
 SETUP='jar "$repo" "$G" big 2.0.105 big-2.0.105.jar; pad "$repo/$G/big/2.0.105/big-2.0.105.jar" 9' MAX_MB=16 \
-  run "accepts it under a raised limit" 0 "big-2\.0\.105\.jar +[0-9]" "exceeds"
+  run "cannot be admitted by raising the limit" 1 "exceeds the 8 MB ceiling"
 # The limit is a ceiling, not a floor: at exactly the limit the artifact passes. Without this
 # the comparison could be flipped to >= and nothing would notice.
 SETUP='jar "$repo" "$G" edge 2.0.105 edge-2.0.105.jar; sized "$repo/$G/edge/2.0.105/edge-2.0.105.jar" 4' MAX_MB=4 \
@@ -213,17 +215,21 @@ else
   echo "FAIL  DRY_RUN is named in the script's own env contract"; fail=$((fail+1))
 fi
 
-# --- the two exceptions are separate ------------------------------------------------------
-# The guard makes two unrelated complaints, and one list used to waive both. Keyed by
-# artifactId — which a module's thin and fat jars share — an exception admitting the fat jar
-# also stopped the thin one being checked. The size list must therefore be UNABLE to admit an
-# executable artifact, which is the assertion the split exists for.
+# --- the size ceiling admits no exception -------------------------------------------------
+# The quota is shared organisation-wide, so a repository cannot except itself from the ceiling —
+# not even for a genuine dependency. A LOWER threshold is a stricter local choice and is fine.
 SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
-  OVERSIZE=biglib run "size list admits a legitimately large library" 0 "biglib" "unfit for Maven Central"
-SETUP='jar "$repo" "$G" automation 2.0.105 automation-2.0.105-all.jar' OVERSIZE=automation \
-  run "size list does NOT admit an executable artifact" 1 "shadow/uber"
-SETUP='jar "$repo" "$G" app 2.0.105 app-2.0.105.jar BOOT-INF/classes/x.class' OVERSIZE=app \
-  run "size list does NOT admit a Spring Boot jar" 1 "BOOT-INF"
+  run "a large library is refused, dependency or not" 1 "exceeds 8 MB"
+SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
+  run "and the refusal points at routing, not at an exception" 1 "github-packages-publications"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar' MAX_MB=4 \
+  run "a stricter local threshold is accepted" 0 "size limit 4 MB"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar; pad "$repo/$G/small/2.0.105/small-2.0.105.jar" 5' MAX_MB=4 \
+  run "and it actually bites" 1 "exceeds 4 MB"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar' MAX_MB=16 \
+  run "a value above the ceiling is rejected outright" 1 "exceeds the 8 MB ceiling"
+SETUP='jar "$repo" "$G" small 2.0.105 small-2.0.105.jar' MAX_MB=16 \
+  run "and says a lower value would have been fine" 1 "stricter local threshold"
 
 # The deprecated list is BROADER on this axis: it waives size for an artifact that trips no name
 # rule at all. That is the whole reason it cannot be precise, and it is what the guard's decision

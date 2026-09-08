@@ -295,12 +295,18 @@ throwaway local repository first. It refuses two independent things.
 `unspecified`. That refusal also fires for a publication with no archive at all, a BOM or a plugin
 marker, because the set is enumerated from the generated POMs.
 
-**An artifact unfit for Central as a dependency**, on either of two complaints, each with its own
-exception: *not a library* — an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over
-`max-central-artifact-mb` (default 8). `oversize-library-allowlist` waives the size limit only, so
-it cannot admit an executable artifact. `fat-jar-publication-allowlist` waives both and is
-**deprecated**: it still works and warns, and the executable-artifact bypass will be removed
-(TD-006). See the Developer Guide for which remedy fits which complaint.
+**An artifact unfit for Central as a dependency**, on either of two complaints: *not a library* —
+an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over `max-central-artifact-mb`.
+
+Size has **no exception**. The ceiling is 8 MB organisation-wide, because the quota is shared: an
+artifact over it is routed elsewhere whether or not it is a genuine dependency. A repository may
+set a *lower* `max-central-artifact-mb` as a stricter local threshold; a higher value is rejected
+outright rather than honoured.
+
+One bypass survives, `fat-jar-publication-allowlist`, and only for the staged migration. It is
+**deprecated**: it still works, it warns, and because it is keyed by artifactId it waives size as
+a side effect — which is itself a reason it is going (TD-006). See the Developer Guide for which
+remedy fits which complaint.
 
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never

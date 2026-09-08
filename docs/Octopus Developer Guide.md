@@ -282,11 +282,9 @@ flowchart TD
     EXF -->|no| FAILF["release fails"]
     K1 -->|no| K2{"over max-central-artifact-mb?"}
     K2 -->|no| OK["allowed on Central"]
-    K2 -->|yes| EXO{"in<br/>oversize-library-allowlist?"}
-    EXO -->|yes| OK
-    EXO -->|no| EXF2{"in<br/>fat-jar-publication-allowlist?"}
+    K2 -->|yes| EXF2{"in<br/>fat-jar-publication-allowlist?"}
     EXF2 -->|yes| WARN
-    EXF2 -->|no| FAILO["release fails"]
+    EXF2 -->|no| FAILO["release fails:<br/>no size exception"]
 ```
 
 The diagram covers the two complaints about the artifact itself. There is a third, about the
@@ -331,22 +329,23 @@ and splits one module's release across two registries:
 > every read, so whoever fetches the artifact needs a credential — arranged outside this
 > repository, not here.
 
-**"This library is too big"** — over `max-central-artifact-mb`, but a genuine dependency that
-projects compile against. Two options:
+**"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
+dependency projects compile against. There is **no exception to reach for**. The ceiling is 8 MB
+organisation-wide and the quota is shared, so an artifact over it is routed elsewhere like any
+other distribution: `github-packages-publications`, and its consumers resolve it from there.
 
-| Situation | Fix |
-|---|---|
-| One artifact is legitimately large | Add its artifactId to `oversize-library-allowlist` |
-| The limit itself is wrong for this repository | Raise `max-central-artifact-mb` |
+A repository may set a **lower** `max-central-artifact-mb` as a stricter local threshold. A higher
+value is rejected rather than honoured — one repository cannot opt out of a shared quota.
 
-`oversize-library-allowlist` waives the size limit **only**. Every other check still applies, so
-it cannot be used to hold a shadow or executable artifact on Central.
+> If an artifact is genuinely a dependency *and* genuinely over the ceiling, that is worth a
+> conversation about the artifact rather than an exception: a library that large usually has a
+> shaded dependency in it, or wants splitting.
 
-> **`fat-jar-publication-allowlist` is deprecated.** It waived both artifact complaints at once, and being
-> keyed by artifactId — which a module's thin and fat jars share — exempting the fat jar stopped
-> the guard checking the thin one too. It still works and emits a deprecation warning; the
-> executable-artifact bypass will be removed once consumers have migrated. Use routing for a
-> distribution artifact, `oversize-library-allowlist` for a large library.
+> **`fat-jar-publication-allowlist` is deprecated** and is the only bypass left. It waived both
+> artifact complaints at once, and being keyed by artifactId — which a module's thin and fat jars
+> share — exempting the fat jar stopped the guard checking the thin one too. It still works and
+> warns, and it will be removed once consumers have migrated. Routing is the answer for both
+> complaints; there is nothing else to move to.
 
 > A shadow jar published with its classifier **stripped** trips no name rule — it occupies the
 > unclassified `jar` slot and looks like a library. Only the size limit catches it, so such an
