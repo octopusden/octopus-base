@@ -22,8 +22,8 @@ One deprecated bypass still admits an executable artifact, and warns; see Conseq
 
 ## Consequences
 
-Those two exceptions had been one switch, which is why this is recorded rather than merely
-implemented. One allowlist waived "this is not a library" and "this library is big" together, and
+Both complaints had been waived by one switch, which is why this is recorded rather than merely
+implemented. That allowlist waived "this is not a library" and "this library is big" together, and
 because it was keyed by artifactId — which a module's thin and fat jars share — exempting the fat
 jar also stopped the guard checking the thin one. An exception meant to admit one artifact
 silently withdrew the check from another.
@@ -45,8 +45,8 @@ tracked outside this repository.
 
 One shape the policy cannot recognise: a shadow jar published with its classifier stripped
 occupies the unclassified `jar` slot and carries no marker a rule can rely on. Only the size limit
-catches it, which is why a size exception must never be granted to one — the exception would
-remove the single check that sees it. Detecting the shape itself was considered and left out: the
+catches it — which is the sharpest argument for the ceiling having no exception at all: an
+exception would remove the single check that sees this shape. Detecting the shape itself was considered and left out: the
 available signals (an executable manifest entry, a count of bundled packages) are things ordinary
 libraries also have, so a rule built on them could refuse a valid release, and a warning that
 changes no outcome is only noise.
