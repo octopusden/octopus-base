@@ -229,6 +229,11 @@ a repository's **only** Maven target. That combination is also why the validatio
 the input alone: every other Gradle invocation is skipped, so a misspelled publication name would
 otherwise survive a green dry run.
 
+**Validation runs before the build**, and therefore before the docker push and both publishes. It
+executes no tasks and needs only the version, so it can afford to be first — and it has to be: it
+once ran after the ghcr push, where a typo in the input published an image and only then failed
+the release. The fixture asserts that order against the workflow file.
+
 The GitHub Packages step runs **after** the Central publish has fully succeeded — not because the
 two registries are equally permanent. They are not: Central is immutable, while a GitHub package
 version can be deleted, for a public package until it passes 5,000 downloads. The order buys the
@@ -576,6 +581,12 @@ pinned to an `octopus-base` tag — never `@main`. The calling job must **not** 
 the caller adds a second approval gate.
 
 **Pass `secrets: inherit`**, or registration cannot authenticate.
+
+**The GPG secrets are optional** when a repository publishes only to GitHub Packages. An unset
+GitHub secret still arrives as an empty `env:` entry, and consumers commonly decide
+`signing.isRequired` by asking whether the variable *exists* — so the release exports the
+Gradle-facing pair only when both secrets are non-blank, and publishes unsigned when neither is.
+Setting exactly one fails the step by name, because half a credential is never intentional.
 
 **`github-packages-publications`** (optional): Gradle publication names to send to GitHub Packages
 instead of Central. Requires a publishing repository named `GitHubPackages` in the build script.
