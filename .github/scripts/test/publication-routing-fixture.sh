@@ -317,6 +317,18 @@ grep -q 'publication-routing.init.gradle' "$tmp/validate-step"; check \
   "gates it on the input alone" \
   "the condition also depends on dry-run or publish-to-nexus, which are exactly the cases that skipped every other Gradle invocation"
 
+# Validation must precede every step with an external side effect. It ran after the ghcr push
+# once, so a typo in the input published an image and only then failed — which contradicts the
+# guarantee the docs make. Line order in the file is the only thing that decides this.
+validate_at=$(grep -n '^      - name: Validate publication routing' "$WORKFLOW" | cut -d: -f1)
+for step in 'Log in to Docker Registry' 'Push to docker registry' 'Publish to Sonatype Nexus' \
+            'Publish deployment via Central Portal' 'Publish to GitHub Packages'; do
+  at=$(grep -n "^      - name: $step" "$WORKFLOW" | cut -d: -f1)
+  [ -n "$at" ] && [ "$validate_at" -lt "$at" ]; check \
+    "validates the routing before '$step'" \
+    "validation is at line $validate_at, after '$step' at line ${at:-?}: a typo in the input reaches that side effect first"
+done
+
 echo
 echo "passed=$pass failed=$fail"
 rm -rf "$tmp"

@@ -569,36 +569,12 @@ jobs:
 
           HELPER_DIR="$helper" bash "$helper/central-preflight-step.sh"
 
-      # gradle build
-      - name: Gradle build
-        if: inputs.docker-image == ''
-        # shellcheck disable=SC2086 # SKIP_TESTS intentionally word-splits into `-x <task>` pairs
-        run: ./gradlew build $SKIP_TESTS -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
-
-      - name: Gradle build docker image
-        if: inputs.docker-image
-        env:
-          DOCKER_IMAGE: ${{ inputs.docker-image }}
-        # shellcheck disable=SC2086 # SKIP_TESTS intentionally word-splits into `-x <task>` pairs
-        run: ./gradlew build dockerBuildImage $SKIP_TESTS -Pdocker.image="$DOCKER_IMAGE" -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
-
-      # push to docker
-      - name: Log in to Docker Registry
-        if: inputs.docker-image && !inputs.dry-run
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push to docker registry
-        if: inputs.docker-image && !inputs.dry-run
-        env:
-          DOCKER_IMAGE: ${{ inputs.docker-image }}
-        run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
-
       # Derives the routing from the input, so no build script names publish tasks — a misspelled
       # name there disabled nothing silently. Written unconditionally; a blank input is a no-op.
+      #
+      # Placed before the build and before every external side effect: validation ran after the
+      # ghcr push once, so a typo published an image and only then failed the release. The
+      # fixture asserts this order against the file.
       # Covered by .github/scripts/test/publication-routing-fixture.sh.
       - name: Prepare publication routing init script
         run: |
@@ -696,6 +672,34 @@ jobs:
           ./gradlew help -q \
             --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
+
+      # gradle build
+      - name: Gradle build
+        if: inputs.docker-image == ''
+        # shellcheck disable=SC2086 # SKIP_TESTS intentionally word-splits into `-x <task>` pairs
+        run: ./gradlew build $SKIP_TESTS -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
+
+      - name: Gradle build docker image
+        if: inputs.docker-image
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        # shellcheck disable=SC2086 # SKIP_TESTS intentionally word-splits into `-x <task>` pairs
+        run: ./gradlew build dockerBuildImage $SKIP_TESTS -Pdocker.image="$DOCKER_IMAGE" -Poctopus.github.docker.registry=ghcr.io -Pdocker.registry=docker.io -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
+
+      # push to docker
+      - name: Log in to Docker Registry
+        if: inputs.docker-image && !inputs.dry-run
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to docker registry
+        if: inputs.docker-image && !inputs.dry-run
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: docker push "ghcr.io/octopusden/$DOCKER_IMAGE:$BUILD_VERSION"
 
       # Maven Central is for artifacts other projects consume as a DEPENDENCY. A Spring Boot
       # executable jar or a shadow/uber jar there is usually unintended — Gradle module metadata
