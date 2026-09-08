@@ -32,10 +32,11 @@ repo = Path(sys.argv[1])
 def _names(var):
     return {a.strip() for a in os.environ.get(var, "").split(",") if a.strip()}
 
-# The size limit is a HARD organisation ceiling with no exception: a large artifact is routed
-# elsewhere, whether or not it is a genuine dependency. Only one bypass survives, for the staged
-# migration off the executable-artifact axis, and it still waives size as a side effect of being
-# keyed by artifactId — which is one more reason it is going.
+# The size limit is an organisation ceiling, and the target policy is that it has no exception: a
+# large artifact is routed elsewhere, whether or not it is a genuine dependency. One TEMPORARY
+# bypass remains, for the staged migration off the executable-artifact axis, and it waives size
+# too — a plain oversized library included — because it is keyed by artifactId. That is a side
+# effect nobody wants and one more reason it is going.
 # TD-006: remove the fat-jar bypass once consumers have migrated
 # (see docs/Octopus Tech Debt Register.md).
 allowed = _names("FAT_JAR_ALLOWLIST")
@@ -187,8 +188,9 @@ if offenders:
         "artifact, pick by how it is obtained: resolved by Maven coordinates -> "
         "github-packages-publications; downloaded from a URL -> a GitHub release asset; "
         "obtained by nobody -> stop publishing it (declare no MavenPublication, or set "
-        "publish-to-nexus: false for a repository nobody consumes). Size has no exception: an "
-        "artifact over the ceiling is routed elsewhere even when it is a genuine dependency.",
+        "publish-to-nexus: false for a repository nobody consumes). Size is not a category of "
+        "its own: an artifact over the ceiling is routed elsewhere even when it is a genuine "
+        "dependency.",
         file=sys.stderr,
     )
     sys.exit(1)

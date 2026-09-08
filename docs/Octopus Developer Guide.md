@@ -284,7 +284,7 @@ flowchart TD
     K2 -->|no| OK["allowed on Central"]
     K2 -->|yes| EXF2{"in<br/>fat-jar-publication-allowlist?"}
     EXF2 -->|yes| WARN
-    EXF2 -->|no| FAILO["release fails:<br/>no size exception"]
+    EXF2 -->|no| FAILO["release fails — nothing else<br/>grants a size exemption"]
 ```
 
 The diagram covers the two complaints about the artifact itself. There is a third, about the
@@ -330,9 +330,16 @@ and splits one module's release across two registries:
 > repository, not here.
 
 **"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
-dependency projects compile against. There is **no exception to reach for**. The ceiling is 8 MB
-organisation-wide and the quota is shared, so an artifact over it is routed elsewhere like any
-other distribution: `github-packages-publications`, and its consumers resolve it from there.
+dependency projects compile against. **There is no exception to reach for** — no input exists for
+waiving the size limit, and the one legacy input that happens to waive it is deprecated and not
+available to new users (see below). The ceiling is 8 MB organisation-wide and the quota is shared,
+so an artifact over it is routed elsewhere like any other distribution:
+`github-packages-publications`, and its consumers resolve it from there.
+
+> With one caveat while the migration runs: the deprecated `fat-jar-publication-allowlist` waives
+> size too, because it is keyed by artifactId. If your artifact is already listed there it is
+> already getting past this check — with a warning. That is a legacy bypass to migrate off, not
+> an option to adopt.
 
 A repository may set a **lower** `max-central-artifact-mb` as a stricter local threshold. A higher
 value is rejected rather than honoured — one repository cannot opt out of a shared quota.
@@ -341,11 +348,11 @@ value is rejected rather than honoured — one repository cannot opt out of a sh
 > conversation about the artifact rather than an exception: a library that large usually has a
 > shaded dependency in it, or wants splitting.
 
-> **`fat-jar-publication-allowlist` is deprecated** and is the only bypass left. It waived both
-> artifact complaints at once, and being keyed by artifactId — which a module's thin and fat jars
-> share — exempting the fat jar stopped the guard checking the thin one too. It still works and
-> warns, and it will be removed once consumers have migrated. Routing is the answer for both
-> complaints; there is nothing else to move to.
+> **`fat-jar-publication-allowlist` is deprecated** and is the only bypass left — of either
+> complaint. It waives both at once, and being keyed by artifactId — which a module's thin and fat
+> jars share — exempting the fat jar stopped the guard checking the thin one too. It still works
+> and warns, and it will be removed once consumers have migrated (TD-006). Routing is the answer
+> for both complaints; there is nothing new to move to.
 
 > A shadow jar published with its classifier **stripped** trips no name rule — it occupies the
 > unclassified `jar` slot and looks like a library. Only the size limit catches it, so such an

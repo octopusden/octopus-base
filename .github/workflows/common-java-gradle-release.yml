@@ -56,12 +56,12 @@ on:
         type: boolean
         default: true
       fat-jar-publication-allowlist:
-        description: 'DEPRECATED — exempts artifactIds from the Maven Central publication guard on BOTH axes at once, which is why it cannot be precise: it is keyed by artifactId, and a module''s thin and fat jars share one, so exempting the fat jar stops the guard checking the thin one too. A recognized executable artifact now has a destination — use github-packages-publications. Size has no exception: an artifact over the ceiling is routed elsewhere even when it is a genuine dependency. Using this input still works and emits a deprecation warning; it will be removed.'
+        description: 'DEPRECATED — exempts artifactIds from the Maven Central publication guard on BOTH axes at once, which is why it cannot be precise: it is keyed by artifactId, and a module''s thin and fat jars share one, so exempting the fat jar stops the guard checking the thin one too. A recognized executable artifact now has a destination — use github-packages-publications. Note it still bypasses the SIZE check as well, a plain oversized library included, which is why it is the one exception to a ceiling that is otherwise exception-free. Using this input still works and emits a deprecation warning; it will be removed once consumers have migrated (TD-006).'
         required: false
         type: string
         default: ''
       max-central-artifact-mb:
-        description: 'Size above which a published artifact fails the Maven Central publication guard, in MB. Catches fat jars that carry no marker in their name — e.g. a shadow jar published with the classifier stripped. The organisation ceiling is 8: a lower value is a stricter local threshold and is accepted, a higher one is rejected. There is no size exception — a large artifact is routed elsewhere, whether or not it is a genuine dependency.'
+        description: 'Size above which a published artifact fails the Maven Central publication guard, in MB. Catches fat jars that carry no marker in their name — e.g. a shadow jar published with the classifier stripped. The organisation ceiling is 8: a lower value is a stricter local threshold and is accepted, a higher one is rejected. The target policy is a ceiling with no exception — a large artifact is routed elsewhere, whether or not it is a genuine dependency. One temporary bypass remains: the deprecated fat-jar-publication-allowlist also waives size, pending TD-006.'
         required: false
         type: number
         default: 8

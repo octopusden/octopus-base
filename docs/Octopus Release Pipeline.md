@@ -303,15 +303,18 @@ marker, because the set is enumerated from the generated POMs.
 **An artifact unfit for Central as a dependency**, on either of two complaints: *not a library* —
 an `-all` classifier or a `BOOT-INF/` entry — and *too big*, over `max-central-artifact-mb`.
 
-Size has **no exception**. The ceiling is 8 MB organisation-wide, because the quota is shared: an
-artifact over it is routed elsewhere whether or not it is a genuine dependency. A repository may
-set a *lower* `max-central-artifact-mb` as a stricter local threshold; a higher value is rejected
-outright rather than honoured.
+The target policy is a size ceiling with **no exception**. It is 8 MB organisation-wide, because
+the quota is shared: an artifact over it is routed elsewhere whether or not it is a genuine
+dependency. A repository may set a *lower* `max-central-artifact-mb` as a stricter local
+threshold; a higher value is rejected outright rather than honoured, and no input exists whose
+purpose is to grant a size exemption.
 
-One bypass survives, `fat-jar-publication-allowlist`, and only for the staged migration. It is
-**deprecated**: it still works, it warns, and because it is keyed by artifactId it waives size as
-a side effect — which is itself a reason it is going (TD-006). See the Developer Guide for which
-remedy fits which complaint.
+**One temporary bypass stands in the way of that being literally true.**
+`fat-jar-publication-allowlist` is keyed by artifactId, so it waives size as well as the name
+rules — for a plain oversized library too, not only for a fat jar. That is a side effect nobody
+wants and one more reason the input is going; it survives only for the staged migration, is
+**deprecated**, and warns on every use. TD-006 removes it, and the ceiling is exception-free at
+that point rather than today. See the Developer Guide for which remedy fits which complaint.
 
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never

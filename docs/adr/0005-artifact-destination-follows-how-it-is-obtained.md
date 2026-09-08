@@ -14,11 +14,13 @@ obtains should not be published at all.
 
 Two rules follow. A **recognized executable artifact must not be excepted back onto Central** — it
 has a destination now, so an exception would only re-create the problem. And **the size ceiling
-admits no exception at all**: the quota is shared organisation-wide, so an artifact over it is
+takes no exception either**: the quota is shared organisation-wide, so an artifact over it is
 routed elsewhere whether or not it is a genuine dependency. A repository may set a stricter local
 threshold; it may not raise one.
 
-One deprecated bypass still admits an executable artifact, and warns; see Consequences.
+Both rules describe the target state. One deprecated bypass still admits an executable artifact —
+and, being keyed by artifactId, waives the size ceiling with it. It warns on every use and is
+removed once consumers have migrated; see Consequences.
 
 ## Consequences
 
@@ -45,8 +47,10 @@ tracked outside this repository.
 
 One shape the policy cannot recognise: a shadow jar published with its classifier stripped
 occupies the unclassified `jar` slot and carries no marker a rule can rely on. Only the size limit
-catches it — which is the sharpest argument for the ceiling having no exception at all: an
-exception would remove the single check that sees this shape. Detecting the shape itself was considered and left out: the
+catches it — which is the sharpest argument against ever adding a size exception: it would remove
+the single check that sees this shape. It is also the sharpest argument for retiring the one
+bypass that waives size today, which is exactly what it does to the repository publishing that
+shape. Detecting the shape itself was considered and left out: the
 available signals (an executable manifest entry, a count of bundled packages) are things ordinary
 libraries also have, so a rule built on them could refuse a valid release, and a warning that
 changes no outcome is only noise.

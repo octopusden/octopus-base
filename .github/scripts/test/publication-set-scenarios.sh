@@ -215,9 +215,11 @@ else
   echo "FAIL  DRY_RUN is named in the script's own env contract"; fail=$((fail+1))
 fi
 
-# --- the size ceiling admits no exception -------------------------------------------------
+# --- the size ceiling takes no NEW exception ----------------------------------------------
 # The quota is shared organisation-wide, so a repository cannot except itself from the ceiling —
 # not even for a genuine dependency. A LOWER threshold is a stricter local choice and is fine.
+# The deprecated fat-jar list is the one bypass that still waives size; that is asserted below,
+# deliberately, because it is a property of the migration period and not of the policy.
 SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
   run "a large library is refused, dependency or not" 1 "exceeds 8 MB"
 SETUP='jar "$repo" "$G" biglib 2.0.105 biglib-2.0.105.jar; pad "$repo/$G/biglib/2.0.105/biglib-2.0.105.jar" 9' \
