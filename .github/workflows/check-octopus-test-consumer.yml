@@ -77,6 +77,12 @@ jobs:
         shell: bash
         run: bash .github/scripts/test/publication-routing-fixture.sh
 
+      # Executes the absent-secret case rather than grepping for variable names: an unset GitHub
+      # secret still creates its env entry, empty, and consumers read it with containsKey.
+      - name: Signing environment
+        shell: bash
+        run: bash .github/scripts/test/signing-env-scenarios.sh
+
   quality:
     name: quality
     runs-on: ubuntu-latest

@@ -791,14 +791,15 @@ jobs:
         if: ${{ !inputs.dry-run && inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         run: |
           set -o pipefail
+          . .github/scripts/export-signing-env.sh
           ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" --init-script "$RUNNER_TEMP/publication-routing.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
-          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+          SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
       # Explicit Central Portal publish: map the closed staging repository to its
       # Portal deployment, wait for VALIDATED, verify it is really OUR version and
@@ -827,11 +828,13 @@ jobs:
           GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
           GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # A routed publication that is signed puts its Sign task on this graph, and signing is
-          # required by default for a non-SNAPSHOT version. Same keys the Sonatype step uses.
-          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
+          # required by default for a non-SNAPSHOT version. Same secrets the Sonatype step uses —
+          # under neutral names, because the export must not happen when they are absent.
+          SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
+          . .github/scripts/export-signing-env.sh
           ./gradlew publishSelectedPublicationsToGitHubPackages \
             --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s
