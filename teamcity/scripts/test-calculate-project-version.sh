@@ -74,10 +74,6 @@ repo e2 v2.0.0; line $'2.0\n'
 exact "the line's first release counts: v2.0.0 present -> 2.0.1, not 2.0.0 again" \
   "$(ok 2.0.1 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.0")"
 
-repo e3 v2.0.08; line $'2.0\n'
-exact "a zero-padded patch tag is read as a number" \
-  "$(ok 2.0.9 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.08")"
-
 repo f v2.0.3; line $'2.0.3\n'
 exact "a full version in the file is refused: the file names a line, tags give the patch" \
   "$(problem_out ".release-line must hold major.minor on its first line, got |'2.0.3|'." releaseline_bad_format)"
@@ -138,21 +134,28 @@ exact "a non-release tag above the newest release neither hides nor triggers the
   "$(printf '%s\n%s' "Release line: 2.3 (from .release-line)" \
      "$(problem_out ".release-line declares 2.3 but v2.8.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")"
 
-# git sorts v2.7.0 above v2.08.0 and v2.0.7 above v2.0.08, so a first match on that order is not
-# the highest release. Both searches must take the numeric maximum instead.
-repo n13 v2.08.0 v2.7.0; line $'2.7\n'; default_branch=true
-exact "the guard takes the highest release, not git's first" \
-  "$(printf '%s\n%s' "Release line: 2.7 (from .release-line)" \
-     "$(problem_out ".release-line declares 2.7 but v2.08.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")"
+# A zero-padded tag is refused whichever component carries it, before the line is even read. Each
+# of these reached the calculation a different way while it was tolerated: v08.1.0 and v2.08.0 hid
+# a higher release from the backwards check, v2.0.08 took a patch number that was already used,
+# and adopting line 2.8 beside v2.08.4 reset that line's patch to 0.
+padded_message() { printf "Version tag |'%s|' has a zero-padded component; a release tag must be vX.Y.Z with no leading zeros. Delete it or re-create it unpadded." "$1"; }
+for padded in v08.1.0 v2.08.0 v2.0.08 v2.08.4; do
+  repo "pad-${padded}" "$padded"; line $'2.8\n'; default_branch=true
+  exact "a zero-padded tag is refused: ${padded}" \
+    "$(problem_out "$(padded_message "$padded")" version_padded_tag)"
+done
 
-repo n14 v2.0.7 v2.0.08; line $'2.0\n'; default_branch=true
-exact "the patch takes the highest on the line, not git's first" \
-  "$(ok 2.0.9 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.08")"
+# A tag that is not a version at all sorts above the padded one, so the scan must skip past it
+# rather than stop there.
+repo pad-behind-rc v2.08.0 v2.9.0-rc1; line $'2.8\n'; default_branch=true
+exact "a zero-padded tag is found behind a tag that is not a version" \
+  "$(problem_out "$(padded_message v2.08.0)" version_padded_tag)"
 
-repo n11 v2.08.0; line $'2.0\n'; default_branch=true
-exact "a zero-padded tag minor is compared as a number, not as octal" \
-  "$(printf '%s\n%s' "Release line: 2.0 (from .release-line)" \
-     "$(problem_out ".release-line declares 2.0 but v2.08.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")"
+# The check precedes both branches, so a repository that has not adopted the file is refused too
+# rather than releasing 2.08.5.
+repo pad-legacy v2.08.4; default_branch=true
+exact "a zero-padded tag is refused with no .release-line either" \
+  "$(problem_out "$(padded_message v2.08.4)" version_padded_tag)"
 
 # The guard is deliberately fail-open: anything but an explicit "true" leaves it off. An absent
 # binding then costs a missing check, not every build of every component. Pinned so the direction

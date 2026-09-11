@@ -192,8 +192,11 @@ release produced has no release-log entry, and the issues merged before it are a
 version that never existed
 ([ADR 0008](adr/0008-release-line-is-declared-in-the-repository.md)).
 
-Only the first line of the file is read, and it must be `major.minor`; anything else there stops
-the build with a problem. On the default branch a line **behind** the newest release is refused
+Only the first line of the file is read, and it must be `major.minor` with no leading zeros;
+anything else there stops the build with a problem. A **version tag** with a zero-padded component
+is refused for the same reason: `v2.08.4` is the same release as `v2.8.4` to every numeric
+comparison downstream and a different string here, so the build stops and names the tag rather
+than picking one of the two readings. On the default branch a line **behind** the newest release is refused
 too, before anything is built, so a typo such as `2.3` when `v2.8.0` exists cannot be tagged and
 published. Other branches are exempt: a maintenance branch declaring an older line is what the
 file is for. A line *ahead* of the newest release is never refused, because that is how a line
