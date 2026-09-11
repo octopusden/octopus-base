@@ -50,10 +50,16 @@ problem() {
 tags="$(git tag -l --sort=-v:refname 'v[0-9]*')" || problem "git tag failed while listing version tags; its error is in the log above." "version_git_failed"
 
 if [ -f "$file" ]; then
-  # `read` takes the first line and trims blanks and CR (the file may be committed CRLF). It
-  # returns 1 on a file without a trailing newline, with the line already assigned. Leading zeros
-  # are refused: 2.05 would be a line of its own here and the same version as 2.5 downstream.
-  IFS=$' \t\r' read -r line < "$file" || true
+  # `read` takes the first line and nothing else; it returns 1 on a file without a trailing
+  # newline, with the line already assigned. The CR of a CRLF file and any blanks around the
+  # value come off here rather than through IFS: whether `read` strips a TRAILING non-whitespace
+  # IFS delimiter differs between bash versions (5.2 keeps it, 5.3 removes it), which is a
+  # difference between a CI runner and a laptop, not one to depend on. Leading zeros are
+  # refused: 2.05 would be a line of its own here and the same version as 2.5 downstream.
+  IFS= read -r line < "$file" || true
+  line="${line%$'\r'}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
   [[ "$line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || problem "${file} must hold major.minor on its first line, got '${line}'." "releaseline_bad_format"
   echo "Release line: ${line} (from ${file})"
 
