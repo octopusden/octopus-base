@@ -173,6 +173,10 @@ repo h v2.0.9 v2.0.63
 exact "legacy: newest tag + 1 patch" \
   "$(ok 2.0.64 "Release line: 2.0 (no .release-line; from the newest tag v2.0.63)" "Newest tag on the line: v2.0.63")"
 
+repo h2 v2.0.9 v2.0.63 v1.9.99
+exact "legacy: the line comes from the first tag of the listing, not the last" \
+  "$(ok 2.0.64 "Release line: 2.0 (no .release-line; from the newest tag v2.0.63)" "Newest tag on the line: v2.0.63")"
+
 repo i
 exact "legacy: no tag at all starts at 2.0.0" \
   "$(ok 2.0.0 "Release line: 2.0 (no .release-line and no version tag)" "No v2.0.* tag yet - opening the line")"
@@ -232,6 +236,26 @@ repo k v2.0.3; line $'2.0\n'
 exact "counter must be a number" \
   "$(problem_out "build.counter is not a number: |'x|'." version_bad_counter)" x
 
+exact "counter must not be empty" \
+  "$(problem_out "build.counter is not a number: |'|'." version_bad_counter)" ""
+
+# The counter is echoed back inside its own rejection, so every escaping rule has a reachable
+# input. An unescaped one truncates or splits the reason an operator reads.
+for ch in '|' "'" '[' ']'; do
+  out="$(run "1${ch}")"
+  if grep -qF "build.counter is not a number: |'1|${ch}|'." <<<"$out"; then
+    echo "PASS [escapes '${ch}']"; pass=$((pass + 1))
+  else echo "FAIL [does not escape '${ch}']"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
+done
+# Built with ANSI-C quoting, not command substitution, which strips a trailing newline.
+cr=$'\r'; nl=$'\n'
+for pair in "${cr}|r" "${nl}|n"; do
+  out="$(run "1${pair%|*}x")"
+  if grep -qF "build.counter is not a number: |'1|${pair#*|}x|'." <<<"$out"; then
+    echo "PASS [escapes the ${pair#*|} control character]"; pass=$((pass + 1))
+  else echo "FAIL [does not escape ${pair#*|}]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
+done
+
 # git's own wording is not ours to assert; the identity and the exit code are.
 mkdir -p "$work/plain" && cd "$work/plain" && printf '2.0\n' > .release-line
 out="$(run)"
@@ -252,10 +276,12 @@ else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf 
 # the counter must be bound as an environment variable, or every build ends in version_bad_counter.
 runner="$(awk '/<runner name="Calculate PROJECT_VERSION"/,/<\/runner>/' "$xml")"
 if grep -q 'type="simpleRunner"' <<<"$runner" \
+   && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner" \
+   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner" \
    && grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%" />' <<<"$runner" \
    && grep -q '<param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%" />' <<<"$runner"; then
-  echo "PASS [runner is a Command Line step with both values bound as environment variables]"; pass=$((pass + 1))
-else echo "FAIL [runner type or an env binding is missing]"; fail=$((fail + 1)); fi
+  echo "PASS [runner is a Command Line step that runs this script, with both values bound and stderr at error severity]"; pass=$((pass + 1))
+else echo "FAIL [runner type, script mode, stderr mode or an env binding is missing]"; fail=$((fail + 1)); fi
 
 # Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
 # script.content, and an unresolved one becomes an implicit agent requirement that leaves the
