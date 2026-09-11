@@ -79,7 +79,12 @@ problem() {
 [[ "$counter" =~ ^[0-9]+$ ]] || problem "build.counter is not a number: '${counter}'." "version_bad_counter"
 
 # One listing serves all three uses below: the line's newest patch, the legacy line, and the
-# guard's newest release. Newest first, in git's version order.
+# guard's newest release.
+#
+# git's version ordering is NOT the numeric one. A zero-padded component sorts by its text, so
+# `--sort=-v:refname` puts v2.7.0 above v2.08.0 and v2.0.7 above v2.0.08. Taking the first match
+# from the sorted list is therefore not the same as taking the highest release, and both searches
+# below take an explicit numeric maximum instead. Do not replace them with a first match.
 #
 # git's stderr is deliberately NOT captured. `git tag -l` warns and still exits 0 - a ref with a
 # broken name is enough - and a captured warning becomes the first line of the list, which the
@@ -109,15 +114,17 @@ if [ -f "$file" ]; then
   # releases, so an rc tag left on the newest commit cannot make a current line look behind.
   if [ "${IS_DEFAULT_BRANCH-}" = true ]; then
     IFS=. read -r major minor <<<"$line"
+    newest_major=-1; newest_minor=-1; newest_tag=
     while IFS= read -r tag; do
       [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || continue
-      released_major=${BASH_REMATCH[1]}; released_minor=${BASH_REMATCH[2]}
-      if (( 10#$major < 10#$released_major ||
-            (10#$major == 10#$released_major && 10#$minor < 10#$released_minor) )); then
-        problem "${file} declares ${line} but ${tag} is already released; on the default branch the line cannot go backwards." "releaseline_behind"
+      tag_major=$((10#${BASH_REMATCH[1]})); tag_minor=$((10#${BASH_REMATCH[2]}))
+      if (( tag_major > newest_major || (tag_major == newest_major && tag_minor > newest_minor) )); then
+        newest_major=$tag_major; newest_minor=$tag_minor; newest_tag=$tag
       fi
-      break
     done <<<"$tags"
+    if (( 10#$major < newest_major || (10#$major == newest_major && 10#$minor < newest_minor) )); then
+      problem "${file} declares ${line} but ${newest_tag} is already released; on the default branch the line cannot go backwards." "releaseline_behind"
+    fi
   fi
 else
   tag="${tags%%$'\n'*}"
@@ -131,18 +138,20 @@ else
   fi
 fi
 
-# Newest tag on the line. The regex is what admits a tag: v2.0.6.1 and v2.0.64-rc1 are not on
-# line 2.0.
-patch=
+# Highest patch on the line. The regex is what admits a tag: v2.0.6.1 and v2.0.64-rc1 are not on
+# line 2.0. The tag itself is kept for the log, since its text and its number can differ.
+patch=-1; patch_tag=
 while IFS= read -r tag; do
-  [[ "$tag" =~ ^v${line//./\\.}\.([0-9]+)$ ]] && { patch=${BASH_REMATCH[1]}; break; }
+  [[ "$tag" =~ ^v${line//./\\.}\.([0-9]+)$ ]] || continue
+  tag_patch=$((10#${BASH_REMATCH[1]}))
+  if (( tag_patch > patch )); then patch=$tag_patch; patch_tag=$tag; fi
 done <<<"$tags"
-if [ -z "$patch" ]; then
+if (( patch < 0 )); then
   echo "No v${line}.* tag yet - opening the line"
   version="${line}.0"
 else
-  echo "Newest tag on the line: v${line}.${patch}"
-  version="${line}.$((10#$patch + 1))"
+  echo "Newest tag on the line: ${patch_tag}"
+  version="${line}.$((patch + 1))"
 fi
 
 echo "##teamcity[buildNumber '${version}-${counter}']"

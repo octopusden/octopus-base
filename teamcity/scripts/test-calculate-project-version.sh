@@ -138,6 +138,17 @@ exact "a non-release tag above the newest release neither hides nor triggers the
   "$(printf '%s\n%s' "Release line: 2.3 (from .release-line)" \
      "$(problem_out ".release-line declares 2.3 but v2.8.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")"
 
+# git sorts v2.7.0 above v2.08.0 and v2.0.7 above v2.0.08, so a first match on that order is not
+# the highest release. Both searches must take the numeric maximum instead.
+repo n13 v2.08.0 v2.7.0; line $'2.7\n'; default_branch=true
+exact "the guard takes the highest release, not git's first" \
+  "$(printf '%s\n%s' "Release line: 2.7 (from .release-line)" \
+     "$(problem_out ".release-line declares 2.7 but v2.08.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")"
+
+repo n14 v2.0.7 v2.0.08; line $'2.0\n'; default_branch=true
+exact "the patch takes the highest on the line, not git's first" \
+  "$(ok 2.0.9 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.08")"
+
 repo n11 v2.08.0; line $'2.0\n'; default_branch=true
 exact "a zero-padded tag minor is compared as a number, not as octal" \
   "$(printf '%s\n%s' "Release line: 2.0 (from .release-line)" \
