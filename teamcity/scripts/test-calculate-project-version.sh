@@ -197,6 +197,7 @@ exact "legacy: only tags starting with a digit are looked at" \
 repo m1
 stub="$(mktemp -d)"
 { echo '#!/bin/sh'
+  echo 'if [ "$1" = rev-parse ]; then pwd; exit 0; fi'
   echo 'if [ "$1" = tag ]; then echo "warning: ignoring ref with broken name refs/tags/v2.0.4 bad" >&2; echo v2.0.3; exit 0; fi'
   echo 'exit 1'
 } > "$stub/git"
@@ -210,6 +211,20 @@ if [ "$out" = "$(printf '%s\n%s\n%s\n%s' \
   "##teamcity[setParameter name='PROJECT_VERSION' value='2.0.4']")" ]; then
   echo "PASS [a git warning is not mistaken for the newest tag]"; pass=$((pass + 1))
 else echo "FAIL [a git warning reached the tag list]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
+
+# The file belongs to the repository, not to whatever directory the step happens to run in.
+# `git tag` finds the repository from anywhere, so without this the build would quietly fall back
+# to deriving the line from tags - here, the 2.5.1 that declaring 2.4 exists to avoid.
+repo w1 v2.4.1 v2.5.0; line $'2.4\n'; mkdir -p sub && cd sub
+exact "the file is read from the repository root, not the working directory" \
+  "$(ok 2.4.2 "Release line: 2.4 (from .release-line)" "Newest tag on the line: v2.4.1")"
+
+# An arithmetic result that wrapped must not be published as a version.
+repo w2 v2.0.9223372036854775807; line $'2.0\n'
+exact "a patch that overflows is refused, not published" \
+  "$(printf '%s\n%s\n%s' "Release line: 2.0 (from .release-line)" \
+     "Newest tag on the line: v2.0.9223372036854775807" \
+     "$(problem_out "Computed version |'2.0.-9223372036854775808|' is not X.Y.Z." version_bad_result)")"
 
 # --- inputs and environment -----------------------------------------------------------------
 

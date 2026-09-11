@@ -78,6 +78,13 @@ problem() {
 
 [[ "$counter" =~ ^[0-9]+$ ]] || problem "build.counter is not a number: '${counter}'." "version_bad_counter"
 
+# Everything below is relative to the repository root. `git tag` finds the repository from any
+# directory but `[ -f .release-line ]` does not, so a step given a working directory below the
+# root would silently miss the file and fall back to deriving the line from tags - which for a
+# maintenance branch is the exact version it declared the line to avoid.
+root="$(git rev-parse --show-toplevel)" || problem "git rev-parse failed; is this a git checkout? Its error is in the log above." "version_git_failed"
+cd "$root" || problem "Cannot enter the repository root '${root}'." "version_git_failed"
+
 # One listing serves all three uses below: the line's newest patch, the legacy line, and the
 # guard's newest release.
 #
@@ -108,11 +115,11 @@ if [ -f "$file" ]; then
   # `read` takes the first line and nothing else; it returns 1 on a file without a trailing
   # newline, with the line already assigned. The CR of a CRLF file and any blanks around the
   # value come off here rather than through IFS: whether `read` strips a TRAILING non-whitespace
-  # IFS delimiter differs between bash versions (5.2 keeps it, 5.3 removes it), which is a
-  # difference between a CI runner and a laptop, not one to depend on. Leading zeros are
-  # refused: 2.05 would be a line of its own here and the same version as 2.5 downstream.
+  # IFS delimiter differs between bash versions (5.2.21 on the runner keeps it, 5.3.15 on a
+  # laptop removes it), which is not a difference to depend on. A CR counts as [:space:], so the
+  # trailing trim takes it off. Leading zeros are refused: 2.05 would be a line of its own here
+  # and the same version as 2.5 downstream.
   IFS= read -r line < "$file" || true
-  line="${line%$'\r'}"
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
   [[ "$line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || problem "${file} must hold major.minor on its first line, got '${line}'." "releaseline_bad_format"
@@ -163,6 +170,10 @@ else
   echo "Newest tag on the line: v${line}.${patch}"
   version="${line}.$((patch + 1))"
 fi
+
+# Nothing above can produce a version that is not X.Y.Z - unless an arithmetic result wrapped,
+# which a patch past 2^63 does, turning into a negative number that would otherwise be published.
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || problem "Computed version '${version}' is not X.Y.Z." "version_bad_result"
 
 echo "##teamcity[buildNumber '${version}-${counter}']"
 echo "##teamcity[setParameter name='PROJECT_VERSION' value='${version}']"
