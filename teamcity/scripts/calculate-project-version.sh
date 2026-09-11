@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TeamCity step: "Calculate PROJECT_VERSION" (Command Line runner, replaces the Kotlin script).
 #
-# major.minor comes from the first line of `.release-line` in the checkout root; the patch is
+# major.minor comes from the first line of `.release-line` in the repository root; the patch is
 # the newest vmajor.minor.N tag on that line plus one, or 0 when the line has none. On the
 # default branch the line may not be behind the newest release, which catches the typo that
 # would otherwise be tagged and published before anything noticed. Without the file the line is
@@ -83,8 +83,10 @@ if [ -f "$file" ]; then
   # A line behind what is already released would be tagged, published and registered before the
   # post-processing version check stopped it, so it is refused here, where nothing exists yet.
   # Only on the default branch: a maintenance branch declaring an older line is the case the
-  # file exists for. Anything but an explicit "true" leaves the check off, so a binding that goes
-  # missing costs this check rather than every build. Tags that are not releases are skipped, so
+  # file exists for. Anything but an explicit "true" leaves the check off. That is not about an
+  # unresolved parameter reference - such a build never starts, so this script never runs - but
+  # about the server's own copy of the meta-runner, which is uploaded by hand and can lose the
+  # binding without anything here noticing. Tags that are not releases are skipped, so
   # an rc tag left on the newest commit cannot make a current line look behind; the first release
   # tag in the list is then the highest one, padding being refused above.
   if [ "${IS_DEFAULT_BRANCH-}" = true ]; then

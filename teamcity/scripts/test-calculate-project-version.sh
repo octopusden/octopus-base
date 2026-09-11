@@ -107,11 +107,6 @@ exact "the comparison is numeric: 2.9 is behind v2.10.0" \
   "$(printf '%s\n%s' "Release line: 2.9 (from .release-line)" \
      "$(problem_out ".release-line declares 2.9 but v2.10.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")"
 
-# The guard compares against releases, so a tag that is not one cannot make a line look behind.
-repo n6 v2.0.63 v2.0.64-rc1; line $'2.0\n'; default_branch=true
-exact "the guard ignores a tag that is not vX.Y.Z" \
-  "$(ok 2.0.64 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.63")"
-
 repo n7; line $'2.0\n'; default_branch=true
 exact "default branch: nothing released yet, nothing to be behind" \
   "$(ok 2.0.0 "Release line: 2.0 (from .release-line)" "No v2.0.* tag yet - opening the line")"
@@ -139,7 +134,7 @@ exact "a non-release tag above the newest release neither hides nor triggers the
 # a higher release from the backwards check, v2.0.08 took a patch number that was already used,
 # and adopting line 2.8 beside v2.08.4 reset that line's patch to 0.
 padded_message() { printf "Version tag |'%s|' has a zero-padded component; a release tag must be vX.Y.Z with no leading zeros. Delete it or re-create it unpadded." "$1"; }
-for padded in v08.1.0 v2.08.0 v2.0.08 v2.08.4; do
+for padded in v08.1.0 v2.08.4 v2.0.08; do
   repo "pad-${padded}" "$padded"; line $'2.8\n'; default_branch=true
   exact "a zero-padded tag is refused: ${padded}" \
     "$(problem_out "$(padded_message "$padded")" version_padded_tag)"

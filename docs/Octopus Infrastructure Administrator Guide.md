@@ -36,10 +36,10 @@ files reaches a server only when someone re-uploads it there. An octopus-base re
 a meta-runner says so in its notes. Keep the file name on upload: the step type is the file name as
 saved on the server.
 
-`OctopusCalculateBuildParameters` reads `.release-line` from the checkout root to decide the
-version (see [Developer Guide, Release lines](Octopus%20Developer%20Guide.md#release-lines)).
-A repository without the file keeps the previous rule, newest `v*` tag plus one patch, so the
-meta-runner can be re-uploaded before the file exists anywhere.
+`OctopusCalculateBuildParameters` reads `.release-line` from the repository root to decide the
+version (see [Developer Guide, Release lines](Octopus%20Developer%20Guide.md#release-lines) for
+the rule). A repository that does not have the file yet keeps working, so the upload need not wait
+for any repository to adopt it.
 
 It also binds `%teamcity.build.branch.is_default%`, to apply the backwards check on the default
 branch only, which is why every VCS root needs a branch specification (see
