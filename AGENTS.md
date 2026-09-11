@@ -65,3 +65,18 @@ discovered during an incident, when nobody is watching for a regression:
 4. **A reviewer's finding is a claim, not an instruction.** Check it against the code before
    acting: of the findings taken in #189, several were wrong in detail and two would have broken
    the Gradle publish if applied literally.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues in this repository, via `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default roles, label strings equal to their names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. Glossary in `docs/Octopus Release Pipeline.md` § Vocabulary until a `CONTEXT.md`
+exists; decisions in `docs/adr/`. See `docs/agents/domain.md`.
