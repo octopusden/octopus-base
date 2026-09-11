@@ -148,6 +148,9 @@ jobs:
       - name: Test TeamCity check-release-version-is-new
         shell: bash
         run: bash teamcity/scripts/test-check-release-version-is-new.sh
+      - name: Test TeamCity calculate-project-version
+        shell: bash
+        run: bash teamcity/scripts/test-calculate-project-version.sh
       # Exercises the Portal publish state machine against a stubbed Central API,
       # covering paths that cannot be triggered on demand against the live service
       # (FAILED validation, ambiguous publish responses, wrong deployment ids).

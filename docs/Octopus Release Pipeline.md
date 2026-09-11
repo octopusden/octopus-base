@@ -118,6 +118,12 @@ _Avoid_: logging, recording to the log.
 : `public` — the release computes its own next version from the latest tag and runs the tests.
 `hybrid` — the caller supplies both the commit and the version, and tests are skipped.
 
+**Release line**
+: The `major.minor` a component currently releases under, declared on the first line of
+`.release-line` in its repository. Tags on the line give the patch; the line itself changes only
+by a commit. See [Developer Guide, Release lines](Octopus%20Developer%20Guide.md#release-lines).
+_Avoid_: version prefix, base version, next version.
+
 ---
 
 ## Entry points
