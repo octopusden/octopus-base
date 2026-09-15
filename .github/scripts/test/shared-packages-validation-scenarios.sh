@@ -43,7 +43,7 @@ for line in lines[run + 1:]:
         break
     collected.append(line[indent:] if len(line) > indent else line.strip())
 script = "\n".join(collected) + "\n"
-for required in ("PACKAGES_REPOSITORY", "SHARED_PACKAGES_TOKEN", "DRY_RUN"):
+for required in ("PACKAGES_REPOSITORY", "SHARED_PACKAGES_TOKEN", "DRY_RUN", "gh api"):
     if required not in script:
         sys.exit("extracted body lacks %r; extraction is wrong" % required)
 # The `if:` is part of the contract, not decoration: the step must not run at all for a caller
@@ -78,15 +78,30 @@ echo "step declares: $(cat "$body.shell")"
 echo "running it as: ${RUNNER_SHELL[*]} <body>"
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]
-#   REPO   PACKAGES_REPOSITORY for the step
-#   TOKEN  SHARED_PACKAGES_TOKEN for the step
-#   DRY    DRY_RUN for the step
+#   REPO    PACKAGES_REPOSITORY for the step
+#   TOKEN   SHARED_PACKAGES_TOKEN for the step
+#   DRY     DRY_RUN for the step
+#   GH_RC   exit code of the stubbed `gh`, i.e. whether the probe is refused
+#   CHECK   extra shell run afterwards, in $dir, to assert what the probe was given
 run() {
   local name="$1" erc="$2" want="$3" nowant="${4:-}"
   local dir out rc ok=true
   dir="$(mktemp -d)"; out="$dir/out.txt"
 
-  ( cd "$dir" && \
+  # A purpose-built stub rather than the shared one beside it: that fixture answers the
+  # release-version lookups and nothing here. It records its argv AND the token it was handed,
+  # so "the probe ran" and "the probe ran against the right repository with the right secret"
+  # are separate assertions — a probe invoked with an empty GH_TOKEN would otherwise look fine.
+  mkdir -p "$dir/bin"
+  cat > "$dir/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf 'argv=%s token=%s\n' "$*" "${GH_TOKEN-}" >> "$PROBED"
+exit "${GH_RC:-0}"
+STUB
+  chmod +x "$dir/bin/gh"
+
+  ( cd "$dir" && PATH="$dir/bin:$PATH" \
+      PROBED="$dir/probed" GH_RC="${GH_RC:-0}" \
       PACKAGES_REPOSITORY="${REPO-}" SHARED_PACKAGES_TOKEN="${TOKEN-}" DRY_RUN="${DRY:-false}" \
       "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
   rc=$?
@@ -94,8 +109,12 @@ run() {
   [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }
   [ -n "$want" ] && ! grep -qE "$want" "$out" && { ok=false; echo "  missing: $want"; }
   [ -n "$nowant" ] && grep -qE "$nowant" "$out" && { ok=false; echo "  unexpected: $nowant"; }
+  if [ -n "${CHECK:-}" ]; then
+    ( cd "$dir" && eval "$CHECK" ) || { ok=false; echo "  probe check failed: $CHECK"; }
+  fi
   if $ok; then echo "PASS  $name"; pass=$((pass+1)); else
     echo "FAIL  $name"; fail=$((fail+1)); sed 's/^/    | /' "$out"
+    echo "    | probe: $(cat "$dir/probed" 2>/dev/null || echo '(never invoked)')"
   fi
   rm -rf "$dir"
 }
@@ -120,18 +139,33 @@ REPO= TOKEN=t DRY=false \
 
 echo "-- a dry run stops after the shape check ---------------------------------"
 # The rehearsal must not require a credential it will not use — a caller dry-running from a
-# context with no secrets would otherwise be unable to.
+# context with no secrets would otherwise be unable to. The probe must not run either: it is a
+# network call, and a dry run has nothing to authenticate.
 REPO=octopusden/octopus-maven-packages TOKEN= DRY=true \
-  run "passes a dry run with no token at all" 0 "Dry run: destination shape checked" "::error"
+  CHECK='[ ! -s probed ]' \
+  run "passes a dry run with no token, and never probes" 0 "Dry run: destination shape checked" "::error"
 
 echo "-- a real release refuses before anything is published --------------------"
 # The case the step exists for. A missing credential discovered at the upload is discovered
 # after Central, which cannot be undone, and arrives as a 401/404 that a Maven client reports
 # as "version does not exist".
 REPO=octopusden/octopus-maven-packages TOKEN= DRY=false \
-  run "refuses a real release when the token is unset" 1 "::error title=SHARED_PACKAGES_TOKEN is not set::"
+  CHECK='[ ! -s probed ]' \
+  run "refuses a real release when the token is unset, without probing" 1 "::error title=SHARED_PACKAGES_TOKEN is not set::"
+
+# Presence is not validity. An expired or revoked token passes the check above, so without this
+# it reaches the upload — the rotation failure, and the one that recurs.
+REPO=octopusden/octopus-maven-packages TOKEN=stale GH_RC=1 DRY=false \
+  run "refuses a real release when the probe is rejected" 1 "::error title=SHARED_PACKAGES_TOKEN cannot reach octopusden/octopus-maven-packages::"
+
 REPO=octopusden/octopus-maven-packages TOKEN=t DRY=false \
-  run "passes a real release with a token, naming the destination" 0 "Routed publications go to https://maven\.pkg\.github\.com/octopusden/octopus-maven-packages" "::error"
+  CHECK='grep -q "argv=api repos/octopusden/octopus-maven-packages .*token=t" probed' \
+  run "passes a real release, probing that repository with that token" 0 "Routed publications go to https://maven\.pkg\.github\.com/octopusden/octopus-maven-packages" "::error"
+
+# The probe is a network call on the release path, so its own failure must be distinguishable
+# from a missing secret — the two have different fixes and the messages must not blur.
+REPO=octopusden/octopus-maven-packages TOKEN=stale GH_RC=1 DRY=false \
+  run "names the probe failure, not the missing-secret one" 1 "cannot reach" "is not set"
 
 echo
 echo "passed=$pass failed=$fail"

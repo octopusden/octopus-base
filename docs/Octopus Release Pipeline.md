@@ -605,9 +605,21 @@ repositories migrate one at a time. Set, it overrides the URL of the repository 
 alone, which is what lets many projects share one registry.
 
 Requires **`SHARED_PACKAGES_TOKEN`** — `read:packages` + `write:packages` on the named repository —
-because `GITHUB_TOKEN` reaches only its own. Both the `OWNER/REPO` shape and that secret are
-checked **before any external side effect**, rather than at the upload, where the failure arrives
-as a 401/404 that a Maven client reports as "version does not exist".
+because `GITHUB_TOKEN` reaches only its own. The destination is checked **before any external side
+effect**, rather than at the upload, where the failure arrives as a 401/404 that a Maven client
+reports as "version does not exist":
+
+- the **shape**, on every run including a dry one — `OWNER/REPO` with a **lowercase owner**, since
+  the Maven registry refuses an uppercase one and the URL is assembled in a workflow expression,
+  which has no `lower()`;
+- the **credential**, only on a release that will use it — present, and able to read the named
+  repository. A dry run publishes nothing, so requiring a secret it will not use would only stop a
+  rehearsal from a context that holds none.
+
+> The credential probe narrows one class: a token broken outright — expired, revoked, or issued
+> for a different account. It is **not** proof the upload will succeed. Reading a repository and
+> publishing a package are separate rights, and a public repository reads with no token at all, so
+> a token missing `write:packages` still fails at the upload.
 
 > Versions already published do not move — a GitHub Packages version is immutable. A migrating
 > repository publishes *new* versions to the shared registry while older ones stay where they were,

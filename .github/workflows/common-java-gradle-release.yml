@@ -705,6 +705,15 @@ jobs:
             echo "::error title=SHARED_PACKAGES_TOKEN is not set::github-packages-repository names a shared registry, and the Actions GITHUB_TOKEN cannot write to a repository other than its own. Pass SHARED_PACKAGES_TOKEN (read:packages + write:packages on ${PACKAGES_REPOSITORY}) from the caller, or leave github-packages-repository blank to publish to this repository's own registry." >&2
             exit 1
           fi
+          # Set is not the same as working, and rotation is the failure that recurs: an expired
+          # or revoked token passes the check above and is refused at the upload, after Central.
+          # This narrows exactly one class — a credential broken outright. It does NOT prove the
+          # upload will succeed: read and publish are separate rights, and a public repository
+          # reads without any token at all, so a missing write:packages still reaches the upload.
+          if ! GH_TOKEN="$SHARED_PACKAGES_TOKEN" gh api "repos/${PACKAGES_REPOSITORY}" --silent 2>/dev/null; then
+            echo "::error title=SHARED_PACKAGES_TOKEN cannot reach ${PACKAGES_REPOSITORY}::The secret is set, but the token cannot read that repository — expired, revoked, or issued for a different account." >&2
+            exit 1
+          fi
           echo "Routed publications go to https://maven.pkg.github.com/${PACKAGES_REPOSITORY}"
 
       - name: Validate publication routing
