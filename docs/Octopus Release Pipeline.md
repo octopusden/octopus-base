@@ -593,8 +593,10 @@ Setting exactly one fails the step by name, because half a credential is never i
 
 **`github-packages-publications`** (optional): Gradle publication names to send to GitHub Packages
 instead of Central. Requires a publishing repository named `GitHubPackages` in the build script.
-Publishing needs no extra secret — it uses the run's own `GITHUB_TOKEN`. Reading the result does
-need one; arranging that is a rollout concern, not part of this contract.
+Publishing to **this repository's own** registry needs no extra secret — it uses the run's own
+`GITHUB_TOKEN`. A shared destination does need one; see `github-packages-repository` below.
+Reading the result needs a credential either way; arranging that is a rollout concern, not part of
+this contract.
 
 **`github-packages-repository`** (optional, `OWNER/REPO`): send those routed artifacts to a
 **shared** registry instead of this repository's own. Blank — the default — changes nothing, so
@@ -628,6 +630,15 @@ jobs:
 > invisible until it happens — tightening that default, or adopting the input in an organisation
 > whose default is read-only, breaks publication with an error that names permissions nowhere.
 
+**Which credential carries the Maven upload**, because the two are easy to conflate:
+
+| Destination | Upload authorised by | `packages: write` does |
+|---|---|---|
+| this repository's own registry (`github-packages-repository` unset) | the job's `GITHUB_TOKEN` | authorise the upload |
+| a shared registry (`github-packages-repository` set) | `SHARED_PACKAGES_TOKEN`, whose rights come from the PAT itself | nothing for this upload |
+
+Keep `packages: write` in the example regardless: the same job still needs it for the GHCR push.
+
 ---
 
 ## Behaviour that surprises people
@@ -650,8 +661,9 @@ jobs:
 - **`skip-extra-tasks` appends, it does not replace.** In hybrid flow the effective value is
   `-x test -x <extra>`, because hybrid already skips tests.
 - **The concurrency key must be extended whenever a caller varies a new input.** It currently
-  distinguishes run id, attempt, flow type, docker image, `publish-to-nexus` and
-  `github-packages-publications`. Two dry-run variants differing in anything else will cancel each
+  distinguishes run id, attempt, flow type, docker image, `publish-to-nexus`,
+  `github-packages-publications` and `github-packages-repository`. Two dry-run variants differing
+  in anything else will cancel each
   other — GitHub keeps only one pending run per group.
   **Maven:** there is no concurrency group at all, so two overlapping public-flow Maven releases
   can compute and publish the same version.

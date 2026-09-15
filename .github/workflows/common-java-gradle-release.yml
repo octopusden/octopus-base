@@ -685,11 +685,21 @@ jobs:
         env:
           PACKAGES_REPOSITORY: ${{ inputs.github-packages-repository }}
           SHARED_PACKAGES_TOKEN: ${{ secrets.SHARED_PACKAGES_TOKEN }}
+          DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$PACKAGES_REPOSITORY" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
-            echo "::error title=github-packages-repository is not OWNER/REPO::Got '${PACKAGES_REPOSITORY}'. Write it as two path segments, e.g. octopusden/octopus-maven-packages — the value is appended to https://maven.pkg.github.com/ and a malformed one only fails at the upload." >&2
+          # The owner class is lowercase on purpose: the Maven registry refuses an uppercase
+          # owner, and the URL is assembled in a workflow expression, which has no lower().
+          if ! printf '%s' "$PACKAGES_REPOSITORY" | grep -qE '^[a-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error title=github-packages-repository is not OWNER/REPO with a lowercase owner::Got '${PACKAGES_REPOSITORY}'. Write it as two path segments with the owner in lowercase, e.g. octopusden/octopus-maven-packages — GitHub's Maven registry does not support uppercase owners, and the value is appended to https://maven.pkg.github.com/ unchanged." >&2
             exit 1
+          fi
+          # A dry run publishes nothing, so a credential it will not use is not its business —
+          # and requiring one would stop a rehearsal from a context that holds no secrets. The
+          # real release runs this same step ahead of Sonatype, so nothing is caught later.
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: destination shape checked, credential checks skipped."
+            exit 0
           fi
           if [ -z "${SHARED_PACKAGES_TOKEN}" ]; then
             echo "::error title=SHARED_PACKAGES_TOKEN is not set::github-packages-repository names a shared registry, and the Actions GITHUB_TOKEN cannot write to a repository other than its own. Pass SHARED_PACKAGES_TOKEN (read:packages + write:packages on ${PACKAGES_REPOSITORY}) from the caller, or leave github-packages-repository blank to publish to this repository's own registry." >&2

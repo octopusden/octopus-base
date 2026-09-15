@@ -185,6 +185,14 @@ jobs:
       - name: Publication guard step scenarios
         shell: bash
         run: bash .github/scripts/test/publication-guard-step-scenarios.sh
+      # The shared-registry validation has two halves that must not collapse into each other:
+      # the destination's shape is checked on every run, a dry one included, while the
+      # credential is checked only on a release that will use it. Extracted and executed like
+      # the guard step above, because a destination accepted here is refused at the upload —
+      # after Central, which cannot be undone.
+      - name: Shared packages validation scenarios
+        shell: bash
+        run: bash .github/scripts/test/shared-packages-validation-scenarios.sh
       # The retry around `mvn` lives in the workflow's own `run:` body, so these scenarios
       # extract that body and execute it against a stubbed mvn. Both halves are easy to break
       # silently: a transfer blip must cost a second attempt, and a compile error must not.

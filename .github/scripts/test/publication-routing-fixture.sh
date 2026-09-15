@@ -117,6 +117,7 @@ check() {
     echo "FAIL  $1 ($2)"; fail=$((fail+1))
     echo "--- github repo:";   (cd "$fixture" && find out-github -type f 2>/dev/null | sort | sed 's/^/    /')
     echo "--- sonatype repo:"; (cd "$fixture" && find out-sonatype -type f 2>/dev/null | sort | sed 's/^/    /')
+    echo "--- hub repo:";      (cd "$fixture" && find out-hub -type f 2>/dev/null | sort | sed 's/^/    /')
     echo "--- log tail:"; tail -n 25 "$tmp/log" | sed 's/^/    /'
   fi
 }
