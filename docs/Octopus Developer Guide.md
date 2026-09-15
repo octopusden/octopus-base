@@ -179,6 +179,30 @@ jobs:
       java-version: '21'
 ```
 
+### Release lines
+
+A hybrid component's version is decided by the first TeamCity build of the chain, before anything
+is tested or released: `major.minor` comes from the file `.release-line` in the repository root,
+and the patch is the newest `vmajor.minor.*` tag plus one, or `0` when the line has no tag yet.
+The whole chain, the QA image and the GitHub release then carry that version.
+
+To open a new line, change the file in a pull request: `2.4` becomes `2.5`, and the next build is
+`2.5.0`. A major works the same way: write `3.0`. Do not create the tag by hand: a tag that no
+release produced has no release-log entry, and the issues merged before it are attributed to a
+version that never existed
+([ADR 0008](adr/0008-release-line-is-declared-in-the-repository.md)).
+
+Only the first line of the file is read, and it must be `major.minor` with no leading zeros;
+anything else there stops the build with a problem. A **version tag** with a zero-padded component
+is refused for the same reason: `v2.08.4` is the same release as `v2.8.4` to every numeric
+comparison downstream and a different string here, so the build stops and names the tag rather
+than picking one of the two readings. On the default branch a line **behind** the newest release is refused
+too, before anything is built, so a typo such as `2.3` when `v2.8.0` exists cannot be tagged and
+published. Other branches are exempt: a maintenance branch declaring an older line is what the
+file is for. A line *ahead* of the newest release is never refused, because that is how a line
+opens, so review the change like any other. A repository without the file keeps the previous rule,
+newest `v*` tag plus one patch, which cannot open a line.
+
 ### Which commit a hybrid release can be cut from
 
 A release tags the commit it builds, so it can only release a commit GitHub lets it tag.

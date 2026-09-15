@@ -123,8 +123,9 @@ embedded="$(awk '/<!\[CDATA\[/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\
 if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy is byte-identical]"; pass=$((pass + 1))
 else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf '%s\n' "$embedded") | sed 's/^/       /'; fail=$((fail + 1)); fi
 
-# Comments are stripped first: this file's own comments mention the pattern by name.
-if grep -q '%[A-Za-z_.][A-Za-z0-9_.]*%' <<<"$(sed 's/#.*//' <<<"$embedded")"; then
+# Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
+# script.content, and an unresolved one is an implicit agent requirement (no compatible agent).
+if grep -q '%[A-Za-z_.][A-Za-z0-9_.]*%' <<<"$embedded"; then
   echo "FAIL [embedded script interpolates a TeamCity parameter - injectable]"; fail=$((fail + 1))
 else echo "PASS [embedded script interpolates no TeamCity parameter]"; pass=$((pass + 1)); fi
 

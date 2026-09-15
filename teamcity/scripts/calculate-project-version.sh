@@ -1,42 +1,4 @@
-<meta-runner name="Calculate build parameters">
-  <description>Define build.number and set CURRENT_COMMIT and PROJECT_VERSION parameters. The version is major.minor from .release-line in the repository root plus the next patch on that line; without the file, newest v-tag plus one patch. On the default branch a line behind the newest release is refused.</description>
-  <settings>
-    <parameters>
-      <param name="CURRENT_COMMIT" value="%CURRENT_COMMIT%"/>
-      <param name="PROJECT_VERSION" value="%PROJECT_VERSION%"/>
-    </parameters>
-    <build-runners>
-      <runner name="Read CURRENT_COMMIT" type="kotlinScript">
-        <parameters>
-          <param name="kotlinPath" value="%teamcity.tool.kotlin.compiler.DEFAULT%" />
-          <param name="scriptContent"><![CDATA[import java.io.BufferedReader
-
-val command = "git rev-parse HEAD"
-println(command)
-val process = Runtime.getRuntime().exec(command)
-val stderr = process.errorStream.bufferedReader().use(BufferedReader::readText).trim()
-if (stderr.isNotEmpty()) throw Exception(stderr)
-val currentCommit = process.inputStream.bufferedReader().use(BufferedReader::readText).trim()
-if (currentCommit.isEmpty()) throw Exception("Unable to read current commit")
-println("Current commit: $currentCommit")
-println("##teamcity[setParameter name='CURRENT_COMMIT' value='$currentCommit']")]]></param>
-          <param name="scriptType" value="customScript" />
-          <param name="teamcity.step.mode" value="default" />
-        </parameters>
-      </runner>
-      <runner name="Calculate PROJECT_VERSION" type="simpleRunner">
-        <parameters>
-          <param name="use.custom.script" value="true" />
-          <param name="log.stderr.as.errors" value="true" />
-          <!-- Bound as environment variables on purpose. A %PARAM% inside script.content is
-               substituted into the script SOURCE before the agent runs it, so a value
-               containing $(...) or a quote would execute. is_default is what scopes the
-               backwards check to the default branch; it is defined only when the VCS root
-               has a branch specification. -->
-          <param name="env.BUILD_COUNTER" value="%build.counter%" />
-          <param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%" />
-          <param name="teamcity.step.mode" value="default" />
-          <param name="script.content"><![CDATA[#!/usr/bin/env bash
+#!/usr/bin/env bash
 # TeamCity step: "Calculate PROJECT_VERSION" (Command Line runner, replaces the Kotlin script).
 #
 # major.minor comes from the first line of `.release-line` in the repository root; the patch is
@@ -177,10 +139,3 @@ fi
 
 echo "##teamcity[buildNumber '${version}-${counter}']"
 echo "##teamcity[setParameter name='PROJECT_VERSION' value='${version}']"
-]]></param>
-        </parameters>
-      </runner>
-    </build-runners>
-    <requirements />
-  </settings>
-</meta-runner>

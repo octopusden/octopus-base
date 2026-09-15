@@ -31,6 +31,20 @@ Upload Meta-Runners:
 * ![OctopusCallGitHubAction](../teamcity.meta-runners/OctopusCallGitHubAction.xml)
 * ![OctopusCheckReleaseVersionIsNew](../teamcity.meta-runners/OctopusCheckReleaseVersionIsNew.xml)
 
+Meta-runners are uploaded by hand and TeamCity keeps its own copy, so a change to one of these
+files reaches a server only when someone re-uploads it there. An octopus-base release that changes
+a meta-runner says so in its notes. Keep the file name on upload: the step type is the file name as
+saved on the server.
+
+`OctopusCalculateBuildParameters` reads `.release-line` from the repository root to decide the
+version (see [Developer Guide, Release lines](Octopus%20Developer%20Guide.md#release-lines) for
+the rule). A repository that does not have the file yet keeps working, so the upload need not wait
+for any repository to adopt it.
+
+It also binds `%teamcity.build.branch.is_default%`, to apply the backwards check on the default
+branch only, which is why every VCS root needs a branch specification (see
+[VCS Root](#vcs-root)).
+
 ## Octopus Module project
 
 ### TeamCity project name
@@ -55,6 +69,13 @@ Examples:
 * Username: git
 * Uploaded key: gh-octopusden
 * Passphrase: \<call admin\>
+* Branch specification: `+:refs/heads/*`
+
+The branch specification is not optional. Without one TeamCity does not define
+`teamcity.build.branch.is_default`, and `OctopusCalculateBuildParameters` binds that parameter to
+decide whether the release-line backwards check applies. An undefined parameter reference is an
+implicit agent requirement, so such a configuration would queue with no compatible agent instead
+of failing.
 
 ### Parameters
 
