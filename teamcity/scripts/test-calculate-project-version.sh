@@ -31,14 +31,8 @@ run() { # [counter] -> complete output + rc, from the current directory
 # can say that nothing is set.
 run_with() { # <VAR=value>... -> complete output + rc
   local out rc
-  out="$(env -u BUILD_COUNTER -u IS_DEFAULT_BRANCH -u TEAMCITY_BUILD_PROPERTIES_FILE "$@" bash "$script" 2>&1)"; rc=$?
+  out="$(env -u BUILD_COUNTER -u IS_DEFAULT_BRANCH "$@" bash "$script" 2>&1)"; rc=$?
   printf '%s\nrc=%s' "$out" "$rc"
-}
-
-props() { # <name> <key=value>... -> path of a Java properties file holding those lines
-  local f="$work/$1"; shift
-  printf '%s\n' "$@" > "$f"
-  printf '%s' "$f"
 }
 
 exact() { # <desc> <expected complete output> [counter]
@@ -178,12 +172,14 @@ repo pad-legacy v2.08.4; default_branch=true
 exact "a zero-padded tag is refused with no .release-line either" \
   "$(problem_out "$(padded_message v2.08.4)" version_padded_tag)"
 
-# The guard is deliberately fail-open: anything but an explicit "true" leaves it off. An absent
-# binding then costs a missing check, not every build of every component. Pinned so the direction
-# cannot be flipped unnoticed.
+# This case used to pin the OPPOSITE direction - a missing verdict left the guard off, on the
+# reasoning that an absent binding should cost a check rather than every build. That was wrong:
+# the guard exists to stop a version from being tagged and published, so leaving it off silently
+# publishes the very version it was there to catch. A missing verdict now stops the build, and
+# the build that stops says which declaration is missing.
 repo n12 v2.8.0; line $'2.3\n'; default_branch=
-exact "no branch verdict: the guard stays off rather than firing" \
-  "$(ok 2.3.0 "Release line: 2.3 (from .release-line)" "No v2.3.* tag yet - opening the line")"
+exact "no branch verdict: the build stops rather than publishing unguarded" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)"
 
 # The file is repository content. A hostile first line must not be able to emit a service
 # message of its own: it appears only escaped, inside the problem text.
@@ -292,54 +288,37 @@ else echo "FAIL [outside a git checkout]"; sed 's/^/       /' <<<"$out"; fail=$(
 # --- where the two values come from ------------------------------------------------------------
 
 # TeamCity delivers a value as an environment variable only when it is a BUILD parameter named
-# env.X. A param with that name inside the <runner> block is not one: the runner ignores settings
-# it does not recognise, silently, which is how the first server to receive this meta-runner
-# stopped every hybrid build on an empty counter. The values are therefore also read from the
-# build properties file the agent writes for every step - no binding required, nothing
-# interpolated into this script's text.
+# env.X, declared by the meta-runner itself. The same name inside the <runner> block is an unknown
+# runner setting that never reaches the process, which is how the first server to receive this
+# meta-runner stopped every hybrid build on an empty counter. is_default is checked as strictly as
+# the counter: it decides whether the backwards guard applies, so an absent or misspelled value
+# must stop the build rather than quietly disable the guard.
 
-repo m v2.0.3; line $'2.0\n'
-exact_with "counter from the build properties file when the environment carries none" \
-  "$(ok_n 77 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props m.properties "build.counter=77" "teamcity.build.branch.is_default=false")"
+repo m1 v2.5.1; line $'2.0\n'
+exact_with "is_default absent: the build stops instead of skipping the guard" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832
 
-repo n v2.0.3; line $'2.0\n'
-exact_with "the environment wins over the file" \
-  "$(ok_n 5 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
-  BUILD_COUNTER=5 \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props n.properties "build.counter=77")"
+repo m2 v2.5.1; line $'2.0\n'
+exact_with "is_default empty: same" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH=""
 
-# build.counter is a configuration parameter, and those may live in the second file that the
-# build properties file names rather than in it.
-repo o v2.0.3; line $'2.0\n'
-cfg="$(props o.config.properties "build.counter=88" "teamcity.build.branch.is_default=false")"
-exact_with "configuration parameters are followed into the file the build properties name" \
-  "$(ok_n 88 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props o.properties "teamcity.configuration.properties.file=$cfg")"
+repo m3 v2.5.1; line $'2.0\n'
+exact_with "is_default True: not the same string, and not trusted to mean it" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'True|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH=True
 
-# The guard has to see is_default through the same path, or it silently stops applying.
-repo p v2.8.0; line $'2.3\n'
-cfg="$(props p.config.properties "build.counter=1832" "teamcity.build.branch.is_default=true")"
-exact_with "the default-branch guard applies when is_default arrives through the file" \
-  "$(printf '%s\n%s' "Release line: 2.3 (from .release-line)" \
-     "$(problem_out ".release-line declares 2.3 but v2.8.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props p.properties "teamcity.configuration.properties.file=$cfg")"
+repo m4 v2.5.1; line $'2.0\n'
+exact_with "is_default with a trailing blank: refused rather than trimmed" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'true |'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH="true "
 
-repo q v2.0.3; line $'2.0\n'
-exact_with "a file that does not exist is not an error by itself, an absent counter is" \
-  "$(problem_out "build.counter is not a number: |'|'." version_bad_counter)" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$work/no-such.properties"
-
-repo r v2.0.3; line $'2.0\n'
-exact_with "neither the environment nor a file: the build stops instead of guessing" \
-  "$(problem_out "build.counter is not a number: |'|'." version_bad_counter)"
-
-# A properties file is not a place to take orders from: its values are data like any other.
-repo s v2.0.3; line $'2.0\n'
-marker="$(mktemp -u)"
-out="$(run_with TEAMCITY_BUILD_PROPERTIES_FILE="$(props s.properties "build.counter=\$(: > ${marker})1")")"
-if [ -e "$marker" ]; then echo "FAIL [a properties value was executed]"; rm -f "$marker"; fail=$((fail + 1))
-else echo "PASS [properties values are data, not commands]"; pass=$((pass + 1)); fi
+# false is what a non-default branch actually gets, so it must stay ordinary.
+repo m5 v2.0.3; line $'2.0\n'
+exact_with "false is a value, not a missing binding" \
+  "$(ok 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH=false
 
 # --- the meta-runner copy --------------------------------------------------------------------
 

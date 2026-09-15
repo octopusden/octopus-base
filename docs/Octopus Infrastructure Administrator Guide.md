@@ -54,9 +54,11 @@ runs with nothing set. If a build stops with
 build.counter is not a number: ''
 ```
 
-the server's copy of the meta-runner predates that declaration — re-upload it. The scripts also
-read both values from the agent's build properties file, so a copy that predates the declaration
-keeps working; the message above means neither source had the value.
+the server's copy of the meta-runner predates that declaration — re-upload it, which is enough on
+its own: a meta-runner's parameters apply at build time, so configurations that already carry the
+step need no change. `OctopusCheckReleaseVersionIsNew` reports the same cause as
+`LAST_RELEASE_VERSION is not set`, and a missing branch verdict as
+`teamcity.build.branch.is_default is not true or false`.
 
 ## Octopus Module project
 

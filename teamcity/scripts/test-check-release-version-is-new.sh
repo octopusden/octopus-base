@@ -40,7 +40,7 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 # A run whose whole environment is given, so a case can say that a value is not set at all.
 run_with() { # <VAR=value>... -> complete output + rc
   local out rc
-  out="$(env -u BUILD_NUMBER -u LAST_RELEASE_VERSION -u TEAMCITY_BUILD_PROPERTIES_FILE "$@" bash "$script" 2>&1)"; rc=$?
+  out="$(env -u BUILD_NUMBER -u LAST_RELEASE_VERSION "$@" bash "$script" 2>&1)"; rc=$?
   printf '%s\nrc=%s' "$out" "$rc"
 }
 exact_with() { # <desc> <expected complete output> <VAR=value>...
@@ -52,11 +52,6 @@ exact_with() { # <desc> <expected complete output> <VAR=value>...
     diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/       /'
     fail=$((fail + 1))
   fi
-}
-props() { # <name> <key=value>... -> path of a Java properties file holding those lines
-  local f="$work/$1"; shift
-  printf '%s\n' "$@" > "$f"
-  printf '%s' "$f"
 }
 
 exact "equal: green, nothing to do" 2.0.16 2.0.16 "$(printf '%s\n%s\n%s\n%s\nrc=0' \
@@ -142,40 +137,21 @@ rm -rf "$stub"
 
 # --- where the two values come from ------------------------------------------------------------
 
-# An env. parameter declared inside the <runner> block is an unknown runner setting, which
-# TeamCity ignores without a word: the step then runs with nothing set. Here that is worse than a
-# red build - an empty LAST_RELEASE_VERSION is the legitimate initial state, so every release
-# would look like the first one and the check would pass while checking nothing. Hence the
-# fallback to the build properties file the agent writes for every step.
+# An env. parameter declared inside the <runner> block is an unknown runner setting that never
+# reaches the process. Here that would not even fail loudly: an empty LAST_RELEASE_VERSION is the
+# legitimate initial state below, so a missing binding would look like a first release and this
+# step would approve every version without comparing anything. TeamCity exports a declared
+# parameter even when its value is empty, so UNSET means the declaration itself is gone.
 
-exact_with "both values from the build properties file when the environment carries none" \
+exact_with "an unset LAST_RELEASE_VERSION is a missing binding, not the initial state" \
+  "$(problem_out "LAST_RELEASE_VERSION is not set. The meta-runner declares env.LAST_RELEASE_VERSION among its own parameters - re-upload this server|'s copy if it predates that." lastrelease_not_bound)" \
+  BUILD_NUMBER=2.0.17
+
+exact "an empty LAST_RELEASE_VERSION is still the initial state" 2.0.17 "" \
   "$(printf '%s\n%s\n%s\n%s\nrc=0' \
-     "buildNumber: 2.0.17" "lastRelease: 2.0.16" \
-     "2.0.17 is newer than 2.0.16 - processing" \
-     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props a.properties "build.number=2.0.17" "LAST_RELEASE_VERSION=2.0.16")"
-
-exact_with "a known last release is not mistaken for the initial state" \
-  "$(printf '%s\n%s\n%s' "buildNumber: 2.0.15" "lastRelease: 2.0.16" \
-     "$(problem_out "$(printf "$regressed" 2.0.15 2.0.16)" releaselog_regressed)")" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props b.properties "build.number=2.0.15" "LAST_RELEASE_VERSION=2.0.16")"
-
-exact_with "the environment wins over the file" \
-  "$(printf '%s\n%s\n%s\n%s\nrc=0' \
-     "buildNumber: 3.0.0" "lastRelease: 2.0.16" \
-     "3.0.0 is newer than 2.0.16 - processing" \
-     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")" \
-  BUILD_NUMBER=3.0.0 \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props c.properties "build.number=2.0.17" "LAST_RELEASE_VERSION=2.0.16")"
-
-# Configuration parameters may live in the second file that the build properties file names.
-exact_with "configuration parameters are followed into the file the build properties name" \
-  "$(printf '%s\n%s\n%s\n%s\nrc=0' \
-     "buildNumber: 2.0.17" "lastRelease: 2.0.16" \
-     "2.0.17 is newer than 2.0.16 - processing" \
-     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")" \
-  TEAMCITY_BUILD_PROPERTIES_FILE="$(props d.properties \
-     "teamcity.configuration.properties.file=$(props d.config.properties "build.number=2.0.17" "LAST_RELEASE_VERSION=2.0.16")")"
+     "buildNumber: 2.0.17" "lastRelease: " \
+     "No previously processed version is recorded - processing 2.0.17." \
+     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")"
 
 runner="$(awk '/<runner name="Check release version is new"/,/<\/runner>/' "$xml")"
 if grep -q 'name="env\.' <<<"$runner"; then

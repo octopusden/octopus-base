@@ -6,11 +6,11 @@
       <param name="PROJECT_VERSION" value="%PROJECT_VERSION%"/>
       <!-- Declared here, not in the runner below: an env. parameter is a BUILD parameter, and
            only those reach a step as environment variables. The same name inside a <runner> is
-           an unknown runner setting, which TeamCity ignores silently. Bound rather than
+           an unknown runner setting, which never reaches the process. Bound rather than
            substituted into script.content, because a value substituted into the script source
-           is executed rather than read. The script falls back to the agent's build properties
-           file, so a configuration whose copy of this meta-runner predates these two lines
-           still builds. -->
+           is executed rather than read. Re-uploading this file is enough for a configuration
+           that already carries the step: the parameters a meta-runner declares apply at build
+           time and are not copied into the step when it is added. -->
       <param name="env.BUILD_COUNTER" value="%build.counter%"/>
       <param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%"/>
     </parameters>
@@ -50,12 +50,13 @@ println("##teamcity[setParameter name='CURRENT_COMMIT' value='$currentCommit']")
 # is decided here, in the first build of the chain, and not later:
 # docs/adr/0008-release-line-is-declared-in-the-repository.md.
 #
-# BUILD_COUNTER and IS_DEFAULT_BRANCH are never interpolated into this script's text: a TeamCity
-# parameter reference substituted into the script body is executed, not read. They arrive as
-# environment variables the meta-runner declares, or from the agent's build properties file when
-# it does not - see the lookup below. The reference syntax itself is also kept out of this file:
-# TeamCity resolves it inside script.content wherever it appears, comments included, and an
-# unresolved one is an implicit agent requirement.
+# BUILD_COUNTER and IS_DEFAULT_BRANCH arrive as environment variables, declared by the meta-runner
+# among its OWN parameters - the only declaration TeamCity turns into an environment variable; the
+# same name inside a build step never reaches the process. They are never interpolated into this
+# script's text, because a parameter reference substituted into the script body is executed rather
+# than read. The reference syntax itself is also kept out of this file: TeamCity resolves it inside
+# script.content wherever it appears, comments included, and an unresolved one is an implicit
+# agent requirement.
 
 counter="${BUILD_COUNTER-}"
 default_branch="${IS_DEFAULT_BRANCH-}"
@@ -79,34 +80,16 @@ problem() {
   exit 1
 }
 
-# A value reaches a step as an environment variable only when it is a BUILD parameter named
-# env.X, which the meta-runner declares in its own parameters. The same name inside the runner
-# block is an unknown runner SETTING: TeamCity ignores it without a word, and the first server
-# this meta-runner reached stopped every build here on an empty counter. So both values are also
-# read from the properties file the agent writes for every step and names in
-# TEAMCITY_BUILD_PROPERTIES_FILE, which needs no declaration to exist. Configuration parameters
-# such as build.counter may live in the second file that one names instead. What the files hold
-# is data: read with `read`, never evaluated, and the format checks below still apply.
-# Two sources for one value is deliberate but temporary: TD-008.
-prop_files=()
-[ -f "${TEAMCITY_BUILD_PROPERTIES_FILE-}" ] && prop_files=("$TEAMCITY_BUILD_PROPERTIES_FILE")
-prop() { # <key> -> the last value the files give it, empty when absent
-  local key=$1 f entry value=
-  for f in ${prop_files+"${prop_files[@]}"}; do
-    while IFS= read -r entry || [ -n "$entry" ]; do
-      [ "${entry%%=*}" = "$key" ] || continue
-      value=${entry#*=}
-    done < "$f"
-  done
-  printf '%s' "$value"
-}
-config_props="$(prop teamcity.configuration.properties.file)"
-[ -n "$config_props" ] && [ -f "$config_props" ] && prop_files+=("$config_props")
-
-[ -n "$counter" ] || counter="$(prop build.counter)"
-[ -n "$default_branch" ] || default_branch="$(prop teamcity.build.branch.is_default)"
-
 [[ "$counter" =~ ^[0-9]+$ ]] || problem "build.counter is not a number: '${counter}'." "version_bad_counter"
+
+# is_default decides whether the backwards guard applies, so an absent or misspelled value must
+# stop the build rather than quietly disable the guard - the guard's whole purpose is to catch a
+# line that would otherwise be tagged and published. There is no legitimate third value: a
+# non-default branch is given "false", verified on a real branch build.
+case "$default_branch" in
+  true|false) ;;
+  *) problem "teamcity.build.branch.is_default is not true or false: '${default_branch}'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server's copy if it predates that." "version_bad_is_default" ;;
+esac
 
 # Everything below is relative to the repository root. `git tag` finds the repository from any
 # directory but `[ -f .release-line ]` does not, so a step given a working directory below the
