@@ -1,0 +1,222 @@
+name: Gradle Sonar
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: Java version used to run the build. The scanner provisions its own JDK 21 for the analysis step, so this is the project's version, not the scanner's.
+        required: true
+        type: string
+      java-distribution:
+        description: Java distribution passed to actions/setup-java
+        required: false
+        type: string
+        default: temurin
+      runs-on:
+        description: GitHub runner label
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Timeout in minutes for the analysis job
+        required: false
+        type: number
+        default: 20
+      sonar-host-url:
+        description: Sonar server URL
+        required: false
+        type: string
+        default: https://sonarcloud.io
+      sonar-organization:
+        description: Sonar organization key. Defaults to the GitHub owner, which is what makes the move between Sonar organizations a token swap rather than a commit in every consumer.
+        required: false
+        type: string
+        default: ''
+      sonar-project-key:
+        description: Sonar project key. Defaults to <owner>_<repo>.
+        required: false
+        type: string
+        default: ''
+      sonar-command:
+        description: Gradle command that runs the analysis. Must compile before analysing — see the step comment.
+        required: false
+        type: string
+        default: ./gradlew build -x test sonar --no-daemon --stacktrace
+      default-branch:
+        description: Branch that non-default branches are compared against for new code. Empty means the repository's own default branch.
+        required: false
+        type: string
+        default: ''
+      quality-gate-wait:
+        description: Fail the job when the quality gate is red
+        required: false
+        type: boolean
+        default: true
+      version-tag-regex:
+        description: Regex selecting release tags. Must match the release workflow's, or Sonar's "previous version" baseline and the released version disagree.
+        required: false
+        type: string
+        default: '^v([0-9]+)\..*'
+      fallback-version:
+        description: sonar.projectVersion for a repository that has no release tag yet
+        required: false
+        type: string
+        default: '0.0.0'
+      continue-on-error:
+        description: Report without failing the workflow. Overrides quality-gate-wait in effect, since a red gate then no longer blocks.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SONAR_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    name: sonar/analysis
+    runs-on: ${{ inputs.runs-on }}
+    continue-on-error: ${{ inputs.continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      # fetch-depth: 0 is load-bearing, not a precaution. Sonar derives the new-code period,
+      # issue authorship and the new-code gate conditions from SCM blame. A shallow clone does
+      # not fail the analysis — it silently produces wrong answers for all three, which under a
+      # blocking gate means merges blocked for a reason the message does not name.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The scanner downloads its own JRE and the analyzer plugins on every run; without this
+      # each analysis re-fetches tens of MB. setup-gradle already caches ~/.gradle.
+      - name: Cache Sonar analyzers and provisioned JRE
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # The same action and regex the release workflow uses to find the current version
+      # (common-java-gradle-release.yml), so both answer "what version is this repo on" the same
+      # way. Unlike the release workflow this does NOT bump the result: the release path asks
+      # what version comes next, Sonar asks what version the branch is on now.
+      #
+      # continue-on-error covers the never-released repository. The action's behaviour with no
+      # matching tag (hard failure vs empty output) is not relied on — either way the next step
+      # substitutes the fallback.
+      - name: Find latest release tag
+        id: latest-tag
+        continue-on-error: true
+        uses: oprypin/find-latest-tag@v1
+        with:
+          repository: ${{ github.repository }}
+          regex: ${{ inputs.version-tag-regex }}
+
+      - name: Resolve analysis parameters
+        id: params
+        shell: bash
+        env:
+          ORGANIZATION_INPUT: ${{ inputs.sonar-organization }}
+          PROJECT_KEY_INPUT: ${{ inputs.sonar-project-key }}
+          LATEST_TAG: ${{ steps.latest-tag.outputs.tag }}
+          FALLBACK_VERSION: ${{ inputs.fallback-version }}
+          DEFAULT_BRANCH_INPUT: ${{ inputs.default-branch }}
+          REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          repo_name="${GITHUB_REPOSITORY##*/}"
+          owner="${GITHUB_REPOSITORY%%/*}"
+
+          organization="${ORGANIZATION_INPUT:-$owner}"
+          project_key="${PROJECT_KEY_INPUT:-${owner}_${repo_name}}"
+
+          # A moving projectVersion is as wrong as a frozen one, in the opposite direction: with
+          # "previous version" as the new-code definition, a version that changes on every
+          # analysis makes an issue new code for exactly one run and old code on the next commit.
+          # So the tag is passed through untouched — no timestamp, no run number, no suffix.
+          version="${LATEST_TAG:-$FALLBACK_VERSION}"
+
+          # New code on a non-default branch is its diff against the default branch. Set from
+          # here rather than in the UI because a branch's new-code definition has to exist before
+          # its first analysis, and CI is what knows the branch name.
+          #
+          # Not set on pull requests: PR analysis always treats the whole PR diff as new code, and
+          # this property would be noise. Not set on the default branch either — that one wants
+          # "previous version", which has no scanner property and stays a UI setting.
+          default_branch="${DEFAULT_BRANCH_INPUT:-${REPO_DEFAULT_BRANCH:-main}}"
+          reference_branch=""
+          if [[ "$EVENT_NAME" != "pull_request" && "$REF_NAME" != "$default_branch" ]]; then
+            reference_branch="$default_branch"
+          fi
+
+          {
+            echo "organization=${organization}"
+            echo "project-key=${project_key}"
+            echo "version=${version}"
+            echo "reference-branch=${reference_branch}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Analysing ${project_key} in ${organization} as version ${version}"
+          if [[ -n "$reference_branch" ]]; then
+            echo "New code on ${REF_NAME} is its diff against ${reference_branch}"
+          fi
+
+      # Branch and pull-request parameters are deliberately absent: the scanner reads them from
+      # the GitHub Actions environment itself, and hand-setting them is a common way to have a
+      # pull request analysed as a branch.
+      - name: Run Sonar analysis
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+          SONAR_COMMAND: ${{ inputs.sonar-command }}
+          SONAR_ORGANIZATION: ${{ steps.params.outputs.organization }}
+          SONAR_PROJECT_KEY: ${{ steps.params.outputs.project-key }}
+          SONAR_PROJECT_VERSION: ${{ steps.params.outputs.version }}
+          SONAR_REFERENCE_BRANCH: ${{ steps.params.outputs.reference-branch }}
+          QUALITY_GATE_WAIT: ${{ inputs.quality-gate-wait }}
+        run: |
+          set -euo pipefail
+
+          # An empty value would be passed as -Dsonar.newCode.referenceBranch= and read as a
+          # branch named "", so the flag is added only when there is one.
+          reference_arg=()
+          if [[ -n "${SONAR_REFERENCE_BRANCH}" ]]; then
+            reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
+          fi
+
+          # `build` before `sonar` is required, not belt-and-braces: since scanner-gradle 3.0 the
+          # sonar task no longer adds compile dependencies of its own, and Java/Kotlin analysis
+          # needs javac bytecode. Running `sonar` alone still succeeds — it just silently skips
+          # every rule that needs type resolution, which reads as a clean project.
+          #
+          # `-x test` skips test EXECUTION while keeping test COMPILATION, which is what the
+          # analysis actually needs — Sonar reads test sources and wants their bytecode, but it
+          # does not need the tests to have run. Nothing here consumes test results: coverage is
+          # out of scope, and sonar.junit.reportPaths is not set. Two reasons it is off by
+          # default rather than merely wasteful: it is the bulk of this job's runtime, and a
+          # flaky functional test would otherwise fail the analysis and, once the gate blocks,
+          # a merge — for a reason that says nothing about code quality.
+          #
+          # This has to be REVERSED when coverage is wired up, because coverage needs the tests
+          # to run and Sonar needs the report from this same invocation.
+          # shellcheck disable=SC2086 # sonar-command is a command line, splitting is the point
+          ${SONAR_COMMAND} \
+            "${reference_arg[@]}" \
+            -Dsonar.host.url="${SONAR_HOST_URL}" \
+            -Dsonar.organization="${SONAR_ORGANIZATION}" \
+            -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
+            -Dsonar.projectVersion="${SONAR_PROJECT_VERSION}" \
+            -Dsonar.qualitygate.wait="${QUALITY_GATE_WAIT}"
