@@ -1,14 +1,41 @@
 #!/usr/bin/env bash
 # TeamCity step: "Check release version is new" (Command Line runner, replaces the Kotlin script).
 #
-# The two values arrive as ENVIRONMENT VARIABLES, never interpolated into this script's text.
-# The meta-runner binds them as env.BUILD_NUMBER / env.LAST_RELEASE_VERSION. Substituting a
-# TeamCity parameter reference into the script body instead would execute whatever the value contains,
-# BEFORE any line below runs - and BUILD_NUMBER comes from the first line of a release-log
-# file, so the value is repository content. The two existing meta-runners in this directory
-# pass values the same way, as kotlinArgs.
+# The two values are never interpolated into this script's text. Substituting a TeamCity
+# parameter reference into the script body would execute whatever the value contains, BEFORE any
+# line below runs - and BUILD_NUMBER comes from the first line of a release-log file, so the
+# value is repository content. They arrive as environment variables the meta-runner declares, or
+# from the agent's build properties file when it does not - see the lookup below.
 
 build="${BUILD_NUMBER-}"; last="${LAST_RELEASE_VERSION-}"
+
+# A value reaches a step as an environment variable only when it is a BUILD parameter named
+# env.X, which the meta-runner declares in its own parameters. The same name inside the runner
+# block is an unknown runner SETTING, ignored without a word - and here that would not even fail
+# loudly: an empty LAST_RELEASE_VERSION is the legitimate initial state below, so every release
+# would look like the first one and this step would pass while checking nothing. Both values are
+# therefore also read from the properties file the agent writes for every step and names in
+# TEAMCITY_BUILD_PROPERTIES_FILE. Configuration parameters may live in the second file that one
+# names instead. What the files hold is data: read with `read`, never evaluated.
+# Two sources for one value is deliberate but temporary: TD-008.
+prop_files=()
+[ -f "${TEAMCITY_BUILD_PROPERTIES_FILE-}" ] && prop_files=("$TEAMCITY_BUILD_PROPERTIES_FILE")
+prop() { # <key> -> the last value the files give it, empty when absent
+  local key=$1 f entry value=
+  for f in ${prop_files+"${prop_files[@]}"}; do
+    while IFS= read -r entry || [ -n "$entry" ]; do
+      [ "${entry%%=*}" = "$key" ] || continue
+      value=${entry#*=}
+    done < "$f"
+  done
+  printf '%s' "$value"
+}
+config_props="$(prop teamcity.configuration.properties.file)"
+[ -n "$config_props" ] && [ -f "$config_props" ] && prop_files+=("$config_props")
+
+[ -n "$build" ] || build="$(prop build.number)"
+[ -n "$last" ] || last="$(prop LAST_RELEASE_VERSION)"
+
 build="${build%$'\r'}"; last="${last%$'\r'}"   # the release log can be committed CRLF
 
 # TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped

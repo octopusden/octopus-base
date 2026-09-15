@@ -35,6 +35,30 @@ problem_out() { # <escaped-message> <identity>
   printf "##teamcity[message text='%s' status='ERROR']\n##teamcity[buildProblem description='%s' identity='%s']\nrc=1" "$1" "$1" "$2"
 }
 
+work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+
+# A run whose whole environment is given, so a case can say that a value is not set at all.
+run_with() { # <VAR=value>... -> complete output + rc
+  local out rc
+  out="$(env -u BUILD_NUMBER -u LAST_RELEASE_VERSION -u TEAMCITY_BUILD_PROPERTIES_FILE "$@" bash "$script" 2>&1)"; rc=$?
+  printf '%s\nrc=%s' "$out" "$rc"
+}
+exact_with() { # <desc> <expected complete output> <VAR=value>...
+  local desc=$1 want=$2; shift 2
+  local got; got="$(run_with "$@")"
+  if [ "$got" = "$want" ]; then echo "PASS [$desc]"; pass=$((pass + 1))
+  else
+    echo "FAIL [$desc]"
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/       /'
+    fail=$((fail + 1))
+  fi
+}
+props() { # <name> <key=value>... -> path of a Java properties file holding those lines
+  local f="$work/$1"; shift
+  printf '%s\n' "$@" > "$f"
+  printf '%s' "$f"
+}
+
 exact "equal: green, nothing to do" 2.0.16 2.0.16 "$(printf '%s\n%s\n%s\n%s\nrc=0' \
   "buildNumber: 2.0.16" "lastRelease: 2.0.16" \
   "##teamcity[buildStatus text='2.0.16 already processed - nothing to do']" \
@@ -115,6 +139,54 @@ out="$(PATH="$stub:$PATH" BUILD_NUMBER=2.0.9 LAST_RELEASE_VERSION=2.0.16 bash "$
 if grep -q "releaselog_regressed" <<<"$out"; then echo "PASS [verdict needs no external command]"; pass=$((pass + 1))
 else echo "FAIL [verdict changed when external commands were broken]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 rm -rf "$stub"
+
+# --- where the two values come from ------------------------------------------------------------
+
+# An env. parameter declared inside the <runner> block is an unknown runner setting, which
+# TeamCity ignores without a word: the step then runs with nothing set. Here that is worse than a
+# red build - an empty LAST_RELEASE_VERSION is the legitimate initial state, so every release
+# would look like the first one and the check would pass while checking nothing. Hence the
+# fallback to the build properties file the agent writes for every step.
+
+exact_with "both values from the build properties file when the environment carries none" \
+  "$(printf '%s\n%s\n%s\n%s\nrc=0' \
+     "buildNumber: 2.0.17" "lastRelease: 2.0.16" \
+     "2.0.17 is newer than 2.0.16 - processing" \
+     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props a.properties "build.number=2.0.17" "LAST_RELEASE_VERSION=2.0.16")"
+
+exact_with "a known last release is not mistaken for the initial state" \
+  "$(printf '%s\n%s\n%s' "buildNumber: 2.0.15" "lastRelease: 2.0.16" \
+     "$(problem_out "$(printf "$regressed" 2.0.15 2.0.16)" releaselog_regressed)")" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props b.properties "build.number=2.0.15" "LAST_RELEASE_VERSION=2.0.16")"
+
+exact_with "the environment wins over the file" \
+  "$(printf '%s\n%s\n%s\n%s\nrc=0' \
+     "buildNumber: 3.0.0" "lastRelease: 2.0.16" \
+     "3.0.0 is newer than 2.0.16 - processing" \
+     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")" \
+  BUILD_NUMBER=3.0.0 \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props c.properties "build.number=2.0.17" "LAST_RELEASE_VERSION=2.0.16")"
+
+# Configuration parameters may live in the second file that the build properties file names.
+exact_with "configuration parameters are followed into the file the build properties name" \
+  "$(printf '%s\n%s\n%s\n%s\nrc=0' \
+     "buildNumber: 2.0.17" "lastRelease: 2.0.16" \
+     "2.0.17 is newer than 2.0.16 - processing" \
+     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props d.properties \
+     "teamcity.configuration.properties.file=$(props d.config.properties "build.number=2.0.17" "LAST_RELEASE_VERSION=2.0.16")")"
+
+runner="$(awk '/<runner name="Check release version is new"/,/<\/runner>/' "$xml")"
+if grep -q 'name="env\.' <<<"$runner"; then
+  echo "FAIL [runner declares an env. parameter, which the runner ignores]"; fail=$((fail + 1))
+else echo "PASS [no env. parameter is buried in the runner block]"; pass=$((pass + 1)); fi
+
+settings="$(awk '/<settings>/,/<build-runners>/' "$xml")"
+if grep -q '<param name="env.BUILD_NUMBER" value="%BUILD_NUMBER%"/>' <<<"$settings" \
+   && grep -q '<param name="env.LAST_RELEASE_VERSION" value="%LAST_RELEASE_VERSION%"/>' <<<"$settings"; then
+  echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
+else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
 
 # TeamCity cannot source a script from a repository, so the meta-runner carries a copy. The
 # values are bound as environment variables, so nothing has to be rewritten for that copy -

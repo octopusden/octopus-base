@@ -45,6 +45,19 @@ It also binds `%teamcity.build.branch.is_default%`, to apply the backwards check
 branch only, which is why every VCS root needs a branch specification (see
 [VCS Root](#vcs-root)).
 
+Both values reach the step as **environment variables**, declared as `env.` parameters of the
+meta-runner itself. That is the only declaration that works: an `env.` parameter written inside a
+build step is an unknown runner setting, which TeamCity ignores without a word, and the step then
+runs with nothing set. If a build stops with
+
+```
+build.counter is not a number: ''
+```
+
+the server's copy of the meta-runner predates that declaration — re-upload it. The scripts also
+read both values from the agent's build properties file, so a copy that predates the declaration
+keeps working; the message above means neither source had the value.
+
 ## Octopus Module project
 
 ### TeamCity project name

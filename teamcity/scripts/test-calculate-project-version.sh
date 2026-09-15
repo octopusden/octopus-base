@@ -27,6 +27,20 @@ run() { # [counter] -> complete output + rc, from the current directory
   printf '%s\nrc=%s' "$out" "$rc"
 }
 
+# A run whose whole environment is given: the suite's own variables are removed first, so a case
+# can say that nothing is set.
+run_with() { # <VAR=value>... -> complete output + rc
+  local out rc
+  out="$(env -u BUILD_COUNTER -u IS_DEFAULT_BRANCH -u TEAMCITY_BUILD_PROPERTIES_FILE "$@" bash "$script" 2>&1)"; rc=$?
+  printf '%s\nrc=%s' "$out" "$rc"
+}
+
+props() { # <name> <key=value>... -> path of a Java properties file holding those lines
+  local f="$work/$1"; shift
+  printf '%s\n' "$@" > "$f"
+  printf '%s' "$f"
+}
+
 exact() { # <desc> <expected complete output> [counter]
   local got; got="$(run "${3-1832}")"
   if [ "$got" = "$2" ]; then echo "PASS [$1]"; pass=$((pass + 1))
@@ -37,11 +51,23 @@ exact() { # <desc> <expected complete output> [counter]
   fi
 }
 
-ok() { # <version> <lines...> -> the complete output of a successful run
-  local v=$1; shift
-  printf '%s\n' "$@"
-  printf "##teamcity[buildNumber '%s-1832']\n##teamcity[setParameter name='PROJECT_VERSION' value='%s']\nrc=0" "$v" "$v"
+exact_with() { # <desc> <expected complete output> <VAR=value>...
+  local desc=$1 want=$2; shift 2
+  local got; got="$(run_with "$@")"
+  if [ "$got" = "$want" ]; then echo "PASS [$desc]"; pass=$((pass + 1))
+  else
+    echo "FAIL [$desc]"
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/       /'
+    fail=$((fail + 1))
+  fi
 }
+
+ok_n() { # <counter> <version> <lines...> -> the complete output of a successful run
+  local n=$1 v=$2; shift 2
+  printf '%s\n' "$@"
+  printf "##teamcity[buildNumber '%s-%s']\n##teamcity[setParameter name='PROJECT_VERSION' value='%s']\nrc=0" "$v" "$n" "$v"
+}
+ok() { local v=$1; shift; ok_n 1832 "$v" "$@"; }   # <version> <lines...>, with the usual counter
 problem_out() { # <escaped-message> <identity>
   printf "##teamcity[message text='%s' status='ERROR']\n##teamcity[buildProblem description='%s' identity='%s']\nrc=1" "$1" "$1" "$2"
 }
@@ -263,6 +289,58 @@ if grep -q "identity='version_git_failed'" <<<"$out" && [ "${out##*rc=}" = 1 ]; 
   echo "PASS [outside a git checkout is a problem]"; pass=$((pass + 1))
 else echo "FAIL [outside a git checkout]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 
+# --- where the two values come from ------------------------------------------------------------
+
+# TeamCity delivers a value as an environment variable only when it is a BUILD parameter named
+# env.X. A param with that name inside the <runner> block is not one: the runner ignores settings
+# it does not recognise, silently, which is how the first server to receive this meta-runner
+# stopped every hybrid build on an empty counter. The values are therefore also read from the
+# build properties file the agent writes for every step - no binding required, nothing
+# interpolated into this script's text.
+
+repo m v2.0.3; line $'2.0\n'
+exact_with "counter from the build properties file when the environment carries none" \
+  "$(ok_n 77 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props m.properties "build.counter=77" "teamcity.build.branch.is_default=false")"
+
+repo n v2.0.3; line $'2.0\n'
+exact_with "the environment wins over the file" \
+  "$(ok_n 5 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
+  BUILD_COUNTER=5 \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props n.properties "build.counter=77")"
+
+# build.counter is a configuration parameter, and those may live in the second file that the
+# build properties file names rather than in it.
+repo o v2.0.3; line $'2.0\n'
+cfg="$(props o.config.properties "build.counter=88" "teamcity.build.branch.is_default=false")"
+exact_with "configuration parameters are followed into the file the build properties name" \
+  "$(ok_n 88 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props o.properties "teamcity.configuration.properties.file=$cfg")"
+
+# The guard has to see is_default through the same path, or it silently stops applying.
+repo p v2.8.0; line $'2.3\n'
+cfg="$(props p.config.properties "build.counter=1832" "teamcity.build.branch.is_default=true")"
+exact_with "the default-branch guard applies when is_default arrives through the file" \
+  "$(printf '%s\n%s' "Release line: 2.3 (from .release-line)" \
+     "$(problem_out ".release-line declares 2.3 but v2.8.0 is already released; on the default branch the line cannot go backwards." releaseline_behind)")" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$(props p.properties "teamcity.configuration.properties.file=$cfg")"
+
+repo q v2.0.3; line $'2.0\n'
+exact_with "a file that does not exist is not an error by itself, an absent counter is" \
+  "$(problem_out "build.counter is not a number: |'|'." version_bad_counter)" \
+  TEAMCITY_BUILD_PROPERTIES_FILE="$work/no-such.properties"
+
+repo r v2.0.3; line $'2.0\n'
+exact_with "neither the environment nor a file: the build stops instead of guessing" \
+  "$(problem_out "build.counter is not a number: |'|'." version_bad_counter)"
+
+# A properties file is not a place to take orders from: its values are data like any other.
+repo s v2.0.3; line $'2.0\n'
+marker="$(mktemp -u)"
+out="$(run_with TEAMCITY_BUILD_PROPERTIES_FILE="$(props s.properties "build.counter=\$(: > ${marker})1")")"
+if [ -e "$marker" ]; then echo "FAIL [a properties value was executed]"; rm -f "$marker"; fail=$((fail + 1))
+else echo "PASS [properties values are data, not commands]"; pass=$((pass + 1)); fi
+
 # --- the meta-runner copy --------------------------------------------------------------------
 
 # TeamCity cannot source a script from a repository, so the meta-runner carries a copy. The
@@ -272,16 +350,27 @@ embedded="$(awk '/<!\[CDATA\[#!\/usr\/bin\/env bash/{sub(/.*<!\[CDATA\[/,"");f=1
 if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy is byte-identical]"; pass=$((pass + 1))
 else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf '%s\n' "$embedded") | sed 's/^/       /'; fail=$((fail + 1)); fi
 
-# The bytes alone prove nothing about how they run: the step must be a Command Line runner and
-# the counter must be bound as an environment variable, or every build ends in version_bad_counter.
+# The bytes alone prove nothing about how they run: the step must be a Command Line runner that
+# runs this script and reports its stderr.
 runner="$(awk '/<runner name="Calculate PROJECT_VERSION"/,/<\/runner>/' "$xml")"
 if grep -q 'type="simpleRunner"' <<<"$runner" \
    && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner" \
-   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner" \
-   && grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%" />' <<<"$runner" \
-   && grep -q '<param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%" />' <<<"$runner"; then
-  echo "PASS [runner is a Command Line step that runs this script, with both values bound and stderr at error severity]"; pass=$((pass + 1))
-else echo "FAIL [runner type, script mode, stderr mode or an env binding is missing]"; fail=$((fail + 1)); fi
+   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner"; then
+  echo "PASS [runner is a Command Line step that runs this script with stderr at error severity]"; pass=$((pass + 1))
+else echo "FAIL [runner type, script mode or stderr mode is missing]"; fail=$((fail + 1)); fi
+
+# An env. parameter is a BUILD parameter. Declared inside the runner it is an unknown runner
+# setting, which TeamCity ignores without a word - the whole defect. Declared in the meta-runner's
+# own parameters it reaches the process.
+if grep -q 'name="env\.' <<<"$runner"; then
+  echo "FAIL [runner declares an env. parameter, which the runner ignores]"; fail=$((fail + 1))
+else echo "PASS [no env. parameter is buried in the runner block]"; pass=$((pass + 1)); fi
+
+settings="$(awk '/<settings>/,/<build-runners>/' "$xml")"
+if grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%"/>' <<<"$settings" \
+   && grep -q '<param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%"/>' <<<"$settings"; then
+  echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
+else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
 
 # Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
 # script.content, and an unresolved one becomes an implicit agent requirement that leaves the

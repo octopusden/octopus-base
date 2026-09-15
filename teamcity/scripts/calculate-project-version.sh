@@ -10,14 +10,15 @@
 # is decided here, in the first build of the chain, and not later:
 # docs/adr/0008-release-line-is-declared-in-the-repository.md.
 #
-# BUILD_COUNTER and IS_DEFAULT_BRANCH arrive as ENVIRONMENT VARIABLES, never interpolated into
-# this script's text. A TeamCity parameter reference substituted into the script body is
-# executed, not read - see OctopusCheckReleaseVersionIsNew.xml, which binds its values the same
-# way. The reference syntax itself is also kept out of this file: TeamCity resolves it inside
-# script.content wherever it appears, comments included, and an unresolved one is an implicit
-# agent requirement.
+# BUILD_COUNTER and IS_DEFAULT_BRANCH are never interpolated into this script's text: a TeamCity
+# parameter reference substituted into the script body is executed, not read. They arrive as
+# environment variables the meta-runner declares, or from the agent's build properties file when
+# it does not - see the lookup below. The reference syntax itself is also kept out of this file:
+# TeamCity resolves it inside script.content wherever it appears, comments included, and an
+# unresolved one is an implicit agent requirement.
 
 counter="${BUILD_COUNTER-}"
+default_branch="${IS_DEFAULT_BRANCH-}"
 file=.release-line
 
 # TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped
@@ -37,6 +38,33 @@ problem() {
   printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
   exit 1
 }
+
+# A value reaches a step as an environment variable only when it is a BUILD parameter named
+# env.X, which the meta-runner declares in its own parameters. The same name inside the runner
+# block is an unknown runner SETTING: TeamCity ignores it without a word, and the first server
+# this meta-runner reached stopped every build here on an empty counter. So both values are also
+# read from the properties file the agent writes for every step and names in
+# TEAMCITY_BUILD_PROPERTIES_FILE, which needs no declaration to exist. Configuration parameters
+# such as build.counter may live in the second file that one names instead. What the files hold
+# is data: read with `read`, never evaluated, and the format checks below still apply.
+# Two sources for one value is deliberate but temporary: TD-008.
+prop_files=()
+[ -f "${TEAMCITY_BUILD_PROPERTIES_FILE-}" ] && prop_files=("$TEAMCITY_BUILD_PROPERTIES_FILE")
+prop() { # <key> -> the last value the files give it, empty when absent
+  local key=$1 f entry value=
+  for f in ${prop_files+"${prop_files[@]}"}; do
+    while IFS= read -r entry || [ -n "$entry" ]; do
+      [ "${entry%%=*}" = "$key" ] || continue
+      value=${entry#*=}
+    done < "$f"
+  done
+  printf '%s' "$value"
+}
+config_props="$(prop teamcity.configuration.properties.file)"
+[ -n "$config_props" ] && [ -f "$config_props" ] && prop_files+=("$config_props")
+
+[ -n "$counter" ] || counter="$(prop build.counter)"
+[ -n "$default_branch" ] || default_branch="$(prop teamcity.build.branch.is_default)"
 
 [[ "$counter" =~ ^[0-9]+$ ]] || problem "build.counter is not a number: '${counter}'." "version_bad_counter"
 
@@ -96,7 +124,7 @@ if [ -f "$file" ]; then
   # binding without anything here noticing. Tags that are not releases are skipped, so
   # an rc tag left on the newest commit cannot make a current line look behind; the first release
   # tag in the list is then the highest one, padding being refused above.
-  if [ "${IS_DEFAULT_BRANCH-}" = true ]; then
+  if [ "$default_branch" = true ]; then
     IFS=. read -r major minor <<<"$line"
     while IFS= read -r tag; do
       [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || continue
