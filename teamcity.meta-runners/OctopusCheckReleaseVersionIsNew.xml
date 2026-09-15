@@ -103,7 +103,8 @@ else
   # Ordinary: a commit to the module file that added no newer version - a repair, or a rerun.
   printf "##teamcity[buildStatus text='%s']\n" "$(esc "${build} already processed - nothing to do")"
   echo "##teamcity[setParameter name='ALREADY_PROCESSED' value='true']"
-fi]]></param>
+fi
+]]></param>
         </parameters>
       </runner>
     </build-runners>

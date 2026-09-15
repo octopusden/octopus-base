@@ -189,7 +189,8 @@ fi
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || problem "Computed version '${version}' is not X.Y.Z." "version_bad_result"
 
 echo "##teamcity[buildNumber '${version}-${counter}']"
-echo "##teamcity[setParameter name='PROJECT_VERSION' value='${version}']"]]></param>
+echo "##teamcity[setParameter name='PROJECT_VERSION' value='${version}']"
+]]></param>
         </parameters>
       </runner>
     </build-runners>

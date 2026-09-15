@@ -168,8 +168,15 @@ else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((
 # values are bound as environment variables, so nothing has to be rewritten for that copy -
 # which is the point: a %PARAM% substituted into the script body would be executed, not read.
 embedded="$(awk '/<!\[CDATA\[/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\]\]>.*/,"");if(length)print;exit} print}' "$xml")"
-if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy is byte-identical]"; pass=$((pass + 1))
+if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy matches the script line for line]"; pass=$((pass + 1))
 else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf '%s\n' "$embedded") | sed 's/^/       /'; fail=$((fail + 1)); fi
+
+# The comparison above cannot see a missing final newline - command substitution strips it from
+# both sides - so the terminator's own line is pinned separately. Re-embedding that swallows it
+# is a silent edit to a file nobody diffs by eye.
+if grep -q '^\]\]></param>' "$xml"; then
+  echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
+else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
 
 # Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
 # script.content, and an unresolved one is an implicit agent requirement (no compatible agent).
