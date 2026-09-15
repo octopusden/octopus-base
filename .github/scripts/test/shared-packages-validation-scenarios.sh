@@ -81,7 +81,8 @@ echo "running it as: ${RUNNER_SHELL[*]} <body>"
 #   REPO    PACKAGES_REPOSITORY for the step
 #   TOKEN   SHARED_PACKAGES_TOKEN for the step
 #   DRY     DRY_RUN for the step
-#   GH_RC   exit code of the stubbed `gh`, i.e. whether the probe is refused
+#   GH_RC     exit code of the stubbed `gh`, i.e. whether the probe is refused
+#   GH_STDERR what the stubbed `gh` writes to stderr, which the step must surface
 #   CHECK   extra shell run afterwards, in $dir, to assert what the probe was given
 run() {
   local name="$1" erc="$2" want="$3" nowant="${4:-}"
@@ -96,12 +97,13 @@ run() {
   cat > "$dir/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 printf 'argv=%s token=%s\n' "$*" "${GH_TOKEN-}" >> "$PROBED"
+[ -n "${GH_STDERR-}" ] && printf '%s\n' "$GH_STDERR" >&2
 exit "${GH_RC:-0}"
 STUB
   chmod +x "$dir/bin/gh"
 
   ( cd "$dir" && PATH="$dir/bin:$PATH" \
-      PROBED="$dir/probed" GH_RC="${GH_RC:-0}" \
+      PROBED="$dir/probed" GH_RC="${GH_RC:-0}" GH_STDERR="${GH_STDERR-}" \
       PACKAGES_REPOSITORY="${REPO-}" SHARED_PACKAGES_TOKEN="${TOKEN-}" DRY_RUN="${DRY:-false}" \
       "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
   rc=$?
@@ -156,16 +158,26 @@ REPO=octopusden/octopus-maven-packages TOKEN= DRY=false \
 # Presence is not validity. An expired or revoked token passes the check above, so without this
 # it reaches the upload — the rotation failure, and the one that recurs.
 REPO=octopusden/octopus-maven-packages TOKEN=stale GH_RC=1 DRY=false \
-  run "refuses a real release when the probe is rejected" 1 "::error title=SHARED_PACKAGES_TOKEN cannot reach octopusden/octopus-maven-packages::"
+  run "refuses a real release when the probe is rejected" 1 "::error title=SHARED_PACKAGES_TOKEN validation failed::"
 
+# The endpoint is part of the contract, not an implementation detail: `repos/OWNER/REPO` needs
+# `repo` to read a PRIVATE repository, so probing there would fail a release whose token carries
+# exactly the two packages scopes this input documents. `user` authenticates a classic PAT
+# whatever its scopes are.
 REPO=octopusden/octopus-maven-packages TOKEN=t DRY=false \
-  CHECK='grep -q "argv=api repos/octopusden/octopus-maven-packages .*token=t" probed' \
-  run "passes a real release, probing that repository with that token" 0 "Routed publications go to https://maven\.pkg\.github\.com/octopusden/octopus-maven-packages" "::error"
+  CHECK='grep -q "argv=api user .*token=t" probed && ! grep -q "repos/" probed' \
+  run "probes the TOKEN, not the destination repository, with that secret" 0 "Routed publications go to https://maven\.pkg\.github\.com/octopusden/octopus-maven-packages" "::error"
 
 # The probe is a network call on the release path, so its own failure must be distinguishable
 # from a missing secret — the two have different fixes and the messages must not blur.
 REPO=octopusden/octopus-maven-packages TOKEN=stale GH_RC=1 DRY=false \
-  run "names the probe failure, not the missing-secret one" 1 "cannot reach" "is not set"
+  run "names the probe failure, not the missing-secret one" 1 "validation failed" "is not set"
+
+# A non-zero gh is not proof the token is stale: a rate limit or an incident looks identical. The
+# operator needs what GitHub actually said, so stderr must survive rather than be discarded.
+REPO=octopusden/octopus-maven-packages TOKEN=t GH_RC=1 GH_STDERR="HTTP 403: API rate limit exceeded" DRY=false \
+  CHECK='grep -q "may be expired, revoked or malformed" out.txt' \
+  run "surfaces gh's own output, and stays hedged about the cause" 1 "gh reported: HTTP 403: API rate limit exceeded"
 
 echo
 echo "passed=$pass failed=$fail"

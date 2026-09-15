@@ -707,11 +707,24 @@ jobs:
           fi
           # Set is not the same as working, and rotation is the failure that recurs: an expired
           # or revoked token passes the check above and is refused at the upload, after Central.
-          # This narrows exactly one class — a credential broken outright. It does NOT prove the
-          # upload will succeed: read and publish are separate rights, and a public repository
-          # reads without any token at all, so a missing write:packages still reaches the upload.
-          if ! GH_TOKEN="$SHARED_PACKAGES_TOKEN" gh api "repos/${PACKAGES_REPOSITORY}" --silent 2>/dev/null; then
-            echo "::error title=SHARED_PACKAGES_TOKEN cannot reach ${PACKAGES_REPOSITORY}::The secret is set, but the token cannot read that repository — expired, revoked, or issued for a different account." >&2
+          #
+          # `user` and not `repos/${PACKAGES_REPOSITORY}`: a classic PAT is authenticated there
+          # whatever its scopes are, while the repository API needs `repo` to read a PRIVATE one —
+          # so probing the repository would fail a release whose token carries exactly the two
+          # packages scopes this input documents. Asking for `repo` instead is the wrong direction
+          # for a credential shared across repositories: it is full read AND write on every
+          # private repository the account can see.
+          #
+          # stderr is kept, not discarded: a non-zero gh is not proof the token is stale — a rate
+          # limit or an incident looks identical — and what GitHub said is the only thing that
+          # tells them apart. The message stays neutral for the same reason; a release stopped by
+          # a rate limit must not send anyone off to rotate a working credential.
+          #
+          # It does NOT prove the upload will succeed. Authentication and permission to publish
+          # into this particular registry are different questions, and only the upload answers
+          # the second.
+          if ! probe_err="$(GH_TOKEN="$SHARED_PACKAGES_TOKEN" gh api user --silent 2>&1)"; then
+            echo "::error title=SHARED_PACKAGES_TOKEN validation failed::GitHub could not verify the token. It may be expired, revoked or malformed — or the call itself failed (network, rate limit, a GitHub incident). gh reported: ${probe_err}" >&2
             exit 1
           fi
           echo "Routed publications go to https://maven.pkg.github.com/${PACKAGES_REPOSITORY}"

@@ -612,14 +612,20 @@ reports as "version does not exist":
 - the **shape**, on every run including a dry one — `OWNER/REPO` with a **lowercase owner**, since
   the Maven registry refuses an uppercase one and the URL is assembled in a workflow expression,
   which has no `lower()`;
-- the **credential**, only on a release that will use it — present, and able to read the named
-  repository. A dry run publishes nothing, so requiring a secret it will not use would only stop a
-  rehearsal from a context that holds none.
+- the **credential**, only on a release that will use it — present, and still accepted by GitHub.
+  A dry run publishes nothing, so requiring a secret it will not use would only stop a rehearsal
+  from a context that holds none.
 
-> The credential probe narrows one class: a token broken outright — expired, revoked, or issued
-> for a different account. It is **not** proof the upload will succeed. Reading a repository and
-> publishing a package are separate rights, and a public repository reads with no token at all, so
-> a token missing `write:packages` still fails at the upload.
+> The credential probe narrows one class: a token GitHub no longer accepts at all — expired,
+> revoked or malformed. It authenticates the token itself rather than reading the destination
+> repository, so a token carrying only the two documented packages scopes passes it even when the
+> registry's repository is private.
+>
+> It is **not** proof the upload will succeed. Authentication and permission to publish into a
+> particular registry are separate questions, and only the upload answers the second. The probe's
+> message stays neutral about the cause, because a network failure, a rate limit or a GitHub
+> incident is indistinguishable from a stale token at this point — `gh`'s own output is reported
+> so the two can be told apart.
 
 > Versions already published do not move — a GitHub Packages version is immutable. A migrating
 > repository publishes *new* versions to the shared registry while older ones stay where they were,
