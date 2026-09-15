@@ -596,6 +596,21 @@ instead of Central. Requires a publishing repository named `GitHubPackages` in t
 Publishing needs no extra secret — it uses the run's own `GITHUB_TOKEN`. Reading the result does
 need one; arranging that is a rollout concern, not part of this contract.
 
+**`github-packages-repository`** (optional, `OWNER/REPO`): send those routed artifacts to a
+**shared** registry instead of this repository's own. Blank — the default — changes nothing, so
+repositories migrate one at a time. Set, it overrides the URL of the repository named
+`GitHubPackages`, leaving the build script untouched; GitHub matches the destination from that URL
+alone, which is what lets many projects share one registry.
+
+Requires **`SHARED_PACKAGES_TOKEN`** — `read:packages` + `write:packages` on the named repository —
+because `GITHUB_TOKEN` reaches only its own. Both the `OWNER/REPO` shape and that secret are
+checked **before any external side effect**, rather than at the upload, where the failure arrives
+as a 401/404 that a Maven client reports as "version does not exist".
+
+> Versions already published do not move — a GitHub Packages version is immutable. A migrating
+> repository publishes *new* versions to the shared registry while older ones stay where they were,
+> so whatever resolves them must reach both until nothing asks for the old ones.
+
 **Permissions**, when using that input. A reusable workflow can only *narrow* the permissions its
 caller grants; it can never widen them. State them on the calling job:
 

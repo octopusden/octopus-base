@@ -75,7 +75,15 @@ on:
         required: false
         type: string
         default: ''
+      github-packages-repository:
+        description: 'OWNER/REPO of a SHARED GitHub Packages registry for routed artifacts, instead of this repository''s own. Blank — the default — changes nothing, so the rollout is per repository. Set, it overrides the URL of the publishing repository named GitHubPackages, leaving the build script untouched: GitHub matches the destination from that URL alone, so many projects can share one registry. Requires SHARED_PACKAGES_TOKEN, because the Actions GITHUB_TOKEN reaches only its own repository. Versions already published do not move — a GitHub Packages version is immutable — so whatever resolves them must reach both registries until nothing asks for the old ones.'
+        required: false
+        type: string
+        default: ''
     secrets:
+      SHARED_PACKAGES_TOKEN:
+        description: 'Token with read:packages and write:packages on the repository named by github-packages-repository. Required only when that input is set, and ignored otherwise.'
+        required: false
       OSSRH_USERNAME:
         required: false
       OSSRH_TOKEN:
@@ -104,7 +112,7 @@ on:
 concurrency:
   group: >-
     release-${{ github.repository }}-${{ inputs.dry-run
-      && format('dry-{0}-{1}-{2}-{3}-{4}-{5}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image, inputs.publish-to-nexus, inputs.github-packages-publications)
+      && format('dry-{0}-{1}-{2}-{3}-{4}-{5}-{6}', github.run_id, github.run_attempt, inputs.flow-type, inputs.docker-image, inputs.publish-to-nexus, inputs.github-packages-publications, inputs.github-packages-repository)
       || 'publish' }}
   cancel-in-progress: false
 
@@ -579,6 +587,9 @@ jobs:
           cat > "$RUNNER_TEMP/publication-routing.init.gradle" <<'GRADLE'
           def raw = (System.getenv('OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS') ?: '')
                   .split(',').collect { it.trim() }.findAll { it }
+          // Overrides the URL the build script declared on its GitHubPackages repository, so a
+          // repository migrates to a shared registry without editing its build script.
+          def hubUrl = (System.getenv('OCTOPUS_GITHUB_PACKAGES_URL') ?: '').trim()
           gradle.projectsEvaluated { g ->
               // An init script also applies to buildSrc and to included builds, which publish
               // nothing — without this the checks below fail there for want of the publication.
@@ -630,6 +641,11 @@ jobs:
                               "'GitHubPackages', so '${s.selector}' cannot be published there. Declare " +
                               "that repository in the project, or drop the selector.")
                   }
+                  // Here rather than at the repository declaration, so a build that declares a
+                  // GitHubPackages repository it never routes to is left alone.
+                  if (hubUrl) {
+                      gh.each { it.repository.url = proj.uri(hubUrl) }
+                  }
                   routedIn[s.path] = routedIn[s.path] + s.name
                   selected.addAll(gh)
               }
@@ -661,10 +677,31 @@ jobs:
         env:
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
 
+      # Before any side effect: both failures otherwise surface at the upload, after Central has
+      # been published and cannot be undone, as a 401/404 that a Maven client reports as
+      # "version does not exist".
+      - name: Validate shared packages registry
+        if: ${{ inputs.github-packages-repository != '' }}
+        env:
+          PACKAGES_REPOSITORY: ${{ inputs.github-packages-repository }}
+          SHARED_PACKAGES_TOKEN: ${{ secrets.SHARED_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$PACKAGES_REPOSITORY" | grep -qE '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error title=github-packages-repository is not OWNER/REPO::Got '${PACKAGES_REPOSITORY}'. Write it as two path segments, e.g. octopusden/octopus-maven-packages — the value is appended to https://maven.pkg.github.com/ and a malformed one only fails at the upload." >&2
+            exit 1
+          fi
+          if [ -z "${SHARED_PACKAGES_TOKEN}" ]; then
+            echo "::error title=SHARED_PACKAGES_TOKEN is not set::github-packages-repository names a shared registry, and the Actions GITHUB_TOKEN cannot write to a repository other than its own. Pass SHARED_PACKAGES_TOKEN (read:packages + write:packages on ${PACKAGES_REPOSITORY}) from the caller, or leave github-packages-repository blank to publish to this repository's own registry." >&2
+            exit 1
+          fi
+          echo "Routed publications go to https://maven.pkg.github.com/${PACKAGES_REPOSITORY}"
+
       - name: Validate publication routing
         if: ${{ inputs.github-packages-publications != '' }}
         env:
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+          OCTOPUS_GITHUB_PACKAGES_URL: ${{ inputs.github-packages-repository != '' && format('https://maven.pkg.github.com/{0}', inputs.github-packages-repository) || '' }}
         run: |
           set -euo pipefail
           ./gradlew help -q \
@@ -817,13 +854,18 @@ jobs:
       # After Central, which fails in far more ways: most failures then happen before anything is
       # written here, leaving nothing to clean up. A package version can be deleted; a Central one
       # cannot. Still runs when publish-to-nexus is false, so this can be the only Maven target.
-      # Credentials match the ghcr.io login — repository_owner is stable across triggers.
+      # Credentials match the ghcr.io login — repository_owner is stable across triggers, and the
+      # registry authenticates on the token alone. The token follows the destination, since
+      # GITHUB_TOKEN reaches only this repository; the validation step has already failed the
+      # release if a shared registry was named without its token, so the fallback below cannot
+      # quietly send one that would be refused.
       - name: Publish to GitHub Packages
         if: ${{ !inputs.dry-run && inputs.github-packages-publications != '' }}
         env:
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+          OCTOPUS_GITHUB_PACKAGES_URL: ${{ inputs.github-packages-repository != '' && format('https://maven.pkg.github.com/{0}', inputs.github-packages-repository) || '' }}
           GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
-          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PACKAGES_TOKEN: ${{ inputs.github-packages-repository != '' && secrets.SHARED_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
           # A routed publication that is signed puts its Sign task on this graph, and signing is
           # required by default for a non-SNAPSHOT version. Same secrets the Sonatype step uses —
           # under neutral names, because the export must not happen when they are absent.

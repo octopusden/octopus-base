@@ -95,11 +95,16 @@ allprojects {
 }
 G
 
+# The workflow supplies the override as a URL, so a case can point it at a file:// destination
+# and watch where the artifacts actually land.
+HUB_URL=""
+
 # route <publications> <task> [extra args] -> Gradle output in $tmp/log
 route() {
   local pubs="$1" task="$2"; shift 2
-  rm -rf "$fixture/out-github" "$fixture/out-sonatype"
+  rm -rf "$fixture/out-github" "$fixture/out-sonatype" "$fixture/out-hub"
   ( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS="$pubs" \
+      OCTOPUS_GITHUB_PACKAGES_URL="$HUB_URL" \
       ./gradlew --project-dir "$fixture" "$task" --init-script "$INIT" \
       -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false "$@" \
   ) > "$tmp/log" 2>&1
@@ -138,6 +143,28 @@ check "publishes to Sonatype with the fat publication disabled" "the Sonatype si
   "keeps the fat jar off Sonatype" "the fat jar reached the Sonatype repository — the one thing the routing exists to prevent"
 [ -f "$fixture/out-sonatype/org/fixture/routing-root/routing-root/9.9.9-fixture/routing-root-9.9.9-fixture.jar" ]; check \
   "still publishes the thin jar to Sonatype" "the ordinary publication stopped working"
+
+echo "-- a shared registry redirects the routed publication --------------------"
+# The assertion that matters is not that the artifact reached the override, but that it STOPPED
+# reaching the declared URL: written to both, a migrating repository publishes one version twice.
+HUB_URL="$fixture/out-hub"
+route ":fatJava, :sub:fatJava" publishSelectedPublicationsToGitHubPackages
+check "publishes with the destination overridden" "the override broke the publish outright"
+[ -f "$fixture/out-hub/org/fixture/routing-root/routing-root-fat/9.9.9-fixture/routing-root-fat-9.9.9-fixture-all.jar" ]; check \
+  "sends the routed artifact to the shared registry" "the fat jar did not reach the overridden destination"
+[ -f "$fixture/out-hub/org/fixture/sub/sub-fat/9.9.9-fixture/sub-fat-9.9.9-fixture-all.jar" ]; check \
+  "redirects SUBPROJECTS too" "a subproject kept publishing to the URL its build script declared"
+[ ! -d "$fixture/out-github" ] || ! find "$fixture/out-github" -type f | grep -q .; check \
+  "writes nothing to the URL the build script declared" \
+  "the artifact reached both destinations — a migrating repository would publish the same version twice"
+! find "$fixture/out-hub" -name 'routing-root-9.9.9-fixture.jar' 2>/dev/null | grep -q .; check \
+  "still routes only the selected publication" "an unselected publication followed the override to the shared registry"
+HUB_URL=""
+
+route ":fatJava, :sub:fatJava" publishSelectedPublicationsToGitHubPackages
+[ -f "$fixture/out-github/org/fixture/routing-root/routing-root-fat/9.9.9-fixture/routing-root-fat-9.9.9-fixture-all.jar" ]; check \
+  "falls back to the declared URL when no shared registry is named" \
+  "a blank override changed the destination, so every repository that has not migrated would break"
 
 echo "-- every mismatch in a selector is a named error --------------------------"
 route ":fatJvaTypo" publishSelectedPublicationsToGitHubPackages
