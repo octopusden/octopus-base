@@ -610,7 +610,7 @@ repositories migrate one at a time. Set, it overrides the URL of the repository 
 `GitHubPackages`, leaving the build script untouched; GitHub matches the destination from that URL
 alone, which is what lets many projects share one registry.
 
-Requires **`SHARED_PACKAGES_TOKEN`** — `read:packages` + `write:packages` on the named repository —
+Requires **`OCTOPUS_SHARED_PACKAGES_TOKEN`** — `read:packages` + `write:packages` on the named repository —
 because `GITHUB_TOKEN` reaches only its own. The destination is checked **before any external side
 effect**, rather than at the upload, where the failure arrives as a 401/404 that a Maven client
 reports as "version does not exist":
@@ -659,7 +659,7 @@ jobs:
 | Destination | Upload authorised by | `packages: write` does |
 |---|---|---|
 | this repository's own registry (`github-packages-repository` unset) | the job's `GITHUB_TOKEN` | authorise the upload |
-| a shared registry (`github-packages-repository` set) | `SHARED_PACKAGES_TOKEN`, whose rights come from the PAT itself | nothing for this upload |
+| a shared registry (`github-packages-repository` set) | `OCTOPUS_SHARED_PACKAGES_TOKEN`, whose rights come from the PAT itself | nothing for this upload |
 
 Keep `packages: write` in the example regardless: the same job still needs it for the GHCR push.
 

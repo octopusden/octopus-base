@@ -356,7 +356,7 @@ and splits one module's release across two registries:
 The artifact lands in this repository's own GitHub Packages registry unless
 `github-packages-repository: OWNER/REPO` sends it to a **shared** one — repointing the
 `GitHubPackages` repository with no build-script change, so a resolver configures one destination
-instead of one per project. It also needs a `SHARED_PACKAGES_TOKEN` secret, since `GITHUB_TOKEN`
+instead of one per project. It also needs a `OCTOPUS_SHARED_PACKAGES_TOKEN` secret, since `GITHUB_TOKEN`
 cannot write to another repository; the release refuses to start without it. Unset, nothing
 changes.
 

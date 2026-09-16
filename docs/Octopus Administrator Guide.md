@@ -61,7 +61,7 @@ List of commonly used topics:
 |sonatype-nexus|GPG_PRIVATE_KEY| - |
 |pypi-package|PYPI_API_TOKEN|PYPI_API_TOKEN|
 |*|OCTOPUS_GITHUB_TOKEN| - |
-|*|SHARED_PACKAGES_TOKEN| - |
+|*|OCTOPUS_SHARED_PACKAGES_TOKEN| - |
 
 The staging profile is **not** a secret. It is the `staging-profile-id` input of the release
 workflow, defaulting to `org.octopusden`; a `SONATYPE_PROFILE_ID` secret is read by nothing.
@@ -73,7 +73,7 @@ publish and its secret check. A Maven repository needs them for every non-dry ru
 `OCTOPUS_GITHUB_TOKEN` reaches the release-log registration only through `secrets: inherit` in
 the consumer's calling job.
 
-`SHARED_PACKAGES_TOKEN` carries `read:packages` and `write:packages` on the registry named by
+`OCTOPUS_SHARED_PACKAGES_TOKEN` carries `read:packages` and `write:packages` on the registry named by
 `github-packages-repository`, and is read only by a repository that sets that input. It is kept
 separate from `OCTOPUS_GITHUB_TOKEN` so the publish path and release-log registration do not
 share one credential.
