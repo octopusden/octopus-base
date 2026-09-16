@@ -26,6 +26,10 @@ second one matters because while Automatic Analysis is on, a CI analysis of the 
 `SONAR_TOKEN` must also be available to the repository. It is a SonarCloud token, not a GitHub one,
 and it needs only *Execute Analysis*.
 
+The project's new-code definition must be **Previous version**, which is the SonarCloud default and
+what provisioning sets. The version scheme below depends on it, so a project someone has
+reconfigured needs it put back.
+
 ### Maven — nothing to change in the project
 
 The scanner is a pinned command-line plugin invocation, so nothing about Sonar reaches the POM. Add
@@ -172,8 +176,9 @@ coverage-on-new-code condition, which 0% can never satisfy. A repository judged 
 therefore fails every pull request that touches code, whatever its quality. Blocking requires a
 gate without that condition.
 
-Because coverage is not reported, the analysis also **compiles tests without running them**. Sonar
-needs bytecode, not test results. This keeps a flaky test from reddening a code analysis, and it
+Because coverage is not reported, the analysis **compiles tests without running them**. Sonar needs
+bytecode, not test results — and analysing test sources without their bytecode would silently skip
+every rule that needs type resolution, so the compilation is not optional. This keeps a flaky test from reddening a code analysis, and it
 has to be reversed when coverage is introduced — at which point the analysis must run in the same
 job that produces the coverage report, since no workflow can read another's files.
 
@@ -223,7 +228,7 @@ Gradle only:
 
 | Input | Default | Purpose |
 |---|---|---|
-| `sonar-command` | `./gradlew build -x test sonar --no-daemon --stacktrace` | The analysis command |
+| `sonar-command` | `./gradlew build testClasses -x test sonar --no-daemon --stacktrace` | The analysis command |
 
 Maven only:
 

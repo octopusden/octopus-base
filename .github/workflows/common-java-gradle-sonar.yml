@@ -41,7 +41,7 @@ on:
         description: Gradle command that runs the analysis. Must compile before analysing — see the step comment.
         required: false
         type: string
-        default: ./gradlew build -x test sonar --no-daemon --stacktrace
+        default: ./gradlew build testClasses -x test sonar --no-daemon --stacktrace
       default-branch:
         description: Branch that non-default branches are compared against for new code. Empty means the repository's own default branch.
         required: false
@@ -174,9 +174,10 @@ jobs:
           # `build` before `sonar`: scanner-gradle 3.0 stopped adding compile dependencies, and
           # `sonar` alone still succeeds — minus every rule needing bytecode, which reads clean.
           #
-          # `-x test` skips execution, not compilation. Sonar wants test bytecode, not test
-          # results; nothing here consumes the latter. Keeps a flaky test from reddening an
-          # analysis. REVERSE when coverage is wired up — that needs the tests to have run.
+          # `-x test` skips execution — but it also drops `testClasses`, which nothing else
+          # requires, so test sources would reach Sonar without bytecode and every rule needing
+          # type resolution would be skipped on them. Naming `testClasses` puts it back without
+          # pulling `test` in. REVERSE when coverage is wired up — that needs the tests to run.
           # shellcheck disable=SC2086 # sonar-command is a command line, splitting is the point
           ${SONAR_COMMAND} \
             "${reference_arg[@]}" \

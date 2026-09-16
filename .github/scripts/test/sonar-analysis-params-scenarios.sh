@@ -2,6 +2,9 @@
 # Cases for sonar-analysis-params.sh. No network, no Sonar server, no git repository — the script
 # reads environment and writes $GITHUB_OUTPUT, so the whole contract is assertable here.
 #
+# Every fixture below is hardcoded, never `${VAR:-fixture}`. GITHUB_REPOSITORY is set by Actions,
+# so a default would have applied on a laptop and not in CI — green locally, red on the runner.
+#
 # Run under `bash -e`, the way Actions invokes a `run:` block.
 set -uo pipefail
 S="$PWD/.github/scripts/sonar-analysis-params.sh"
@@ -13,7 +16,7 @@ failures=0
 run_case() {
   local out="$tmp/out"; : > "$out"
   env GITHUB_OUTPUT="$out" \
-      GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-octopusden/octopus-widget}" \
+      GITHUB_REPOSITORY="octopusden/octopus-widget" \
       ORGANIZATION_INPUT="${ORGANIZATION_INPUT:-}" \
       PROJECT_KEY_INPUT="${PROJECT_KEY_INPUT:-}" \
       LATEST_TAG="${LATEST_TAG:-}" \
