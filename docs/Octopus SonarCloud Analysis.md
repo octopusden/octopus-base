@@ -12,9 +12,6 @@ Two reusable workflows live here:
 
 Pin them to a released tag, never `@main`.
 
-This is separate from the self-hosted SonarQube Community Server driven from TeamCity. That path is
-unaffected by anything here.
-
 ---
 
 ## Adopting it
@@ -78,9 +75,15 @@ plugins {
 }
 ```
 
-**Do not add a `sonar { properties { … } }` block.** Every Sonar property is supplied by the
-workflow, which is what keeps a change of SonarCloud organisation a configuration change rather
-than a commit in every repository.
+A repository may add its own `sonar { properties { … } }` block for anything specific to it —
+`sonar.exclusions`, `sonar.coverage.exclusions`, extra source or test directories.
+
+What it should **not** set is the properties the workflow already supplies: `sonar.projectKey`,
+`sonar.organization`, `sonar.projectVersion`, `sonar.host.url`, `sonar.qualitygate.wait` and
+`sonar.newCode.referenceBranch`. The workflow passes those on the command line, where they take
+precedence over anything in the build script — so setting them there does nothing, while looking
+as though it does. Leaving them to the workflow is also what keeps a change of SonarCloud
+organisation a configuration change rather than a commit in every repository.
 
 Then the caller:
 
@@ -236,28 +239,26 @@ Secret: `SONAR_TOKEN`, required.
 
 ## Troubleshooting
 
-**"You are running CI analysis while Automatic Analysis is enabled."**
-Automatic Analysis is on for that project. It is enabled by default whenever a project is imported,
-and re-enabled if a project is deleted and re-imported. Switch it off under *Project →
-Administration → Analysis Method*. This is the most common cause of a Sonar job failing for no
-apparent reason.
+- **"You are running CI analysis while Automatic Analysis is enabled."** Automatic Analysis is on
+  for that project. It is enabled by default whenever a project is imported, and re-enabled if a
+  project is deleted and re-imported. Switch it off under *Project → Administration → Analysis
+  Method*. This is the most common cause of a Sonar job failing for no apparent reason.
 
-**The job fails on a missing secret.**
-The caller is missing `secrets: inherit`.
+- **The job fails on a missing secret.** The caller is missing `secrets: inherit`.
 
-**The gate fails on coverage.**
-The project is on a quality gate that includes a coverage condition. Coverage is not reported — see
-above.
+- **The gate fails on coverage.** The project is on a quality gate that includes a coverage
+  condition. Coverage is not reported — see above.
 
-**Sonar reports no issues on a pull request.**
-Expected when the pull request changes no analysable source. Sonar reports on what the change
-touches, not on what the repository contains.
+- **Sonar reports no issues on a pull request.** Expected when the pull request changes no
+  analysable source. Sonar reports on what the change touches, not on what the repository contains.
 
-**A branch analysis shows only a handful of files and no overall code.**
-`main` has not been analysed yet, so there is no baseline. It resolves once anything lands on
-`main`.
+- **A branch analysis shows only a handful of files and no overall code.** `main` has not been
+  analysed yet, so there is no baseline. It resolves once anything lands on `main`.
 
-**The project reads as suspiciously clean.**
-Check that the analysis compiled the project. Without bytecode the analysis still succeeds, minus
-every rule that needs type resolution. The workflows build before analysing for exactly this
-reason; a customised `sonar-command` that skips the build reintroduces it.
+- **A property set in the build script has no effect.** It is probably one the workflow supplies on
+  the command line, which wins. See the Gradle section above for which ones those are.
+
+- **The project reads as suspiciously clean.** Check that the analysis compiled the project.
+  Without bytecode the analysis still succeeds, minus every rule that needs type resolution. The
+  workflows build before analysing for exactly this reason; a customised `sonar-command` that skips
+  the build reintroduces it.
