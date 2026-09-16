@@ -81,10 +81,8 @@ jobs:
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
-      # fetch-depth: 0 is load-bearing, not a precaution. Sonar derives the new-code period,
-      # issue authorship and the new-code gate conditions from SCM blame. A shallow clone does
-      # not fail the analysis — it silently produces wrong answers for all three, which under a
-      # blocking gate means merges blocked for a reason the message does not name.
+      # Full history: Sonar reads SCM blame for new code and issue authorship. A shallow clone
+      # does not fail — it answers both wrongly.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -105,14 +103,32 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      # The same action and regex the release workflow uses to find the current version
-      # (common-java-gradle-release.yml), so both answer "what version is this repo on" the same
-      # way. Unlike the release workflow this does NOT bump the result: the release path asks
-      # what version comes next, Sonar asks what version the branch is on now.
-      #
-      # continue-on-error covers the never-released repository. The action's behaviour with no
-      # matching tag (hard failure vs empty output) is not relied on — either way the next step
-      # substitutes the fallback.
+      # A reusable workflow runs against the CALLER's checkout, so this repository's scripts are
+      # not on disk. Same pattern as the release flow: pin to the workflow's own commit and fetch
+      # just the scripts directory, so the helper cannot drift from the workflow calling it.
+      - name: Resolve helper ref
+        id: helper-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the Sonar helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Sonar helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-sonar
+          sparse-checkout: .github/scripts
+
+      # Same action and regex as the release workflow, minus its bump: that asks what version
+      # comes next, Sonar asks what the branch is on now. continue-on-error covers the
+      # never-released repository — either failure mode falls through to the fallback.
       - name: Find latest release tag
         id: latest-tag
         continue-on-error: true
@@ -133,49 +149,8 @@ jobs:
           REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
+        run: bash .octopus-base-sonar/.github/scripts/sonar-analysis-params.sh
 
-          repo_name="${GITHUB_REPOSITORY##*/}"
-          owner="${GITHUB_REPOSITORY%%/*}"
-
-          organization="${ORGANIZATION_INPUT:-$owner}"
-          project_key="${PROJECT_KEY_INPUT:-${owner}_${repo_name}}"
-
-          # A moving projectVersion is as wrong as a frozen one, in the opposite direction: with
-          # "previous version" as the new-code definition, a version that changes on every
-          # analysis makes an issue new code for exactly one run and old code on the next commit.
-          # So the tag is passed through untouched — no timestamp, no run number, no suffix.
-          version="${LATEST_TAG:-$FALLBACK_VERSION}"
-
-          # New code on a non-default branch is its diff against the default branch. Set from
-          # here rather than in the UI because a branch's new-code definition has to exist before
-          # its first analysis, and CI is what knows the branch name.
-          #
-          # Not set on pull requests: PR analysis always treats the whole PR diff as new code, and
-          # this property would be noise. Not set on the default branch either — that one wants
-          # "previous version", which has no scanner property and stays a UI setting.
-          default_branch="${DEFAULT_BRANCH_INPUT:-${REPO_DEFAULT_BRANCH:-main}}"
-          reference_branch=""
-          if [[ "$EVENT_NAME" != "pull_request" && "$REF_NAME" != "$default_branch" ]]; then
-            reference_branch="$default_branch"
-          fi
-
-          {
-            echo "organization=${organization}"
-            echo "project-key=${project_key}"
-            echo "version=${version}"
-            echo "reference-branch=${reference_branch}"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Analysing ${project_key} in ${organization} as version ${version}"
-          if [[ -n "$reference_branch" ]]; then
-            echo "New code on ${REF_NAME} is its diff against ${reference_branch}"
-          fi
-
-      # Branch and pull-request parameters are deliberately absent: the scanner reads them from
-      # the GitHub Actions environment itself, and hand-setting them is a common way to have a
-      # pull request analysed as a branch.
       - name: Run Sonar analysis
         shell: bash
         env:
@@ -190,28 +165,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          # An empty value would be passed as -Dsonar.newCode.referenceBranch= and read as a
-          # branch named "", so the flag is added only when there is one.
+          # An empty value would be read as a branch named "", so the flag is conditional.
           reference_arg=()
           if [[ -n "${SONAR_REFERENCE_BRANCH}" ]]; then
             reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
           fi
 
-          # `build` before `sonar` is required, not belt-and-braces: since scanner-gradle 3.0 the
-          # sonar task no longer adds compile dependencies of its own, and Java/Kotlin analysis
-          # needs javac bytecode. Running `sonar` alone still succeeds — it just silently skips
-          # every rule that needs type resolution, which reads as a clean project.
+          # `build` before `sonar`: scanner-gradle 3.0 stopped adding compile dependencies, and
+          # `sonar` alone still succeeds — minus every rule needing bytecode, which reads clean.
           #
-          # `-x test` skips test EXECUTION while keeping test COMPILATION, which is what the
-          # analysis actually needs — Sonar reads test sources and wants their bytecode, but it
-          # does not need the tests to have run. Nothing here consumes test results: coverage is
-          # out of scope, and sonar.junit.reportPaths is not set. Two reasons it is off by
-          # default rather than merely wasteful: it is the bulk of this job's runtime, and a
-          # flaky functional test would otherwise fail the analysis and, once the gate blocks,
-          # a merge — for a reason that says nothing about code quality.
-          #
-          # This has to be REVERSED when coverage is wired up, because coverage needs the tests
-          # to run and Sonar needs the report from this same invocation.
+          # `-x test` skips execution, not compilation. Sonar wants test bytecode, not test
+          # results; nothing here consumes the latter. Keeps a flaky test from reddening an
+          # analysis. REVERSE when coverage is wired up — that needs the tests to have run.
           # shellcheck disable=SC2086 # sonar-command is a command line, splitting is the point
           ${SONAR_COMMAND} \
             "${reference_arg[@]}" \

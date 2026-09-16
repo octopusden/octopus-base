@@ -91,18 +91,15 @@ jobs:
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
-      # See the Gradle workflow for why this is load-bearing: Sonar derives the new-code period,
-      # issue authorship and gate conditions from SCM blame, and a shallow clone gets all three
-      # silently wrong rather than failing.
+      # Full history: Sonar reads SCM blame for new code and issue authorship. A shallow clone
+      # does not fail — it answers both wrongly.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Two JDKs, in this order. The scanner JDK is installed FIRST so that the build JDK ends up
-      # as JAVA_HOME — setup-java points JAVA_HOME at whichever it installed last. The scanner
-      # step then switches JAVA_HOME explicitly. Every Maven repository in this organisation that
-      # holds code is on Java 8, where the scanner plugin cannot load at all, so this is the only
-      # path rather than an edge case.
+      # Two JDKs. The scanner JDK goes first so the build JDK ends up as JAVA_HOME — setup-java
+      # points it at whichever it installed last. Java 8 cannot load the scanner at all, and every
+      # Maven repository here holding code is on 8, so this is the only path, not an edge case.
       - name: Set up scanner JDK
         id: scanner-jdk
         uses: actions/setup-java@v4
@@ -131,6 +128,29 @@ jobs:
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-maven-
 
+      # A reusable workflow runs against the CALLER's checkout, so this repository's scripts are
+      # not on disk. Same pattern as the release flow: pin to the workflow's own commit and fetch
+      # just the scripts directory, so the helper cannot drift from the workflow calling it.
+      - name: Resolve helper ref
+        id: helper-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the Sonar helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Sonar helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-sonar
+          sparse-checkout: .github/scripts
+
       - name: Find latest release tag
         id: latest-tag
         continue-on-error: true
@@ -151,43 +171,8 @@ jobs:
           REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
+        run: bash .octopus-base-sonar/.github/scripts/sonar-analysis-params.sh
 
-          repo_name="${GITHUB_REPOSITORY##*/}"
-          owner="${GITHUB_REPOSITORY%%/*}"
-
-          organization="${ORGANIZATION_INPUT:-$owner}"
-          project_key="${PROJECT_KEY_INPUT:-${owner}_${repo_name}}"
-
-          # The tag is passed through untouched: a version that never changes makes new code mean
-          # everything forever, and one that changes every run makes an issue new code for exactly
-          # one analysis. Both fail silently.
-          version="${LATEST_TAG:-$FALLBACK_VERSION}"
-
-          default_branch="${DEFAULT_BRANCH_INPUT:-${REPO_DEFAULT_BRANCH:-main}}"
-          reference_branch=""
-          if [[ "$EVENT_NAME" != "pull_request" && "$REF_NAME" != "$default_branch" ]]; then
-            reference_branch="$default_branch"
-          fi
-
-          {
-            echo "organization=${organization}"
-            echo "project-key=${project_key}"
-            echo "version=${version}"
-            echo "reference-branch=${reference_branch}"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Analysing ${project_key} in ${organization} as version ${version}"
-          if [[ -n "$reference_branch" ]]; then
-            echo "New code on ${REF_NAME} is its diff against ${reference_branch}"
-          fi
-
-      # `-DskipTests` rather than `-Dmaven.test.skip`: the first skips test EXECUTION while still
-      # compiling test sources, which Sonar analyses and wants bytecode for. The second would skip
-      # compilation too. Nothing here consumes test results — coverage is out of scope and
-      # sonar.junit.reportPaths is unset — and a flaky test should not redden a code analysis.
-      # Reverse when coverage is wired up.
       - name: Build with the project JDK
         shell: bash
         env:
@@ -199,9 +184,8 @@ jobs:
           # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
           mvn --batch-mode --update-snapshots package -DskipTests ${MVN_PARAMETERS:-}
 
-      # A separate invocation on the scanner JDK, against the classes the previous step already
-      # produced. `sonar.java.jdkHome` points the analyser back at the build JDK so it resolves
-      # the project's real java.* classes rather than the scanner JDK's.
+      # Separate invocation on the scanner JDK, against the classes already produced.
+      # sonar.java.jdkHome points the analyser back at the build JDK for the project's java.*.
       - name: Run Sonar analysis on the scanner JDK
         shell: bash
         env:

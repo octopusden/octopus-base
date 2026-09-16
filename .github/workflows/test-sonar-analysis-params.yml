@@ -1,0 +1,24 @@
+name: Test sonar-analysis-params script
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/sonar-analysis-params.sh'
+      - '.github/scripts/test-sonar-analysis-params.local.sh'
+      - '.github/workflows/test-sonar-analysis-params.yml'
+      - '.github/workflows/common-java-gradle-sonar.yml'
+      - '.github/workflows/common-java-maven-sonar.yml'
+  workflow_dispatch:
+
+# Same shape as the other script guards: synthetic cases with explicit assertions, no network and
+# no Sonar server. The cases live in the local runner and CI executes that same file, so the two
+# cannot drift apart.
+
+jobs:
+  test:
+    name: test sonar-analysis-params
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cases
+        run: bash .github/scripts/test-sonar-analysis-params.local.sh
