@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # TeamCity step: "Check release version is new" (Command Line runner, replaces the Kotlin script).
 #
-# The two values arrive as ENVIRONMENT VARIABLES, never interpolated into this script's text.
-# The meta-runner binds them as env.BUILD_NUMBER / env.LAST_RELEASE_VERSION. Substituting a
-# TeamCity parameter reference into the script body instead would execute whatever the value contains,
-# BEFORE any line below runs - and BUILD_NUMBER comes from the first line of a release-log
-# file, so the value is repository content. The two existing meta-runners in this directory
-# pass values the same way, as kotlinArgs.
+# The two values are never interpolated into this script's text. Substituting a TeamCity
+# parameter reference into the script body would execute whatever the value contains, BEFORE any
+# line below runs - and BUILD_NUMBER comes from the first line of a release-log file, so the
+# value is repository content. They arrive as environment variables, declared by the meta-runner
+# among its OWN parameters - the only declaration TeamCity turns into an environment variable; the
+# same name inside a build step never reaches the process.
 
 build="${BUILD_NUMBER-}"; last="${LAST_RELEASE_VERSION-}"
+
 build="${build%$'\r'}"; last="${last%$'\r'}"   # the release log can be committed CRLF
 
 # TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped
@@ -30,6 +31,12 @@ problem() {
   printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
   exit 1
 }
+
+# An empty LAST_RELEASE_VERSION is the legitimate initial state below, so a MISSING binding would
+# look like a first release and this step would approve every version without comparing anything -
+# silently. TeamCity exports a declared parameter even when its value is empty, so unset means the
+# declaration is gone rather than the value being blank.
+[ "${LAST_RELEASE_VERSION+set}" = set ] || problem "LAST_RELEASE_VERSION is not set. The meta-runner declares env.LAST_RELEASE_VERSION among its own parameters - re-upload this server's copy if it predates that." "lastrelease_not_bound"
 
 echo "buildNumber: $(esc "$build")"
 echo "lastRelease: $(esc "$last")"

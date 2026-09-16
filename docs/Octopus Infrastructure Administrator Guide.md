@@ -45,6 +45,21 @@ It also binds `%teamcity.build.branch.is_default%`, to apply the backwards check
 branch only, which is why every VCS root needs a branch specification (see
 [VCS Root](#vcs-root)).
 
+Both values reach the step as **environment variables**, declared as `env.` parameters of the
+meta-runner itself. That is the only declaration that works: an `env.` parameter written inside a
+build step is an unknown runner setting, which TeamCity ignores without a word, and the step then
+runs with nothing set. If a build stops with
+
+```
+build.counter is not a number: ''
+```
+
+the server's copy of the meta-runner predates that declaration — re-upload it, which is enough on
+its own: a meta-runner's parameters apply at build time, so configurations that already carry the
+step need no change. `OctopusCheckReleaseVersionIsNew` reports the same cause as
+`LAST_RELEASE_VERSION is not set`, and a missing branch verdict as
+`teamcity.build.branch.is_default is not true or false`.
+
 ## Octopus Module project
 
 ### TeamCity project name

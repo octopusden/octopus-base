@@ -35,6 +35,25 @@ problem_out() { # <escaped-message> <identity>
   printf "##teamcity[message text='%s' status='ERROR']\n##teamcity[buildProblem description='%s' identity='%s']\nrc=1" "$1" "$1" "$2"
 }
 
+work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+
+# A run whose whole environment is given, so a case can say that a value is not set at all.
+run_with() { # <VAR=value>... -> complete output + rc
+  local out rc
+  out="$(env -u BUILD_NUMBER -u LAST_RELEASE_VERSION "$@" bash "$script" 2>&1)"; rc=$?
+  printf '%s\nrc=%s' "$out" "$rc"
+}
+exact_with() { # <desc> <expected complete output> <VAR=value>...
+  local desc=$1 want=$2; shift 2
+  local got; got="$(run_with "$@")"
+  if [ "$got" = "$want" ]; then echo "PASS [$desc]"; pass=$((pass + 1))
+  else
+    echo "FAIL [$desc]"
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/       /'
+    fail=$((fail + 1))
+  fi
+}
+
 exact "equal: green, nothing to do" 2.0.16 2.0.16 "$(printf '%s\n%s\n%s\n%s\nrc=0' \
   "buildNumber: 2.0.16" "lastRelease: 2.0.16" \
   "##teamcity[buildStatus text='2.0.16 already processed - nothing to do']" \
@@ -116,12 +135,48 @@ if grep -q "releaselog_regressed" <<<"$out"; then echo "PASS [verdict needs no e
 else echo "FAIL [verdict changed when external commands were broken]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 rm -rf "$stub"
 
+# --- where the two values come from ------------------------------------------------------------
+
+# An env. parameter declared inside the <runner> block is an unknown runner setting that never
+# reaches the process. Here that would not even fail loudly: an empty LAST_RELEASE_VERSION is the
+# legitimate initial state below, so a missing binding would look like a first release and this
+# step would approve every version without comparing anything. TeamCity exports a declared
+# parameter even when its value is empty, so UNSET means the declaration itself is gone.
+
+exact_with "an unset LAST_RELEASE_VERSION is a missing binding, not the initial state" \
+  "$(problem_out "LAST_RELEASE_VERSION is not set. The meta-runner declares env.LAST_RELEASE_VERSION among its own parameters - re-upload this server|'s copy if it predates that." lastrelease_not_bound)" \
+  BUILD_NUMBER=2.0.17
+
+exact "an empty LAST_RELEASE_VERSION is still the initial state" 2.0.17 "" \
+  "$(printf '%s\n%s\n%s\n%s\nrc=0' \
+     "buildNumber: 2.0.17" "lastRelease: " \
+     "No previously processed version is recorded - processing 2.0.17." \
+     "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")"
+
+runner="$(awk '/<runner name="Check release version is new"/,/<\/runner>/' "$xml")"
+if grep -q 'name="env\.' <<<"$runner"; then
+  echo "FAIL [runner declares an env. parameter, which the runner ignores]"; fail=$((fail + 1))
+else echo "PASS [no env. parameter is buried in the runner block]"; pass=$((pass + 1)); fi
+
+settings="$(awk '/<settings>/,/<build-runners>/' "$xml")"
+if grep -q '<param name="env.BUILD_NUMBER" value="%BUILD_NUMBER%"/>' <<<"$settings" \
+   && grep -q '<param name="env.LAST_RELEASE_VERSION" value="%LAST_RELEASE_VERSION%"/>' <<<"$settings"; then
+  echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
+else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
+
 # TeamCity cannot source a script from a repository, so the meta-runner carries a copy. The
 # values are bound as environment variables, so nothing has to be rewritten for that copy -
 # which is the point: a %PARAM% substituted into the script body would be executed, not read.
 embedded="$(awk '/<!\[CDATA\[/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\]\]>.*/,"");if(length)print;exit} print}' "$xml")"
-if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy is byte-identical]"; pass=$((pass + 1))
+if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy matches the script line for line]"; pass=$((pass + 1))
 else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf '%s\n' "$embedded") | sed 's/^/       /'; fail=$((fail + 1)); fi
+
+# The comparison above cannot see a missing final newline - command substitution strips it from
+# both sides - so the terminator's own line is pinned separately. Re-embedding that swallows it
+# is a silent edit to a file nobody diffs by eye.
+if grep -q '^\]\]></param>' "$xml"; then
+  echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
+else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
 
 # Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
 # script.content, and an unresolved one is an implicit agent requirement (no compatible agent).

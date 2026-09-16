@@ -10,14 +10,16 @@
 # is decided here, in the first build of the chain, and not later:
 # docs/adr/0008-release-line-is-declared-in-the-repository.md.
 #
-# BUILD_COUNTER and IS_DEFAULT_BRANCH arrive as ENVIRONMENT VARIABLES, never interpolated into
-# this script's text. A TeamCity parameter reference substituted into the script body is
-# executed, not read - see OctopusCheckReleaseVersionIsNew.xml, which binds its values the same
-# way. The reference syntax itself is also kept out of this file: TeamCity resolves it inside
+# BUILD_COUNTER and IS_DEFAULT_BRANCH arrive as environment variables, declared by the meta-runner
+# among its OWN parameters - the only declaration TeamCity turns into an environment variable; the
+# same name inside a build step never reaches the process. They are never interpolated into this
+# script's text, because a parameter reference substituted into the script body is executed rather
+# than read. The reference syntax itself is also kept out of this file: TeamCity resolves it inside
 # script.content wherever it appears, comments included, and an unresolved one is an implicit
 # agent requirement.
 
 counter="${BUILD_COUNTER-}"
+default_branch="${IS_DEFAULT_BRANCH-}"
 file=.release-line
 
 # TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped
@@ -39,6 +41,15 @@ problem() {
 }
 
 [[ "$counter" =~ ^[0-9]+$ ]] || problem "build.counter is not a number: '${counter}'." "version_bad_counter"
+
+# is_default decides whether the backwards guard applies, so an absent or misspelled value must
+# stop the build rather than quietly disable the guard - the guard's whole purpose is to catch a
+# line that would otherwise be tagged and published. There is no legitimate third value: a
+# non-default branch is given "false", verified on a real branch build.
+case "$default_branch" in
+  true|false) ;;
+  *) problem "teamcity.build.branch.is_default is not true or false: '${default_branch}'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server's copy if it predates that." "version_bad_is_default" ;;
+esac
 
 # Everything below is relative to the repository root. `git tag` finds the repository from any
 # directory but `[ -f .release-line ]` does not, so a step given a working directory below the
@@ -96,7 +107,7 @@ if [ -f "$file" ]; then
   # binding without anything here noticing. Tags that are not releases are skipped, so
   # an rc tag left on the newest commit cannot make a current line look behind; the first release
   # tag in the list is then the highest one, padding being refused above.
-  if [ "${IS_DEFAULT_BRANCH-}" = true ]; then
+  if [ "$default_branch" = true ]; then
     IFS=. read -r major minor <<<"$line"
     while IFS= read -r tag; do
       [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || continue

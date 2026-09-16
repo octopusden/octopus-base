@@ -27,6 +27,14 @@ run() { # [counter] -> complete output + rc, from the current directory
   printf '%s\nrc=%s' "$out" "$rc"
 }
 
+# A run whose whole environment is given: the suite's own variables are removed first, so a case
+# can say that nothing is set.
+run_with() { # <VAR=value>... -> complete output + rc
+  local out rc
+  out="$(env -u BUILD_COUNTER -u IS_DEFAULT_BRANCH "$@" bash "$script" 2>&1)"; rc=$?
+  printf '%s\nrc=%s' "$out" "$rc"
+}
+
 exact() { # <desc> <expected complete output> [counter]
   local got; got="$(run "${3-1832}")"
   if [ "$got" = "$2" ]; then echo "PASS [$1]"; pass=$((pass + 1))
@@ -37,11 +45,23 @@ exact() { # <desc> <expected complete output> [counter]
   fi
 }
 
-ok() { # <version> <lines...> -> the complete output of a successful run
-  local v=$1; shift
-  printf '%s\n' "$@"
-  printf "##teamcity[buildNumber '%s-1832']\n##teamcity[setParameter name='PROJECT_VERSION' value='%s']\nrc=0" "$v" "$v"
+exact_with() { # <desc> <expected complete output> <VAR=value>...
+  local desc=$1 want=$2; shift 2
+  local got; got="$(run_with "$@")"
+  if [ "$got" = "$want" ]; then echo "PASS [$desc]"; pass=$((pass + 1))
+  else
+    echo "FAIL [$desc]"
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") | sed 's/^/       /'
+    fail=$((fail + 1))
+  fi
 }
+
+ok_n() { # <counter> <version> <lines...> -> the complete output of a successful run
+  local n=$1 v=$2; shift 2
+  printf '%s\n' "$@"
+  printf "##teamcity[buildNumber '%s-%s']\n##teamcity[setParameter name='PROJECT_VERSION' value='%s']\nrc=0" "$v" "$n" "$v"
+}
+ok() { local v=$1; shift; ok_n 1832 "$v" "$@"; }   # <version> <lines...>, with the usual counter
 problem_out() { # <escaped-message> <identity>
   printf "##teamcity[message text='%s' status='ERROR']\n##teamcity[buildProblem description='%s' identity='%s']\nrc=1" "$1" "$1" "$2"
 }
@@ -152,12 +172,14 @@ repo pad-legacy v2.08.4; default_branch=true
 exact "a zero-padded tag is refused with no .release-line either" \
   "$(problem_out "$(padded_message v2.08.4)" version_padded_tag)"
 
-# The guard is deliberately fail-open: anything but an explicit "true" leaves it off. An absent
-# binding then costs a missing check, not every build of every component. Pinned so the direction
-# cannot be flipped unnoticed.
+# This case used to pin the OPPOSITE direction - a missing verdict left the guard off, on the
+# reasoning that an absent binding should cost a check rather than every build. That was wrong:
+# the guard exists to stop a version from being tagged and published, so leaving it off silently
+# publishes the very version it was there to catch. A missing verdict now stops the build, and
+# the build that stops says which declaration is missing.
 repo n12 v2.8.0; line $'2.3\n'; default_branch=
-exact "no branch verdict: the guard stays off rather than firing" \
-  "$(ok 2.3.0 "Release line: 2.3 (from .release-line)" "No v2.3.* tag yet - opening the line")"
+exact "no branch verdict: the build stops rather than publishing unguarded" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)"
 
 # The file is repository content. A hostile first line must not be able to emit a service
 # message of its own: it appears only escaped, inside the problem text.
@@ -263,25 +285,78 @@ if grep -q "identity='version_git_failed'" <<<"$out" && [ "${out##*rc=}" = 1 ]; 
   echo "PASS [outside a git checkout is a problem]"; pass=$((pass + 1))
 else echo "FAIL [outside a git checkout]"; sed 's/^/       /' <<<"$out"; fail=$((fail + 1)); fi
 
+# --- where the two values come from ------------------------------------------------------------
+
+# TeamCity delivers a value as an environment variable only when it is a BUILD parameter named
+# env.X, declared by the meta-runner itself. The same name inside the <runner> block is an unknown
+# runner setting that never reaches the process, which is how the first server to receive this
+# meta-runner stopped every hybrid build on an empty counter. is_default is checked as strictly as
+# the counter: it decides whether the backwards guard applies, so an absent or misspelled value
+# must stop the build rather than quietly disable the guard.
+
+repo m1 v2.5.1; line $'2.0\n'
+exact_with "is_default absent: the build stops instead of skipping the guard" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832
+
+repo m2 v2.5.1; line $'2.0\n'
+exact_with "is_default empty: same" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH=""
+
+repo m3 v2.5.1; line $'2.0\n'
+exact_with "is_default True: not the same string, and not trusted to mean it" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'True|'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH=True
+
+repo m4 v2.5.1; line $'2.0\n'
+exact_with "is_default with a trailing blank: refused rather than trimmed" \
+  "$(problem_out "teamcity.build.branch.is_default is not true or false: |'true |'. The meta-runner declares env.IS_DEFAULT_BRANCH among its own parameters - re-upload this server|'s copy if it predates that." version_bad_is_default)" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH="true "
+
+# false is what a non-default branch actually gets, so it must stay ordinary.
+repo m5 v2.0.3; line $'2.0\n'
+exact_with "false is a value, not a missing binding" \
+  "$(ok 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")" \
+  BUILD_COUNTER=1832 IS_DEFAULT_BRANCH=false
+
 # --- the meta-runner copy --------------------------------------------------------------------
 
 # TeamCity cannot source a script from a repository, so the meta-runner carries a copy. The
 # counter is bound as an environment variable, so nothing is rewritten for that copy - which
 # is the point: a parameter reference substituted into the script body would be executed.
 embedded="$(awk '/<!\[CDATA\[#!\/usr\/bin\/env bash/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\]\]>.*/,"");if(length)print;exit} print}' "$xml")"
-if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy is byte-identical]"; pass=$((pass + 1))
+if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy matches the script line for line]"; pass=$((pass + 1))
 else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf '%s\n' "$embedded") | sed 's/^/       /'; fail=$((fail + 1)); fi
 
-# The bytes alone prove nothing about how they run: the step must be a Command Line runner and
-# the counter must be bound as an environment variable, or every build ends in version_bad_counter.
+# The comparison above cannot see a missing final newline - command substitution strips it from
+# both sides - so the terminator's own line is pinned separately. Re-embedding that swallows it
+# is a silent edit to a file nobody diffs by eye.
+if grep -q '^\]\]></param>' "$xml"; then
+  echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
+else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
+
+# The bytes alone prove nothing about how they run: the step must be a Command Line runner that
+# runs this script and reports its stderr.
 runner="$(awk '/<runner name="Calculate PROJECT_VERSION"/,/<\/runner>/' "$xml")"
 if grep -q 'type="simpleRunner"' <<<"$runner" \
    && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner" \
-   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner" \
-   && grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%" />' <<<"$runner" \
-   && grep -q '<param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%" />' <<<"$runner"; then
-  echo "PASS [runner is a Command Line step that runs this script, with both values bound and stderr at error severity]"; pass=$((pass + 1))
-else echo "FAIL [runner type, script mode, stderr mode or an env binding is missing]"; fail=$((fail + 1)); fi
+   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner"; then
+  echo "PASS [runner is a Command Line step that runs this script with stderr at error severity]"; pass=$((pass + 1))
+else echo "FAIL [runner type, script mode or stderr mode is missing]"; fail=$((fail + 1)); fi
+
+# An env. parameter is a BUILD parameter. Declared inside the runner it is an unknown runner
+# setting, which TeamCity ignores without a word - the whole defect. Declared in the meta-runner's
+# own parameters it reaches the process.
+if grep -q 'name="env\.' <<<"$runner"; then
+  echo "FAIL [runner declares an env. parameter, which the runner ignores]"; fail=$((fail + 1))
+else echo "PASS [no env. parameter is buried in the runner block]"; pass=$((pass + 1)); fi
+
+settings="$(awk '/<settings>/,/<build-runners>/' "$xml")"
+if grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%"/>' <<<"$settings" \
+   && grep -q '<param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%"/>' <<<"$settings"; then
+  echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
+else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
 
 # Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
 # script.content, and an unresolved one becomes an implicit agent requirement that leaves the
