@@ -353,6 +353,13 @@ and splits one module's release across two registries:
 > every read, so whoever fetches the artifact needs a credential — arranged outside this
 > repository, not here.
 
+The artifact lands in this repository's own GitHub Packages registry unless
+`github-packages-repository: OWNER/REPO` sends it to a **shared** one — repointing the
+`GitHubPackages` repository with no build-script change, so a resolver configures one destination
+instead of one per project. It also needs a `SHARED_PACKAGES_TOKEN` secret, since `GITHUB_TOKEN`
+cannot write to another repository; the release refuses to start without it. Unset, nothing
+changes.
+
 **"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
 dependency projects compile against. **There is no exception to reach for** — no input exists for
 waiving the size limit, and the one legacy input that happens to waive it is deprecated and not
