@@ -91,10 +91,13 @@ jobs:
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
+      # Sonar reads SCM blame; a shallow clone does not fail, it answers wrongly.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # Scanner JDK first so the build JDK ends up as JAVA_HOME — setup-java points it at whichever
+      # it installed last. Java 8 cannot load the scanner, and every Maven repo here builds on 8.
       - name: Set up scanner JDK
         id: scanner-jdk
         uses: actions/setup-java@v4
@@ -123,6 +126,7 @@ jobs:
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-maven-
 
+      # A reusable workflow runs against the caller's checkout, so this repo's scripts are fetched.
       - name: Resolve helper ref
         id: helper-ref
         env:
@@ -143,6 +147,7 @@ jobs:
           path: .octopus-base-sonar
           sparse-checkout: .github/scripts
 
+      # continue-on-error: a repository with no release tag falls through to the fallback version.
       - name: Find latest release tag
         id: latest-tag
         continue-on-error: true
@@ -165,6 +170,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: bash .octopus-base-sonar/.github/scripts/sonar-analysis-params.sh
 
+      # `-DskipTests`, not `-Dmaven.test.skip`: the first still compiles test sources, which Sonar
+      # needs bytecode for. Reverse when coverage is wired up.
       - name: Build with the project JDK
         shell: bash
         env:
@@ -176,6 +183,7 @@ jobs:
           # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
           mvn --batch-mode --update-snapshots package -DskipTests ${MVN_PARAMETERS:-}
 
+      # sonar.java.jdkHome points the analyser back at the build JDK for the project's java.*.
       - name: Run Sonar analysis on the scanner JDK
         shell: bash
         env:

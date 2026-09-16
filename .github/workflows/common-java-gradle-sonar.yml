@@ -81,6 +81,7 @@ jobs:
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
+      # Sonar reads SCM blame; a shallow clone does not fail, it answers wrongly.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -99,6 +100,7 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
+      # A reusable workflow runs against the caller's checkout, so this repo's scripts are fetched.
       - name: Resolve helper ref
         id: helper-ref
         env:
@@ -119,6 +121,7 @@ jobs:
           path: .octopus-base-sonar
           sparse-checkout: .github/scripts
 
+      # continue-on-error: a repository with no release tag falls through to the fallback version.
       - name: Find latest release tag
         id: latest-tag
         continue-on-error: true
@@ -160,6 +163,8 @@ jobs:
             reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
           fi
 
+          # `testClasses` is named because `-x test` would otherwise drop it, leaving test sources
+          # without bytecode. Reverse the whole `-x test` when coverage is wired up.
           # shellcheck disable=SC2086 # sonar-command is a command line, splitting is the point
           ${SONAR_COMMAND} \
             "${reference_arg[@]}" \
