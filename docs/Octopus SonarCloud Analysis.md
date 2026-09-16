@@ -238,7 +238,7 @@ Maven only:
 |---|---|---|
 | `scanner-java-version` | `21` | The JDK the scanner runs on |
 | `scanner-maven-plugin-version` | `5.7.0.6970` | Pinned scanner plugin |
-| `mvn-parameters` | *(empty)* | Extra parameters for the build invocation |
+| `mvn-parameters` | *(empty)* | Extra Maven parameters, passed to **both** the build and the analysis |
 
 Secret: `SONAR_TOKEN`, required.
 
