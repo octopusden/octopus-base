@@ -81,8 +81,6 @@ jobs:
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
-      # Full history: Sonar reads SCM blame for new code and issue authorship. A shallow clone
-      # does not fail — it answers both wrongly.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -94,8 +92,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # The scanner downloads its own JRE and the analyzer plugins on every run; without this
-      # each analysis re-fetches tens of MB. setup-gradle already caches ~/.gradle.
       - name: Cache Sonar analyzers and provisioned JRE
         uses: actions/cache@v4
         with:
@@ -103,9 +99,6 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      # A reusable workflow runs against the CALLER's checkout, so this repository's scripts are
-      # not on disk. Same pattern as the release flow: pin to the workflow's own commit and fetch
-      # just the scripts directory, so the helper cannot drift from the workflow calling it.
       - name: Resolve helper ref
         id: helper-ref
         env:
@@ -126,9 +119,6 @@ jobs:
           path: .octopus-base-sonar
           sparse-checkout: .github/scripts
 
-      # Same action and regex as the release workflow, minus its bump: that asks what version
-      # comes next, Sonar asks what the branch is on now. continue-on-error covers the
-      # never-released repository — either failure mode falls through to the fallback.
       - name: Find latest release tag
         id: latest-tag
         continue-on-error: true
@@ -165,19 +155,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # An empty value would be read as a branch named "", so the flag is conditional.
           reference_arg=()
           if [[ -n "${SONAR_REFERENCE_BRANCH}" ]]; then
             reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
           fi
 
-          # `build` before `sonar`: scanner-gradle 3.0 stopped adding compile dependencies, and
-          # `sonar` alone still succeeds — minus every rule needing bytecode, which reads clean.
-          #
-          # `-x test` skips execution — but it also drops `testClasses`, which nothing else
-          # requires, so test sources would reach Sonar without bytecode and every rule needing
-          # type resolution would be skipped on them. Naming `testClasses` puts it back without
-          # pulling `test` in. REVERSE when coverage is wired up — that needs the tests to run.
           # shellcheck disable=SC2086 # sonar-command is a command line, splitting is the point
           ${SONAR_COMMAND} \
             "${reference_arg[@]}" \

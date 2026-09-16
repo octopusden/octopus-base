@@ -91,15 +91,10 @@ jobs:
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
-      # Full history: Sonar reads SCM blame for new code and issue authorship. A shallow clone
-      # does not fail — it answers both wrongly.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Two JDKs. The scanner JDK goes first so the build JDK ends up as JAVA_HOME — setup-java
-      # points it at whichever it installed last. Java 8 cannot load the scanner at all, and every
-      # Maven repository here holding code is on 8, so this is the only path, not an edge case.
       - name: Set up scanner JDK
         id: scanner-jdk
         uses: actions/setup-java@v4
@@ -128,9 +123,6 @@ jobs:
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: ${{ runner.os }}-maven-
 
-      # A reusable workflow runs against the CALLER's checkout, so this repository's scripts are
-      # not on disk. Same pattern as the release flow: pin to the workflow's own commit and fetch
-      # just the scripts directory, so the helper cannot drift from the workflow calling it.
       - name: Resolve helper ref
         id: helper-ref
         env:
@@ -184,8 +176,6 @@ jobs:
           # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
           mvn --batch-mode --update-snapshots package -DskipTests ${MVN_PARAMETERS:-}
 
-      # Separate invocation on the scanner JDK, against the classes already produced.
-      # sonar.java.jdkHome points the analyser back at the build JDK for the project's java.*.
       - name: Run Sonar analysis on the scanner JDK
         shell: bash
         env:
