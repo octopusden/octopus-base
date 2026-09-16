@@ -20,10 +20,13 @@ owner="${GITHUB_REPOSITORY%%/*}"
 organization="${ORGANIZATION_INPUT:-$owner}"
 project_key="${PROJECT_KEY_INPUT:-${owner}_${repo_name}}"
 
-# The tag is passed through untouched. A version that never changes makes new code mean every
-# commit since the first analysis; one that moves per build makes an issue new code for exactly
-# one analysis. Neither errors.
+# The tag with its leading `v` dropped, so Sonar shows the version the released artifacts carry.
+# Nothing else is derived from it: a version that never changes makes new code mean every commit
+# since the first analysis, and one that moves per build makes an issue new code for exactly one
+# analysis. Neither errors, so the only property that matters is that it changes at a release and
+# nowhere else.
 version="${LATEST_TAG:-$FALLBACK_VERSION}"
+version="${version#v}"
 
 # New code on a non-default branch is its diff against the default branch, set here because a
 # branch needs its definition before its first analysis and only CI knows the branch name.

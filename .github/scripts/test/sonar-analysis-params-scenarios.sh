@@ -80,8 +80,16 @@ expect "organisation override" organization "other"
 
 # --- version ------------------------------------------------------------------------------------
 
+# The `v` is a tag convention; released artifacts are 2.0.8, and Sonar should agree with them.
 ( LATEST_TAG=v2.0.8 run_case ) >/dev/null
-expect "tag used verbatim" version "v2.0.8"
+expect "leading v stripped" version "2.0.8"
+
+# Stripping must not touch a tag that never had one, nor eat a digit.
+( LATEST_TAG=2.0.8 run_case ) >/dev/null
+expect "tag without v unchanged" version "2.0.8"
+
+( LATEST_TAG=v10.0.1 run_case ) >/dev/null
+expect "multi-digit major" version "10.0.1"
 
 # No tag is the never-released repository; it must not fail the analysis.
 ( LATEST_TAG= FALLBACK_VERSION=0.0.0 run_case ) >/dev/null

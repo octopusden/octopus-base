@@ -132,13 +132,15 @@ and setting a reference branch on one can cause it to be analysed as a branch in
 Until `main` itself has been analysed there is no baseline, so an early branch analysis shows only
 that branch's changed files. It corrects itself as soon as anything lands on `main`.
 
-### The version is the latest release tag, unmodified
+### The version is the latest release tag
 
 `sonar.projectVersion` is the newest tag matching the release pattern, found the same way the
-release pipeline finds it. It is deliberately passed through untouched.
+release pipeline finds it, with the leading `v` dropped — so `v2.0.8` is reported as `2.0.8`,
+matching the coordinates the released artifacts actually carry.
 
-Sonar's "previous version" means *new code starts where the version last changed*, so anything
-appended to the tag breaks it, silently and in one of two directions:
+Nothing else is derived from it. Sonar's "previous version" means *new code starts where the
+version last changed*, so the only property that matters is that it changes at a release and
+nowhere else. Anything appended to the tag breaks that, silently and in one of two directions:
 
 - **A version that never changes** — a `1.0-SNAPSHOT` placeholder, say — never advances the
   baseline, so new code on `main` means every commit since the first analysis, forever.
@@ -146,8 +148,8 @@ appended to the tag breaks it, silently and in one of two directions:
   run, so an issue is new code for exactly one analysis and old code on the next commit. Reported
   once, then never again.
 
-A plain tag changes exactly when a release happens, so new code accumulates across a release cycle
-and resets when you ship. Sonar already records the commit SHA and date on every analysis, so the
+A release tag changes exactly when a release happens, so new code accumulates across a release
+cycle and resets when you ship. Sonar already records the commit SHA and date on every analysis, so the
 version field does not need to carry them.
 
 ---
