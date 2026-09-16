@@ -43,7 +43,7 @@ for line in lines[run + 1:]:
         break
     collected.append(line[indent:] if len(line) > indent else line.strip())
 script = "\n".join(collected) + "\n"
-for required in ("PACKAGES_REPOSITORY", "SHARED_PACKAGES_TOKEN", "DRY_RUN", "gh api"):
+for required in ("PACKAGES_REPOSITORY", "OCTOPUS_SHARED_PACKAGES_TOKEN", "DRY_RUN", "gh api"):
     if required not in script:
         sys.exit("extracted body lacks %r; extraction is wrong" % required)
 # The `if:` is part of the contract, not decoration: the step must not run at all for a caller
@@ -79,7 +79,7 @@ echo "running it as: ${RUNNER_SHELL[*]} <body>"
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]
 #   REPO    PACKAGES_REPOSITORY for the step
-#   TOKEN   SHARED_PACKAGES_TOKEN for the step
+#   TOKEN   OCTOPUS_SHARED_PACKAGES_TOKEN for the step
 #   DRY     DRY_RUN for the step
 #   GH_RC     exit code of the stubbed `gh`, i.e. whether the probe is refused
 #   GH_STDERR what the stubbed `gh` writes to stderr, which the step must surface
@@ -104,7 +104,7 @@ STUB
 
   ( cd "$dir" && PATH="$dir/bin:$PATH" \
       PROBED="$dir/probed" GH_RC="${GH_RC:-0}" GH_STDERR="${GH_STDERR-}" \
-      PACKAGES_REPOSITORY="${REPO-}" SHARED_PACKAGES_TOKEN="${TOKEN-}" DRY_RUN="${DRY:-false}" \
+      PACKAGES_REPOSITORY="${REPO-}" OCTOPUS_SHARED_PACKAGES_TOKEN="${TOKEN-}" DRY_RUN="${DRY:-false}" \
       "${RUNNER_SHELL[@]}" "$body" ) >"$out" 2>&1
   rc=$?
 
@@ -153,12 +153,12 @@ echo "-- a real release refuses before anything is published -------------------
 # as "version does not exist".
 REPO=octopusden/octopus-maven-packages TOKEN= DRY=false \
   CHECK='[ ! -s probed ]' \
-  run "refuses a real release when the token is unset, without probing" 1 "::error title=SHARED_PACKAGES_TOKEN is not set::"
+  run "refuses a real release when the token is unset, without probing" 1 "::error title=OCTOPUS_SHARED_PACKAGES_TOKEN is not set::"
 
 # Presence is not validity. An expired or revoked token passes the check above, so without this
 # it reaches the upload — the rotation failure, and the one that recurs.
 REPO=octopusden/octopus-maven-packages TOKEN=stale GH_RC=1 DRY=false \
-  run "refuses a real release when the probe is rejected" 1 "::error title=SHARED_PACKAGES_TOKEN validation failed::"
+  run "refuses a real release when the probe is rejected" 1 "::error title=OCTOPUS_SHARED_PACKAGES_TOKEN validation failed::"
 
 # The endpoint is part of the contract, not an implementation detail: `repos/OWNER/REPO` needs
 # `repo` to read a PRIVATE repository, so probing there would fail a release whose token carries

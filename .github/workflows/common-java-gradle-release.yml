@@ -76,12 +76,12 @@ on:
         type: string
         default: ''
       github-packages-repository:
-        description: 'OWNER/REPO of a SHARED GitHub Packages registry for routed artifacts, instead of this repository''s own. Blank — the default — changes nothing, so the rollout is per repository. Set, it overrides the URL of the publishing repository named GitHubPackages, leaving the build script untouched: GitHub matches the destination from that URL alone, so many projects can share one registry. Requires SHARED_PACKAGES_TOKEN, because the Actions GITHUB_TOKEN reaches only its own repository. Versions already published do not move — a GitHub Packages version is immutable — so whatever resolves them must reach both registries until nothing asks for the old ones.'
+        description: 'OWNER/REPO of a SHARED GitHub Packages registry for routed artifacts, instead of this repository''s own. Blank — the default — changes nothing, so the rollout is per repository. Set, it overrides the URL of the publishing repository named GitHubPackages, leaving the build script untouched: GitHub matches the destination from that URL alone, so many projects can share one registry. Requires OCTOPUS_SHARED_PACKAGES_TOKEN, because the Actions GITHUB_TOKEN reaches only its own repository. Versions already published do not move — a GitHub Packages version is immutable — so whatever resolves them must reach both registries until nothing asks for the old ones.'
         required: false
         type: string
         default: ''
     secrets:
-      SHARED_PACKAGES_TOKEN:
+      OCTOPUS_SHARED_PACKAGES_TOKEN:
         description: 'Token with read:packages and write:packages on the repository named by github-packages-repository. Required only when that input is set, and ignored otherwise.'
         required: false
       OSSRH_USERNAME:
@@ -684,7 +684,7 @@ jobs:
         if: ${{ inputs.github-packages-repository != '' }}
         env:
           PACKAGES_REPOSITORY: ${{ inputs.github-packages-repository }}
-          SHARED_PACKAGES_TOKEN: ${{ secrets.SHARED_PACKAGES_TOKEN }}
+          OCTOPUS_SHARED_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
           set -euo pipefail
@@ -701,8 +701,8 @@ jobs:
             echo "Dry run: destination shape checked, credential checks skipped."
             exit 0
           fi
-          if [ -z "${SHARED_PACKAGES_TOKEN}" ]; then
-            echo "::error title=SHARED_PACKAGES_TOKEN is not set::github-packages-repository names a shared registry, and the Actions GITHUB_TOKEN cannot write to a repository other than its own. Pass SHARED_PACKAGES_TOKEN (read:packages + write:packages on ${PACKAGES_REPOSITORY}) from the caller, or leave github-packages-repository blank to publish to this repository's own registry." >&2
+          if [ -z "${OCTOPUS_SHARED_PACKAGES_TOKEN}" ]; then
+            echo "::error title=OCTOPUS_SHARED_PACKAGES_TOKEN is not set::github-packages-repository names a shared registry, and the Actions GITHUB_TOKEN cannot write to a repository other than its own. Pass OCTOPUS_SHARED_PACKAGES_TOKEN (read:packages + write:packages on ${PACKAGES_REPOSITORY}) from the caller, or leave github-packages-repository blank to publish to this repository's own registry." >&2
             exit 1
           fi
           # Set is not the same as working, and rotation is the failure that recurs: an expired
@@ -723,8 +723,8 @@ jobs:
           # It does NOT prove the upload will succeed. Authentication and permission to publish
           # into this particular registry are different questions, and only the upload answers
           # the second.
-          if ! probe_err="$(GH_TOKEN="$SHARED_PACKAGES_TOKEN" gh api user --silent 2>&1)"; then
-            echo "::error title=SHARED_PACKAGES_TOKEN validation failed::GitHub could not verify the token. It may be expired, revoked or malformed — or the call itself failed (network, rate limit, a GitHub incident). gh reported: ${probe_err}" >&2
+          if ! probe_err="$(GH_TOKEN="$OCTOPUS_SHARED_PACKAGES_TOKEN" gh api user --silent 2>&1)"; then
+            echo "::error title=OCTOPUS_SHARED_PACKAGES_TOKEN validation failed::GitHub could not verify the token. It may be expired, revoked or malformed — or the call itself failed (network, rate limit, a GitHub incident). gh reported: ${probe_err}" >&2
             exit 1
           fi
           echo "Routed publications go to https://maven.pkg.github.com/${PACKAGES_REPOSITORY}"
@@ -897,7 +897,7 @@ jobs:
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
           OCTOPUS_GITHUB_PACKAGES_URL: ${{ inputs.github-packages-repository != '' && format('https://maven.pkg.github.com/{0}', inputs.github-packages-repository) || '' }}
           GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
-          GITHUB_PACKAGES_TOKEN: ${{ inputs.github-packages-repository != '' && secrets.SHARED_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_PACKAGES_TOKEN: ${{ inputs.github-packages-repository != '' && secrets.OCTOPUS_SHARED_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
           # A routed publication that is signed puts its Sign task on this graph, and signing is
           # required by default for a non-SNAPSHOT version. Same secrets the Sonatype step uses —
           # under neutral names, because the export must not happen when they are absent.
