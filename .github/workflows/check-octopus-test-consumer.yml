@@ -108,6 +108,7 @@ jobs:
     # `pull_request` triggers cannot supply inputs, so default explicitly.
     env:
       ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.12' }}
+      SHELLCHECK_IMAGE: koalaman/shellcheck:v0.11.0
     steps:
       - uses: actions/checkout@v4
       # Note on the last -ignore: `job.workflow_sha` is a documented job-context
@@ -139,6 +140,17 @@ jobs:
           while IFS= read -r script; do
             bash -n "$script"
           done < <(find .github/scripts -type f -name '*.sh' | sort)
+      # The TeamCity scripts are linted by nothing else: actionlint covers `run:` blocks in
+      # workflow files, not standalone .sh files. Pinned image for the same reason actionlint is
+      # pinned - a linter that updates itself turns an unrelated pull request red. Warning level
+      # and above only: style and info findings here are deliberate (printf format strings built
+      # from variables in the harnesses, single quotes that must not expand).
+      - name: shellcheck TeamCity scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo" -w /repo "$SHELLCHECK_IMAGE" \
+            --shell=bash --severity=warning teamcity/scripts/*.sh
       - name: Validate workflow naming convention
         shell: bash
         run: bash .github/scripts/validate-workflow-naming.sh .

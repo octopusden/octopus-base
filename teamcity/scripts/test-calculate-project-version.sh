@@ -4,7 +4,7 @@
 #
 # Every case compares the COMPLETE output and exit code, not a grep: a suite of positive greps
 # passes on an implementation that emits every service message on every path.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 script="$PWD/calculate-project-version.sh"
 xml="$PWD/../../teamcity.meta-runners/OctopusCalculateBuildParameters.xml"
 pass=0; fail=0
@@ -89,6 +89,26 @@ exact "only vX.Y.N tags count: v2.0.6.1, v2.0.64-rc1, v2.0.50x, v2x0.7 are not o
 repo e v2.0.3; line $'  2.0 \r'
 exact "blanks, CR and a missing trailing newline are tolerated" \
   "$(ok 2.0.4 "Release line: 2.0 (from .release-line)" "Newest tag on the line: v2.0.3")"
+
+# Each side of the trim on its own. The combined case above passes even when only one side
+# works, and the leading side is the one a reader gets wrong: written with a single % instead
+# of %%, `${line#"${line%[![:space:]]*}"}` turns 2.1 into 1 rather than leaving it alone.
+repo e3 v2.1.4; line $'  2.1\n'
+exact "leading blanks alone are trimmed, and nothing else is" \
+  "$(ok 2.1.5 "Release line: 2.1 (from .release-line)" "Newest tag on the line: v2.1.4")"
+
+repo e4 v2.1.4; line $'2.1   \n'
+exact "trailing blanks alone are trimmed" \
+  "$(ok 2.1.5 "Release line: 2.1 (from .release-line)" "Newest tag on the line: v2.1.4")"
+
+repo e5 v2.1.4; line $'\t2.1\t\n'
+exact "tabs count as blanks on both sides" \
+  "$(ok 2.1.5 "Release line: 2.1 (from .release-line)" "Newest tag on the line: v2.1.4")"
+
+# A line of nothing but blanks trims to empty, which the format check then refuses by name.
+repo e6 v2.1.4; line $'   \n'
+exact "a line of blanks is refused, not silently treated as a line" \
+  "$(problem_out ".release-line must hold major.minor on its first line, got |'|'." releaseline_bad_format)"
 
 repo e2 v2.0.0; line $'2.0\n'
 exact "the line's first release counts: v2.0.0 present -> 2.0.1, not 2.0.0 again" \
@@ -241,7 +261,7 @@ else echo "FAIL [a git warning reached the tag list]"; sed 's/^/       /' <<<"$o
 # The file belongs to the repository, not to whatever directory the step happens to run in.
 # `git tag` finds the repository from anywhere, so without this the build would quietly fall back
 # to deriving the line from tags - here, the 2.5.1 that declaring 2.4 exists to avoid.
-repo w1 v2.4.1 v2.5.0; line $'2.4\n'; mkdir -p sub && cd sub
+repo w1 v2.4.1 v2.5.0; line $'2.4\n'; mkdir -p sub && cd sub || exit 1
 exact "the file is read from the repository root, not the working directory" \
   "$(ok 2.4.2 "Release line: 2.4 (from .release-line)" "Newest tag on the line: v2.4.1")"
 

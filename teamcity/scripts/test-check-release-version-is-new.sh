@@ -5,7 +5,7 @@
 # Every case compares the COMPLETE output and exit code, not a grep. A suite of positive
 # greps passes on an implementation that emits every service message on every path - which
 # is how an injection and a fail-open comparison both got through review of this file once.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 script=./check-release-version-is-new.sh
 xml=../../teamcity.meta-runners/OctopusCheckReleaseVersionIsNew.xml
 pass=0; fail=0

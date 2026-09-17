@@ -93,8 +93,16 @@ if [ -f "$file" ]; then
   # trailing trim takes it off. Leading zeros are refused: 2.05 would be a line of its own here
   # and the same version as 2.5 downstream.
   IFS= read -r line < "$file" || true
-  line="${line#"${line%%[![:space:]]*}"}"
-  line="${line%"${line##*[![:space:]]}"}"
+  # Trim both ends. Written with extglob rather than the usual pair of nested expansions,
+  # ${line#"${line%%[![:space:]]*}"} and its mirror: those are correct but unreadable, and a
+  # single % where the first needs %% silently turns 2.1 into 1 - a reader of this file has
+  # already read it that way. +([[:space:]]) is one-or-more blanks, and the pattern is bash's
+  # own. A [[ =~ ]] with the blanks outside the capture reads better still, but it leans on the
+  # C library's regex to prefer the longest leading match: musl gives the capture the leading
+  # blanks instead, so on an Alpine agent that form would not trim them.
+  shopt -s extglob
+  line="${line##+([[:space:]])}"
+  line="${line%%+([[:space:]])}"
   [[ "$line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || problem "${file} must hold major.minor on its first line, got '${line}'." "releaseline_bad_format"
   echo "Release line: ${line} (from ${file})"
 
