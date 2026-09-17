@@ -212,13 +212,17 @@ jobs:
             reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
           fi
 
-          # `generate-test-sources` before the goal: kotlin-maven-plugin compiles
-          # src/{main,test}/kotlin through its own sourceDirs, which never reach the Maven model
-          # — build-helper's add-source executions do that, and they are bound to phases. A bare
-          # goal invocation runs no phases, so the scanner sees src/main/java and nothing else.
+          # `generate-sources` before the goal: kotlin-maven-plugin compiles src/{main,test}/kotlin
+          # through its own sourceDirs, which never reach the Maven model — build-helper's
+          # add-source executions do that, and they are bound to phases. A bare goal invocation
+          # runs no phases, so the scanner would see src/main/java and nothing else.
+          #
+          # Not a later phase: octopus-parent binds maven-javadoc-plugin:jar to generate-resources,
+          # so anything past that rebuilds javadoc on the scanner JDK and fails. Consumers must
+          # therefore register BOTH source roots at generate-sources, not generate-test-sources.
           # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
           mvn --batch-mode ${MVN_PARAMETERS:-} \
-            generate-test-sources \
+            generate-sources \
             "org.sonarsource.scanner.maven:sonar-maven-plugin:${SCANNER_VERSION}:sonar" \
             "${reference_arg[@]}" \
             -Dsonar.host.url="${SONAR_HOST_URL}" \
