@@ -4,7 +4,7 @@
 #
 # Every case compares the COMPLETE output and exit code, not a grep: a suite of positive greps
 # passes on an implementation that emits every service message on every path.
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 script="$PWD/calculate-project-version.sh"
 xml="$PWD/../../teamcity.meta-runners/OctopusCalculateBuildParameters.xml"
 pass=0; fail=0
@@ -261,7 +261,7 @@ else echo "FAIL [a git warning reached the tag list]"; sed 's/^/       /' <<<"$o
 # The file belongs to the repository, not to whatever directory the step happens to run in.
 # `git tag` finds the repository from anywhere, so without this the build would quietly fall back
 # to deriving the line from tags - here, the 2.5.1 that declaring 2.4 exists to avoid.
-repo w1 v2.4.1 v2.5.0; line $'2.4\n'; mkdir -p sub && cd sub
+repo w1 v2.4.1 v2.5.0; line $'2.4\n'; mkdir -p sub && cd sub || exit 1
 exact "the file is read from the repository root, not the working directory" \
   "$(ok 2.4.2 "Release line: 2.4 (from .release-line)" "Newest tag on the line: v2.4.1")"
 
