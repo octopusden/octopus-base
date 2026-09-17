@@ -50,6 +50,8 @@ Every PR runs the `Merge Gate` workflow with the following jobs:
 | `consumer-verify` | scope-driven | `octopus-test` canary (only when workflow/action files change) |
 | `gate/merge` | yes | Aggregates all above — must be green to merge |
 
+Consumers can also use the shared [workflow lint and Gradle dependency submission](docs/consumer-quality-workflows.md) workflows.
+
 ## Consumer verification in octopus-test
 
 `consumer-verify` validates reusable workflow changes against `octopus-test` (real consumer repo):

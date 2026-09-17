@@ -1,0 +1,25 @@
+name: Workflow Lint
+
+on: workflow_call
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate GitHub Actions workflows
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+      - name: Validate shell helper syntax
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+
+          for script in sorted(Path(".github").rglob("*.sh")):
+              print(f"Checking {script}", flush=True)
+              subprocess.run(["bash", "-n", str(script)], check=True)
