@@ -13,7 +13,6 @@ permissions:
 
 jobs:
   dependency-submission:
-    name: dependency-submission
     # Resolve trusted default-branch code only. Never grant a PR's Gradle scripts this token.
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -30,5 +29,3 @@ jobs:
         uses: gradle/actions/dependency-submission@v5
         with:
           validate-wrappers: true
-          dependency-graph: generate-submit-and-upload
-          dependency-graph-continue-on-failure: false

@@ -25,13 +25,9 @@ Call `common-gradle-dependency-submission.yml` with `java-version` and
 and, optionally, `workflow_dispatch`. The reusable workflow also checks the
 event and default branch before executing Gradle. It does not run on PRs.
 
-`gradle/actions/dependency-submission@v5` validates the wrapper, resolves the
-Gradle dependencies, submits their graph to GitHub and uploads a graph artifact.
-Resolution/submission failures fail that workflow. It does not run application
-tests and does not form part of the PR merge gate.
+The workflow uses [Gradle dependency submission](https://github.com/gradle/actions/tree/v5/dependency-submission)
+with wrapper validation enabled. It does not run application tests or form part
+of the PR merge gate; resolution/submission failures fail the workflow itself.
 
-After the first successful default-branch run, inspect the repository dependency
-graph for JVM packages and enable Dependabot alerts in repository settings if
-needed. Dependency submission supplies inventory; it does not itself enforce a
-vulnerability threshold or replace CodeQL/Trivy. GitHub write-token submission
-cannot be verified by a feature-branch PR run; verify it after merge.
+Dependency inventory does not itself enforce a vulnerability threshold or
+replace CodeQL/Trivy.
