@@ -45,7 +45,7 @@ Every PR runs the `Merge Gate` workflow with the following jobs:
 |-----|:-----------:|----------------|
 | `build` | yes | `gradle-quality-plugin`: `./gradlew build test` |
 | `quality` | yes | `gradle-quality-plugin`: `./gradlew detekt ktlintCheck` |
-| `workflow-lint` | yes | `actionlint` on all workflow YAML + `bash -n` on helper scripts |
+| `workflow-lint` | yes | `actionlint` on all workflow YAML + `bash -n` on helper scripts + `shellcheck` (warning and above) on `teamcity/scripts/*.sh` |
 | `security` | yes | External `uses@ref` validation for resolvable refs |
 | `consumer-verify` | scope-driven | `octopus-test` canary (only when workflow/action files change) |
 | `gate/merge` | yes | Aggregates all above — must be green to merge |
