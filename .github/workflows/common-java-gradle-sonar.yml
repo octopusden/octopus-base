@@ -69,7 +69,7 @@ on:
         default: false
     secrets:
       SONAR_TOKEN:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -78,6 +78,7 @@ jobs:
   sonar:
     name: sonar/analysis
     runs-on: ${{ inputs.runs-on }}
+    environment: Prod
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
