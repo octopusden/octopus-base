@@ -23,6 +23,7 @@ uses: octopusden/octopus-base/.github/workflows/common-<name>.yml@<ref>
 |---|---|
 | `common-check-and-register-release.yml` | Check and register a release |
 | `common-docker-build-deploy.yml` | Docker image build and deploy |
+| `common-gradle-dependency-submission.yml` | Resolve and submit Gradle dependencies on the trusted default branch |
 | `common-java-gradle-build.yml` | Java/Gradle build |
 | `common-java-gradle-quality-gates.yml` | Java/Gradle quality gates |
 | `common-java-gradle-release.yml` | Java/Gradle release |
@@ -33,6 +34,7 @@ uses: octopusden/octopus-base/.github/workflows/common-<name>.yml@<ref>
 | `common-py-build-deploy.yml` | Python build and deploy |
 | `common-py3-pysvn-build-deploy.yml` | Python 3 / pysvn build and deploy |
 | `common-register-release.yml` | Register a release |
+| `common-workflow-lint.yml` | Validate consumer workflows and shell helper syntax |
 
 ### Rules for public reusable workflows
 
