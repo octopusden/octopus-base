@@ -47,39 +47,49 @@ with tempfile.TemporaryDirectory(prefix="workflow-lint-") as directory:
         shutil.copyfile(Path(".github/workflows") / name, workflows / name)
     fixture = workflows / "fixture.yml"
     fixture.write_text(valid_workflow)
-    caller = workflows / "consumer.yml"
-    caller.write_text("""\
-name: Consumer
-on: push
+    (workflows / "consumer-lint.yml").write_text("""\
+name: Consumer lint
+on: pull_request
 permissions:
-  contents: write
+  contents: read
 jobs:
   workflow-lint:
     uses: ./.github/workflows/common-workflow-lint.yml
+""")
+    caller = workflows / "consumer-dependencies.yml"
+    caller.write_text("""\
+name: Consumer dependencies
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
   dependencies:
     uses: ./.github/workflows/common-gradle-dependency-submission.yml
     with:
       java-version: '21'
 """)
 
-    def check(name, command, should_pass):
+    def check(name, command, error=None):
         result = subprocess.run(
             command, cwd=root, env={**os.environ, "PWD": str(root)},
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
-        if (result.returncode == 0) != should_pass:
+        if (result.returncode == 0) != (error is None) or (error and error not in result.stdout):
             raise AssertionError(f"{name}: exit {result.returncode}\n{result.stdout}")
         print(f"PASS {name}", flush=True)
 
-    check("valid consumer workflow", ["bash", "-e", "-c", lint], True)
-    check("consumer without shell helpers", ["python3", "-c", shell_check], True)
+    check("valid consumer workflow", ["bash", "-e", "-c", lint])
+    check("consumer without shell helpers", ["python3", "-c", shell_check])
     fixture.write_text(valid_workflow.replace("ubuntu-latest", "${{ invalid.runner }}"))
-    check("invalid workflow expression fails", ["bash", "-e", "-c", lint], False)
+    check("invalid workflow expression fails", ["bash", "-e", "-c", lint], 'undefined variable "invalid"')
     fixture.write_text(valid_workflow)
     caller.write_text(caller.read_text().replace("    with:\n      java-version: '21'\n", ""))
-    check("missing required JDK fails consumer validation", ["bash", "-e", "-c", lint], False)
+    check("missing required JDK fails consumer validation", ["bash", "-e", "-c", lint], 'input "java-version" is required')
     helper = root / ".github/helper with spaces.sh"
     helper.write_text("#!/bin/bash\necho ok\n")
-    check("valid helper, including spaces in its name", ["python3", "-c", shell_check], True)
+    check("valid helper, including spaces in its name", ["python3", "-c", shell_check])
     helper.write_text("#!/bin/bash\nif true\n")
-    check("invalid shell helper fails", ["python3", "-c", shell_check], False)
+    check("invalid shell helper fails", ["python3", "-c", shell_check], "syntax error: unexpected end of file")

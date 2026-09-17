@@ -38,11 +38,11 @@ for file in "${files[@]}"; do
   while IFS= read -r line || [[ -n "$line" ]]; do
     line_no=$((line_no + 1))
 
-    if [[ ! "$line" =~ ^[[:space:]]*uses:[[:space:]]*([^[:space:]#]+) ]]; then
+    if [[ ! "$line" =~ ^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*([^[:space:]#]+) ]]; then
       continue
     fi
 
-    uses_ref="${BASH_REMATCH[1]}"
+    uses_ref="${BASH_REMATCH[2]}"
     uses_ref="${uses_ref#\"}"
     uses_ref="${uses_ref%\"}"
     uses_ref="${uses_ref#\'}"

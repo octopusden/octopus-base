@@ -225,6 +225,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Action reference validation scenarios
+        run: python3 .github/scripts/test/action-ref-scenarios.py
       - name: Validate external action refs
         env:
           GH_TOKEN: ${{ github.token }}
