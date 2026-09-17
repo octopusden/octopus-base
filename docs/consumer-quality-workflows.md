@@ -15,7 +15,7 @@ expressions and shell syntax then fail the gate. It needs no repository secrets.
 The producer's `workflow-lint` job executes
 `.github/scripts/test/workflow-lint-scenarios.py` against valid and invalid
 consumer fixtures. Run it from the repository root with Python 3 and Docker.
-For local machines without Docker bind mounts, `--native-actionlint` uses an
+For local machines without Docker, `--native-actionlint` uses an
 installed actionlint 1.7.12; CI exercises the workflow's Docker invocation.
 
 ## Gradle dependency submission

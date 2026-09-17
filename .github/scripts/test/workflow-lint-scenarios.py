@@ -38,6 +38,8 @@ jobs:
 
 with tempfile.TemporaryDirectory(prefix="workflow-lint-") as directory:
     root = Path(directory).resolve()
+    # The actionlint image runs as guest; TemporaryDirectory defaults to mode 0700.
+    root.chmod(0o755)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     workflows = root / ".github/workflows"
     workflows.mkdir(parents=True)
