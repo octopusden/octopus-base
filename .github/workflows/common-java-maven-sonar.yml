@@ -212,8 +212,13 @@ jobs:
             reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
           fi
 
+          # `generate-test-sources` before the goal: kotlin-maven-plugin compiles
+          # src/{main,test}/kotlin through its own sourceDirs, which never reach the Maven model
+          # — build-helper's add-source executions do that, and they are bound to phases. A bare
+          # goal invocation runs no phases, so the scanner sees src/main/java and nothing else.
           # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
           mvn --batch-mode ${MVN_PARAMETERS:-} \
+            generate-test-sources \
             "org.sonarsource.scanner.maven:sonar-maven-plugin:${SCANNER_VERSION}:sonar" \
             "${reference_arg[@]}" \
             -Dsonar.host.url="${SONAR_HOST_URL}" \
