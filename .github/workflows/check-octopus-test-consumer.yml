@@ -154,6 +154,8 @@ jobs:
       - name: Validate workflow naming convention
         shell: bash
         run: bash .github/scripts/validate-workflow-naming.sh .
+      - name: Test reusable workflow lint on consumer fixtures
+        run: python3 .github/scripts/test/workflow-lint-scenarios.py
       # The meta-runner carries its own copy of this script - TeamCity cannot source one
       # from a repository - so the runner's last cases assert the copy has not drifted and
       # cannot be made injectable. That is what this step is here for.
@@ -235,6 +237,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Action reference validation scenarios
+        run: python3 .github/scripts/test/action-ref-scenarios.py
       - name: Validate external action refs
         env:
           GH_TOKEN: ${{ github.token }}
