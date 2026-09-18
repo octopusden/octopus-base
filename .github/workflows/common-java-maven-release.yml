@@ -412,10 +412,39 @@ jobs:
           fi
           echo "id=${id}" >> "${GITHUB_OUTPUT}"
 
+      # The script lives in octopus-base; this job has only the CONSUMER's checkout. Pinned to
+      # job.workflow_sha - the same commit as this workflow - so the helper can never drift from the
+      # logic that calls it, the same mechanism the tag-and-release job uses below and the Gradle
+      # release uses for this very script.
+      - name: Resolve publish helper ref
+        id: publish-helper-ref
+        if: ${{ !inputs.dry-run && steps.portal-deployment.outputs.id != '' }}
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Refusing to publish with an unpinned helper." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      # No continue-on-error, unlike the Gradle preflight fetch: by this point the bundle is already
+      # uploaded, so a release that cannot fetch the helper must fail loudly rather than leave a
+      # validated deployment nobody publishes - which is the whole defect this step exists to close.
+      - name: Fetch publish helper
+        if: ${{ !inputs.dry-run && steps.portal-deployment.outputs.id != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.publish-helper-ref.outputs.sha }}
+          path: .octopus-base-publish
+          sparse-checkout: .github/scripts
+
       - name: Finish the publication through the Central Portal
         id: portal-publish
         if: ${{ !inputs.dry-run && steps.portal-deployment.outputs.id != '' }}
-        run: bash .github/scripts/portal-publish.sh
+        run: bash .octopus-base-publish/.github/scripts/portal-publish.sh
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
