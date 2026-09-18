@@ -374,11 +374,53 @@ jobs:
 
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
-        run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Tee'd because the next step needs the deployment id the Portal plugin prints. Without it,
+          # an upload that never publishes is indistinguishable from a finished release.
+          mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }} 2>&1 \
+            | tee "${RUNNER_TEMP}/maven-deploy.log"
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      # Publishing is part of releasing. central-publishing-maven-plugin uploads a bundle and, with
+      # autoPublish honoured, publishes it - but twice on octopus-parent (2.1.0, 2.2.0) it stopped at
+      # VALIDATED with autoPublish=true present in the effective POM, leaving a version that was not
+      # resolvable while this workflow reported success.
+      #
+      # The Gradle release already finishes through the Portal API with portal-publish.sh; the Maven
+      # one never got that step. This is the same script, entered through its RESUME_DEPLOYMENT_ID
+      # path with the id the plugin printed: it waits for VALIDATED, publishes, waits for PUBLISHED and
+      # verifies the artifacts resolve, and it classifies its own failures for the recovery step below.
+      #
+      # A repository that publishes somewhere other than the Portal prints no deployment id, and this
+      # step then does nothing.
+      - name: Read the Portal deployment id
+        id: portal-deployment
+        if: ${{ !inputs.dry-run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="$(grep -oE 'deploymentId: [0-9a-f-]+' "${RUNNER_TEMP}/maven-deploy.log" | tail -1 | awk '{print $2}' || true)"
+          if [ -z "${id}" ]; then
+            echo "No Central Portal deployment id in the deploy log; this publication is not Portal-bound."
+          else
+            echo "Portal deployment: ${id}"
+          fi
+          echo "id=${id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Finish the publication through the Central Portal
+        id: portal-publish
+        if: ${{ !inputs.dry-run && steps.portal-deployment.outputs.id != '' }}
+        run: bash .github/scripts/portal-publish.sh
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          BUILD_VERSION: ${{ env.BUILD_VERSION }}
+          RESUME_DEPLOYMENT_ID: ${{ steps.portal-deployment.outputs.id }}
 
   # Tagging and release creation are a separate job deliberately. They run after the
   # artifacts are published, and publishing is irreversible: Maven Central refuses a
