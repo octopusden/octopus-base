@@ -376,9 +376,10 @@ jobs:
         if: ${{ !inputs.dry-run }}
         shell: bash
         run: |
-          set -euo pipefail
-          # Tee'd because the next step needs the deployment id the Portal plugin prints. Without it,
-          # an upload that never publishes is indistinguishable from a finished release.
+          # -u only: `shell: bash` already runs with -e and -o pipefail. Tee'd because the next step
+          # needs the deployment id the plugin prints - without it an upload that never publishes is
+          # indistinguishable from a finished release.
+          set -u
           mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }} 2>&1 \
             | tee "${RUNNER_TEMP}/maven-deploy.log"
         env:
@@ -403,7 +404,7 @@ jobs:
         if: ${{ !inputs.dry-run }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           id="$(grep -oE 'deploymentId: [0-9a-f-]+' "${RUNNER_TEMP}/maven-deploy.log" | tail -1 | awk '{print $2}' || true)"
           if [ -z "${id}" ]; then
             echo "No Central Portal deployment id in the deploy log; this publication is not Portal-bound."
@@ -413,16 +414,16 @@ jobs:
           echo "id=${id}" >> "${GITHUB_OUTPUT}"
 
       # The script lives in octopus-base; this job has only the CONSUMER's checkout. Pinned to
-      # job.workflow_sha - the same commit as this workflow - so the helper can never drift from the
-      # logic that calls it, the same mechanism the tag-and-release job uses below and the Gradle
-      # release uses for this very script.
+      # job.workflow_sha, the same mechanism the tag-and-release job below and the Gradle release use.
+      # The guard is not decoration: actions/checkout resolves an EMPTY ref against the other
+      # repository's default branch, so an unset sha would silently run a different helper.
       - name: Resolve publish helper ref
         id: publish-helper-ref
         if: ${{ !inputs.dry-run && steps.portal-deployment.outputs.id != '' }}
         env:
           HELPER_SHA: ${{ job.workflow_sha }}
         run: |
-          set -euo pipefail
+          set -u
           if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Refusing to publish with an unpinned helper." >&2
             exit 1
