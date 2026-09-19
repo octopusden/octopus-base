@@ -477,8 +477,16 @@ jobs:
   tag-and-release:
     name: Tag and release
     # finish-publication is skipped for a repository that does not publish through the Portal, and a
-    # skipped need would otherwise skip this job too - hence result checks rather than a bare needs.
-    if: ${{ !inputs.dry-run && needs.prepare-build-publish-release.result == 'success' && needs.finish-publication.result != 'failure' && needs.finish-publication.result != 'cancelled' }}
+    # skipped need would otherwise skip this job too. Result checks alone do NOT fix that: an `if` with
+    # no status check function gets an implicit success(), which demands every need SUCCEEDED, so the
+    # checks below would never even be evaluated. !cancelled() is that status function - it replaces the
+    # implicit success() and hands the decision to the explicit checks.
+    if: >-
+      ${{ !cancelled()
+          && !inputs.dry-run
+          && needs.prepare-build-publish-release.result == 'success'
+          && needs.finish-publication.result != 'failure'
+          && needs.finish-publication.result != 'cancelled' }}
     needs: [prepare-build-publish-release, finish-publication]
     runs-on: ubuntu-latest
     steps:
