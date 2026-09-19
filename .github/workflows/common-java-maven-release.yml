@@ -396,9 +396,11 @@ jobs:
       # resolvable while this workflow reported success.
       #
       # The Gradle release already finishes through the Portal API with portal-publish.sh; the Maven
-      # one never got that step. This is the same script, entered through its RESUME_DEPLOYMENT_ID
-      # path with the id the plugin printed: it waits for VALIDATED, publishes, waits for PUBLISHED and
-      # verifies the artifacts resolve, and it classifies its own failures for the recovery step below.
+      # one never got that step. This step only reads the id out of the deploy log; the finish-publication
+      # job below runs that script, entered through its RESUME_DEPLOYMENT_ID path with this id, and it
+      # waits for VALIDATED, publishes, waits for PUBLISHED and verifies the artifacts resolve. Recovery
+      # from a failure there is re-running that job, which resumes the same deployment - nothing here
+      # consumes the script's failure classification.
       #
       # A repository that publishes somewhere other than the Portal prints no deployment id, and this
       # step then does nothing.
