@@ -60,6 +60,9 @@ jobs:
       # The commit this job actually built. Published so the tagging job tags exactly
       # that, instead of re-resolving a ref that may have moved in the meantime.
       built-sha: ${{ steps.built-commit.outputs.sha }}
+      # The Portal deployment the publish job finishes. Published so that job can be re-run on its own:
+      # re-running THIS one would repeat `mvn deploy` for a version Central already has.
+      portal-deployment-id: ${{ steps.portal-deployment.outputs.id }}
     env:
       BUILD_VERSION: ''
 
@@ -374,11 +377,94 @@ jobs:
 
       - name: Publish to Sonatype Nexus
         if: ${{ !inputs.dry-run }}
-        run: mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }}
+        shell: bash
+        run: |
+          # -u only: `shell: bash` already runs with -e and -o pipefail. Tee'd because the next step
+          # needs the deployment id the plugin prints - without it an upload that never publishes is
+          # indistinguishable from a finished release.
+          set -u
+          mvn --batch-mode deploy -P gpg ${{ inputs.release-mvn-parameters }} 2>&1 \
+            | tee "${RUNNER_TEMP}/maven-deploy.log"
         env:
           MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      # Publishing is part of releasing. central-publishing-maven-plugin uploads a bundle and, with
+      # autoPublish honoured, publishes it - but twice on octopus-parent (2.1.0, 2.2.0) it stopped at
+      # VALIDATED with autoPublish=true present in the effective POM, leaving a version that was not
+      # resolvable while this workflow reported success.
+      #
+      # The Gradle release already finishes through the Portal API with portal-publish.sh; the Maven
+      # one never got that step. This step only reads the id out of the deploy log; the finish-publication
+      # job below runs that script, entered through its RESUME_DEPLOYMENT_ID path with this id, and it
+      # waits for VALIDATED, publishes, waits for PUBLISHED and verifies the artifacts resolve. Recovery
+      # from a failure there is re-running that job, which resumes the same deployment - nothing here
+      # consumes the script's failure classification.
+      #
+      # A repository that publishes somewhere other than the Portal prints no deployment id, and this
+      # step then does nothing.
+      - name: Read the Portal deployment id
+        id: portal-deployment
+        if: ${{ !inputs.dry-run }}
+        shell: bash
+        run: |
+          set -u
+          id="$(grep -oE 'deploymentId: [0-9a-f-]+' "${RUNNER_TEMP}/maven-deploy.log" | tail -1 | awk '{print $2}' || true)"
+          if [ -z "${id}" ]; then
+            echo "No Central Portal deployment id in the deploy log; this publication is not Portal-bound."
+          else
+            echo "Portal deployment: ${id}"
+          fi
+          echo "id=${id}" >> "${GITHUB_OUTPUT}"
+
+  # Publishing is a job of its own for the same reason tagging is, below: it runs after an irreversible
+  # upload, and GitHub's "re-run failed jobs" restarts a whole job. Inside the build job, a publish that
+  # failed after Central had already accepted the bundle could only be retried by repeating `mvn deploy`
+  # for a version that now exists - which fails, leaving the release stuck with no way out but by hand.
+  # Split, a re-run repeats only the publish, against the deployment id the build job recorded.
+  finish-publication:
+    name: Finish publication
+    needs: prepare-build-publish-release
+    if: ${{ !inputs.dry-run && needs.prepare-build-publish-release.outputs.portal-deployment-id != '' }}
+    runs-on: ubuntu-latest
+    environment: Prod
+    steps:
+      # The script lives in octopus-base; a consumer's checkout does not have it. Pinned to
+      # job.workflow_sha, the same mechanism the tag-and-release job below uses. The guard is not
+      # decoration: actions/checkout resolves an EMPTY ref against the other repository's default branch,
+      # so an unset sha would silently run a different helper.
+      - name: Resolve publish helper ref
+        id: publish-helper-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -u
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the publish helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA. Refusing to publish with an unpinned helper." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch publish helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.publish-helper-ref.outputs.sha }}
+          path: .octopus-base-publish
+          sparse-checkout: .github/scripts
+
+      # portal-publish.sh waits for VALIDATED, publishes, waits for PUBLISHED and verifies the artifacts
+      # resolve on Central. Entered through its RESUME_DEPLOYMENT_ID path, so this job never uploads
+      # anything: re-running it resumes the deployment rather than repeating the release.
+      - name: Finish the publication through the Central Portal
+        id: portal-publish
+        run: bash .octopus-base-publish/.github/scripts/portal-publish.sh
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          BUILD_VERSION: ${{ needs.prepare-build-publish-release.outputs.build-version }}
+          RESUME_DEPLOYMENT_ID: ${{ needs.prepare-build-publish-release.outputs.portal-deployment-id }}
 
   # Tagging and release creation are a separate job deliberately. They run after the
   # artifacts are published, and publishing is irreversible: Maven Central refuses a
@@ -392,8 +478,18 @@ jobs:
   # the publish job's environment would ask a protected environment to approve twice.
   tag-and-release:
     name: Tag and release
-    if: ${{ !inputs.dry-run }}
-    needs: prepare-build-publish-release
+    # finish-publication is skipped for a repository that does not publish through the Portal, and a
+    # skipped need would otherwise skip this job too. Result checks alone do NOT fix that: an `if` with
+    # no status check function gets an implicit success(), which demands every need SUCCEEDED, so the
+    # checks below would never even be evaluated. !cancelled() is that status function - it replaces the
+    # implicit success() and hands the decision to the explicit checks.
+    if: >-
+      ${{ !cancelled()
+          && !inputs.dry-run
+          && needs.prepare-build-publish-release.result == 'success'
+          && needs.finish-publication.result != 'failure'
+          && needs.finish-publication.result != 'cancelled' }}
+    needs: [prepare-build-publish-release, finish-publication]
     runs-on: ubuntu-latest
     steps:
       # The pom.xml the publish job actually released, restored as the release asset.
