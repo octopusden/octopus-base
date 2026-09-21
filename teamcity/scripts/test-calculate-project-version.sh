@@ -357,8 +357,9 @@ exact_with "false is a value, not a missing binding" \
 awk '/<!\[CDATA\[#!\/usr\/bin\/env bash/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\]\]>.*/,"");if(length)print;exit} print}' "$xml" > "$work/embedded"
 embedded="$(cat "$work/embedded")"   # the stripped form, for the greps and the injection case
 # awk's print re-appends a newline whether or not the CDATA had one, so a source file without a
-# final newline would diff against a faithful copy of itself. Pinned here rather than tolerated,
-# which keeps the comparison below a straight byte comparison.
+# final newline diffs against a faithful copy of itself. This does not prevent that - it names
+# it: when it fires, the comparison below goes red too, showing a phantom
+# "\ No newline at end of file" that means the source, not the XML.
 if [ -z "$(tail -c1 "$script")" ]; then echo "PASS [script ends with a newline]"; pass=$((pass + 1))
 else echo "FAIL [script has no final newline: the embedded copy cannot be compared byte for byte]"; fail=$((fail + 1)); fi
 
@@ -373,9 +374,10 @@ else
   fail=$((fail + 1))
 fi
 
-# The comparison above cannot see a missing final newline - command substitution strips it from
-# both sides - so the terminator's own line is pinned separately. Re-embedding that swallows it
-# is a silent edit to a file nobody diffs by eye.
+# The comparison above still cannot see a ]]> folded onto the last code line: awk supplies the
+# newline the CDATA lost, so both sides match. Not redundant now that the comparison is a diff -
+# this is the one tail case diff cannot reach, and re-embedding that swallows the terminator is
+# a silent edit to a file nobody reads by eye.
 if grep -q '^\]\]></param>' "$xml"; then
   echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
 else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
