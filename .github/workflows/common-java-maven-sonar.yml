@@ -148,14 +148,12 @@ jobs:
           path: .octopus-base-sonar
           sparse-checkout: .github/scripts
 
-      # continue-on-error: a repository with no release tag falls through to the fallback version.
       - name: Find latest release tag
         id: latest-tag
-        continue-on-error: true
-        uses: oprypin/find-latest-tag@v1
-        with:
-          repository: ${{ github.repository }}
-          regex: ${{ inputs.version-tag-regex }}
+        shell: bash
+        env:
+          VERSION_TAG_REGEX: ${{ inputs.version-tag-regex }}
+        run: bash .octopus-base-sonar/.github/scripts/latest-release-tag.sh
 
       - name: Resolve analysis parameters
         id: params
@@ -163,7 +161,7 @@ jobs:
         env:
           ORGANIZATION_INPUT: ${{ inputs.sonar-organization }}
           PROJECT_KEY_INPUT: ${{ inputs.sonar-project-key }}
-          LATEST_TAG: ${{ steps.latest-tag.outputs.tag }}
+          LATEST_TAG: ${{ steps.latest-tag.outputs.latest-tag }}
           FALLBACK_VERSION: ${{ inputs.fallback-version }}
           DEFAULT_BRANCH_INPUT: ${{ inputs.default-branch }}
           REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
