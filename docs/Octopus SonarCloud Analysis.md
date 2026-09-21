@@ -241,9 +241,18 @@ The limit is the JVM the **scanner** runs in, not the bytecode the project targe
 | Java 11 / 17 | with JRE auto-provisioning — the scanner fetches its own JDK 21 |
 | Java 8 | not at all; the plugin cannot load |
 
-**Gradle** repositories need no special handling at any version. Gradle runs on the project's own
-JDK and the scanner provisions what it needs underneath, so `java-version` is simply the version
-the project builds with.
+The Maven workflow works around this by running the analysis in a second JVM. Gradle cannot: see
+below.
+
+**Gradle** repositories need **Java 11 or later**. The `org.sonarqube` plugin is compiled for Java
+11 and is loaded by the build JVM itself, before scanner JRE auto-provisioning can do anything
+about it, so a Java 8 Gradle build fails while resolving the plugin. Above that floor there is
+nothing to handle: Gradle runs on the project's own JDK and the scanner provisions JDK 21
+underneath, so `java-version` is simply the version the project builds with. Every Gradle
+repository in `octopusden` is already on 11 or later.
+
+A Gradle repository pinned to Java 8 has no supported configuration here — the Maven workflow's
+two-JDK split has no Gradle equivalent, because the plugin has to load in the build's own JVM.
 
 **Maven** repositories on Java 8 cannot load the scanner in the build JVM, so the workflow installs
 two JDKs: the project builds on its own, and the analysis runs as a separate invocation on JDK 21
