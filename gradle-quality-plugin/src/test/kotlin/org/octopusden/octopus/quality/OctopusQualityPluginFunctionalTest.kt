@@ -2068,4 +2068,232 @@ class OctopusQualityPluginFunctionalTest {
         val failed = runner("qualityCoverage").buildAndFail()
         assertEquals(TaskOutcome.FAILED, failed.task(":jacocoTestCoverageVerification")?.outcome)
     }
+
+    // ===============================================================
+    // Multi-module JaCoCo aggregation (#231)
+    //
+    // The gap that let this ship: every coverage-enabled case above is single-module, and its
+    // Kotlin fixture resolves to Kover under AUTO — so nothing ever realized `qualityCoverage`
+    // in a multi-module JaCoCo build, which is the only shape that reaches the aggregate tasks.
+    // ===============================================================
+
+    /**
+     * Java `Calc` in [module] under package `com.example.<module>`; the paired test covers only
+     * `add` → 2 of 5 lines. Per-module packages keep the aggregate report free of duplicate class
+     * names, which JaCoCo's analyzer rejects.
+     */
+    private fun writeJavaCalcModule(module: String) {
+        val pkgPath = "com/example/$module"
+        subDir("$module/src/main/java/$pkgPath")
+        File(projectDir, "$module/src/main/java/$pkgPath/Calc.java").writeText(
+            """
+            package com.example.$module;
+            public class Calc {
+                public int add(int a, int b) { return a + b; }
+                public int sub(int a, int b) { return a - b; }
+                public int mul(int a, int b) { return a * b; }
+                public int div(int a, int b) { return a / b; }
+            }
+            """.trimIndent().withTrailingNewline(),
+        )
+        subDir("$module/src/test/java/$pkgPath")
+        File(projectDir, "$module/src/test/java/$pkgPath/CalcTest.java").writeText(
+            """
+            package com.example.$module;
+            import org.junit.jupiter.api.Test;
+            import static org.junit.jupiter.api.Assertions.assertEquals;
+            class CalcTest {
+                @Test void t() { assertEquals(3, new Calc().add(1, 2)); }
+            }
+            """.trimIndent().withTrailingNewline(),
+        )
+    }
+
+    /**
+     * Two-module Java build with coverage on and JaCoCo pinned explicitly.
+     *
+     * JUnit is wired with string notation because typed `testImplementation(...)` accessors are
+     * not generated inside a `subprojects { }` block — [junitDeps] only works at project level.
+     *
+     * The ROOT needs its own `repositories`: the aggregate tasks live there and the plugin applies
+     * `jacoco` to the root, whose `jacocoAnt` configuration has to resolve. Without it every case
+     * here dies with "Cannot resolve external dependency org.jacoco:org.jacoco.ant".
+     *
+     * Both floors are pushed out of the way so these cases measure aggregation alone: the PER-MODULE
+     * floor would otherwise fail `beta`, whose coverage deliberately does not reach `test.exec`, and
+     * the 70% default `overallMinimum` does not fit a fixture covering 2 of 5 lines per module.
+     */
+    private fun multiModuleJacocoBuild(quality: String = "") =
+        """
+        import java.math.BigDecimal
+        import org.octopusden.octopus.quality.CoverageExtension
+        plugins {
+            id("org.octopusden.octopus-quality")
+        }
+        repositories { mavenCentral() }
+        subprojects {
+            apply(plugin = "java")
+            repositories { mavenCentral() }
+            dependencies {
+                "testImplementation"("org.junit.jupiter:junit-jupiter:5.10.2")
+                "testRuntimeOnly"("org.junit.platform:junit-platform-launcher:1.10.2")
+            }
+            tasks.withType<Test> { useJUnitPlatform() }
+        }
+        octopusQuality {
+            java { failOnViolation.set(false) }
+            coverage {
+                enabled.set(true)
+                tool.set(CoverageExtension.Tool.JACOCO)
+                minimumLineCoverage.set(BigDecimal("0.0"))
+                overallMinimum.set(BigDecimal("0.10"))
+            }
+            $quality
+        }
+        """.trimIndent()
+
+    /**
+     * `missed to covered` LINE counts for [packagePath] in the aggregate JaCoCo XML report, or
+     * null when the package is absent from the report altogether — which is itself the symptom
+     * defect 3 produces, so the two cases are kept distinguishable.
+     *
+     * The package-level counters are emitted after its classes and sourcefiles, hence `last()`.
+     */
+    private fun aggregateLineCounter(packagePath: String): Pair<Int, Int>? {
+        val xml =
+            File(projectDir, "build/reports/jacoco/overallCoverage/jacocoOverallCoverageReport.xml")
+                .readText()
+        val pkg =
+            Regex("<package name=\"$packagePath\">(.*?)</package>", RegexOption.DOT_MATCHES_ALL)
+                .find(xml)
+                ?.groupValues
+                ?.get(1) ?: return null
+        val counter = Regex("<counter type=\"LINE\"[^>]*/>").findAll(pkg).lastOrNull()?.value ?: return null
+        val missed = Regex("missed=\"(\\d+)\"").find(counter)!!.groupValues[1].toInt()
+        val covered = Regex("covered=\"(\\d+)\"").find(counter)!!.groupValues[1].toInt()
+        return missed to covered
+    }
+
+    // ---------------------------------------------------------------
+    // Defect 1: the aggregate tasks were registered from INSIDE the `qualityCoverage`
+    // configuration action. Gradle forbids mutating the task container there, so realizing
+    // `qualityCoverage` failed outright — this build could not configure at all before the fix.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - qualityCoverage configures and runs the aggregate tasks`() {
+        settingsFile(
+            kotlinSettings(
+                "test-jacoco-aggregate",
+                """
+                include("alpha")
+                include("beta")
+                """.trimIndent(),
+            ),
+        )
+        buildFile(multiModuleJacocoBuild())
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("beta")
+
+        val result = runner("qualityCoverage").build()
+        assertEquals(TaskOutcome.SUCCESS, result.task(":qualityCoverage")?.outcome)
+        assertEquals(
+            TaskOutcome.SUCCESS,
+            result.task(":jacocoOverallCoverageReport")?.outcome,
+            "Aggregate report must be registered and executed; got: ${result.output}",
+        )
+        assertEquals(
+            TaskOutcome.SUCCESS,
+            result.task(":jacocoOverallCoverageVerification")?.outcome,
+            "Aggregate verification must be registered and executed; got: ${result.output}",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Defect 2: the exec-file pattern was hardcoded to `jacoco/test.exec`, so a module whose
+    // coverage-bearing suite is any other Test task contributed nothing. `beta` mirrors the
+    // reporting repository: a `unitTest` task over the test source set, with `test` itself
+    // disabled, producing `build/jacoco/unitTest.exec` and no `test.exec` at all.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - coverage from a non-test Test task reaches the aggregate`() {
+        settingsFile(
+            kotlinSettings(
+                "test-jacoco-aggregate-exec-glob",
+                """
+                include("alpha")
+                include("beta")
+                """.trimIndent(),
+            ),
+        )
+        buildFile(
+            multiModuleJacocoBuild() +
+                "\n" +
+                """
+                project(":beta") {
+                    val sets = extensions.getByType<SourceSetContainer>()
+                    tasks.register<Test>("unitTest") {
+                        testClassesDirs = sets["test"].output.classesDirs
+                        classpath = sets["test"].runtimeClasspath
+                        useJUnitPlatform()
+                    }
+                    tasks.named<Test>("test") { isEnabled = false }
+                }
+                """.trimIndent(),
+        )
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("beta")
+
+        // Separate invocation, exactly as a CI job that runs the docker-free subset first would.
+        runner(":beta:unitTest").build()
+        runner("qualityCoverage").build()
+
+        val beta = aggregateLineCounter("com/example/beta")
+        assertTrue(
+            beta != null && beta.second > 0,
+            "beta's unitTest.exec must reach the aggregate; got LINE (missed to covered) = $beta",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Defect 3: `filteredTargets` fed classDirectories as well as executionData, so excluding a
+    // module's `test` removed its production classes from the DENOMINATOR — the aggregate rose
+    // merely because a suite was excluded. `beta` must still appear, fully uncovered.
+    //
+    // The report and verification tasks are excluded alongside `test`: each of them depends on
+    // `test`, so excluding the suite alone would still drag it into the graph.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - excluding a module's test keeps its classes in the denominator`() {
+        settingsFile(
+            kotlinSettings(
+                "test-jacoco-aggregate-denominator",
+                """
+                include("alpha")
+                include("beta")
+                """.trimIndent(),
+            ),
+        )
+        buildFile(
+            multiModuleJacocoBuild(
+                """excludeTasks(":beta:test", ":beta:jacocoTestReport", ":beta:jacocoTestCoverageVerification")""",
+            ),
+        )
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("beta")
+
+        val result = runner("qualityCoverage").build()
+        assertTrue(
+            result.task(":beta:test") == null,
+            "beta's suite must not run — the fixture depends on it being excluded; got: ${result.output}",
+        )
+
+        val alpha = aggregateLineCounter("com/example/alpha")
+        assertTrue(alpha != null && alpha.second > 0, "alpha must contribute covered lines; got $alpha")
+
+        val beta = aggregateLineCounter("com/example/beta")
+        assertTrue(
+            beta != null && beta.first > 0 && beta.second == 0,
+            "beta's classes must stay in the denominator with zero covered lines; got LINE (missed to covered) = $beta",
+        )
+    }
 }

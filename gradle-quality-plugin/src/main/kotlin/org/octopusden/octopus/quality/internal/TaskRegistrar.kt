@@ -93,7 +93,22 @@ internal object TaskRegistrar {
         extension: OctopusQualityExtension,
         excludedTasks: Set<String>,
     ) {
+        // Resolved eagerly: this runs from `gradle.projectsEvaluated`, and Gradle forbids mutating
+        // the task container from inside another task's configuration action — registering the
+        // aggregate tasks there made `qualityCoverage` unrealizable in multi-module builds (#231).
         val coverageEnabled = extension.coverage.enabled.get()
+        val coverageTool =
+            if (coverageEnabled) {
+                val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
+                resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
+            } else {
+                null
+            }
+        val aggregateJacoco = coverageTool == CoverageExtension.Tool.JACOCO && targets.size > 1
+
+        if (aggregateJacoco) {
+            registerJacocoOverallTasks(rootProject, targets, extension)
+        }
 
         rootProject.tasks.register("qualityCoverage") { task ->
             task.group = "verification"
@@ -110,9 +125,6 @@ internal object TaskRegistrar {
 
             if (!coverageEnabled) return@register
 
-            val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
-            val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
-
             for (project in targets) {
                 when (coverageTool) {
                     CoverageExtension.Tool.JACOCO -> {
@@ -128,8 +140,7 @@ internal object TaskRegistrar {
             }
 
             // Overall aggregation
-            if (coverageTool == CoverageExtension.Tool.JACOCO && targets.size > 1) {
-                registerJacocoOverallTasks(rootProject, targets, extension)
+            if (aggregateJacoco) {
                 task.dependsOn("jacocoOverallCoverageReport")
                 task.dependsOn("jacocoOverallCoverageVerification")
             }
@@ -161,53 +172,49 @@ internal object TaskRegistrar {
     ) {
         rootProject.pluginManager.apply("jacoco")
         val excludedTasks = extension.excludedTasks.get()
-        val filteredTargets =
+        // Which SUITES run: a project without a `test` task (non-Java module) or whose `test` is
+        // excluded contributes no execution data and must not be depended on.
+        val executionTargets =
             targets.filter { project ->
                 val testPath = "${project.path}:test"
-                // Skip projects without a test task (non-Java modules) or where test is excluded
                 "test" in project.tasks.names &&
                     "test" !in excludedTasks &&
                     testPath !in excludedTasks
             }
 
+        // Which CLASSES count: every coverage target, including those whose `test` is excluded.
+        // Filtering the denominator too would let a repo raise its reported coverage merely by
+        // excluding a suite its CI cannot run (#231). Opting a project out of coverage entirely is
+        // `coverageExcludedProjects`, which `targets` already honours.
+        val sourceDirs =
+            rootProject.files(
+                targets.mapNotNull { project -> project.mainSourceSet()?.allSource?.srcDirs },
+            )
+        val classDirs =
+            rootProject.files(
+                targets.mapNotNull { project -> project.mainSourceSet()?.output },
+            )
+        // Glob rather than `jacoco/test.exec`: a module whose coverage-bearing suite is any other
+        // Test task (e.g. `unitTest`) writes `jacoco/<taskName>.exec`. JaCoCo merges execution data
+        // per class id, OR-ing the probe arrays, so overlapping suites do not double-count.
+        val executionData =
+            rootProject.files(
+                executionTargets.map { project ->
+                    project.fileTree(project.layout.buildDirectory) { tree ->
+                        tree.include("jacoco/*.exec")
+                    }
+                },
+            )
+        val testDependencies = executionTargets.map { "${it.path}:test" }
+
         rootProject.tasks.register("jacocoOverallCoverageReport", org.gradle.testing.jacoco.tasks.JacocoReport::class.java) { task ->
             task.group = "verification"
             task.description = "Generates an aggregated JaCoCo report across all coverage modules"
 
-            task.dependsOn(filteredTargets.map { "${it.path}:test" })
-
-            task.executionData.from(
-                rootProject.files(
-                    filteredTargets.map { project ->
-                        project.fileTree(project.layout.buildDirectory) { tree ->
-                            tree.include("jacoco/test.exec")
-                        }
-                    },
-                ),
-            )
-            task.sourceDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.allSource
-                            ?.srcDirs
-                    },
-                ),
-            )
-            task.classDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.output
-                    },
-                ),
-            )
+            task.dependsOn(testDependencies)
+            task.executionData.from(executionData)
+            task.sourceDirectories.from(sourceDirs)
+            task.classDirectories.from(classDirs)
 
             task.reports.xml.required
                 .set(true)
@@ -226,40 +233,10 @@ internal object TaskRegistrar {
             task.group = "verification"
             task.description = "Verifies aggregated JaCoCo coverage across all coverage modules"
 
-            task.dependsOn(filteredTargets.map { "${it.path}:test" })
-
-            task.executionData.from(
-                rootProject.files(
-                    filteredTargets.map { project ->
-                        project.fileTree(project.layout.buildDirectory) { tree ->
-                            tree.include("jacoco/test.exec")
-                        }
-                    },
-                ),
-            )
-            task.sourceDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.allSource
-                            ?.srcDirs
-                    },
-                ),
-            )
-            task.classDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.output
-                    },
-                ),
-            )
+            task.dependsOn(testDependencies)
+            task.executionData.from(executionData)
+            task.sourceDirectories.from(sourceDirs)
+            task.classDirectories.from(classDirs)
 
             task.violationRules.rule { rule ->
                 rule.element = "BUNDLE"
@@ -346,3 +323,14 @@ internal object TaskRegistrar {
         }
     }
 }
+
+/**
+ * The `main` source set of a JVM project, or null for a project that applies no Java-based plugin.
+ * Top-level rather than a member of [TaskRegistrar] so it does not count against detekt's
+ * `TooManyFunctions` ceiling for that object, mirroring `resolveCoverageTool`.
+ */
+private fun Project.mainSourceSet() =
+    extensions
+        .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+        ?.sourceSets
+        ?.findByName("main")
