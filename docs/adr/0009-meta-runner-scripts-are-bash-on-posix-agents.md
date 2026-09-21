@@ -71,7 +71,8 @@ than a count, since counts move on their own:
    list still contains agents whose OS is Windows. Only those can show the change. On the other
    21, and on every consumer of `OctopusCheckReleaseVersionIsNew`, the check cannot fail, so it
    proves nothing there: answer the propagation question once, here.
-2. After uploading, no Windows agent may remain compatible with it:
+2. After uploading, inspect this endpoint for **every affected configuration**. In each compatible
+   agent list, no Windows agent may remain and at least one non-Windows agent must remain:
 
    ```
    GET /app/rest/agents?locator=compatible:(buildType:(id:<btId>)),authorized:true,connected:any,count:500
@@ -79,7 +80,11 @@ than a count, since counts move on their own:
 
    If Windows agents are still listed, requirements are copied at add-time, every affected
    configuration needs the requirement itself, and the Kotlin rewrite becomes the cheaper answer.
-3. Then run **one build** on that configuration before the remaining configurations get the new
+   If no agent remains, do not queue the configuration: its own requirements conflict with the
+   meta-runner's constraint. Restore a compatible non-Windows agent, relax the conflicting caller
+   requirement, or replace the bash step with the Kotlin implementation.
+3. Then run **one build** on the Windows-capable configuration before relying on the change across
+   the fleet, and read its log. The agent count says nothing about the `%` escaping, which has the
    file, and read its log. The agent count says nothing about the `%` escaping, which has the
    larger blast radius and cannot be verified by any test in this repository:
    - the step must print a real `Release line:` and a `##teamcity[buildNumber …]`;
