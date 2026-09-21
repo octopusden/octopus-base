@@ -71,7 +71,7 @@ class MetaRunnerXmlTest(unittest.TestCase):
 
     def test_invalid_requirement(self):
         for original, name, bindings in self.cases():
-            for mutation in ("commented", "misplaced", "value", "name", "operator", "split"):
+            for mutation in ("commented", "misplaced", "value", "name", "operator", "split", "disabled", "disabled-settings"):
                 with self.subTest(runner=name, mutation=mutation):
                     root = copy.deepcopy(original)
                     requirements = root.find("./settings/requirements")
@@ -87,6 +87,11 @@ class MetaRunnerXmlTest(unittest.TestCase):
                     elif mutation == "split":
                         requirement.set("value", "Linux")
                         ET.SubElement(requirements, "equals", name="unrelated", value="Windows")
+                    elif mutation == "disabled":
+                        requirement.set("disabled", "true")
+                    elif mutation == "disabled-settings":
+                        disabled = ET.SubElement(root.find("./settings"), "disabled-settings")
+                        ET.SubElement(disabled, "setting-ref", ref=requirement.get("id"))
                     else:
                         requirement.set(mutation, "wrong")
                     self.assertTrue(xml_check.check(root, name, bindings))

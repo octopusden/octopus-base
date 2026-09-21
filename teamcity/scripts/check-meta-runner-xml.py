@@ -28,9 +28,15 @@ def check(root, runner_name, bindings):
     for name, value in bindings.items():
         require_param(settings, name, value)
 
+    disabled = {
+        reference.get("ref")
+        for reference in root.findall("./settings/disabled-settings/setting-ref")
+    }
     if not any(
         requirement.get("name") == "teamcity.agent.jvm.os.name"
         and requirement.get("value") == "Windows"
+        and requirement.get("disabled") != "true"
+        and requirement.get("id") not in disabled
         for requirement in root.findall("./settings/requirements/does-not-contain")
     ):
         errors.append("runner must exclude Windows agents in settings/requirements")
@@ -38,10 +44,15 @@ def check(root, runner_name, bindings):
 
 
 def main():
+    if len(sys.argv) < 3:
+        print(f"usage: {sys.argv[0]} XML_FILE RUNNER_NAME [PARAMETER=VALUE ...]", file=sys.stderr)
+        return 2
     path, runner_name, *bindings = sys.argv[1:]
     try:
+        if any("=" not in binding for binding in bindings):
+            raise ValueError("each binding must have the form PARAMETER=VALUE")
         errors = check(ET.parse(path).getroot(), runner_name, dict(b.split("=", 1) for b in bindings))
-    except (OSError, ET.ParseError) as error:
+    except (OSError, ET.ParseError, ValueError) as error:
         errors = [str(error)]
     for error in errors:
         print(f"FAIL [{error}]")
