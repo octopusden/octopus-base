@@ -153,17 +153,6 @@ exact "an empty LAST_RELEASE_VERSION is still the initial state" 2.0.17 "" \
      "No previously processed version is recorded - processing 2.0.17." \
      "##teamcity[setParameter name='ALREADY_PROCESSED' value='false']")"
 
-runner="$(awk '/<runner name="Check release version is new"/,/<\/runner>/' "$xml")"
-if grep -q 'name="env\.' <<<"$runner"; then
-  echo "FAIL [runner declares an env. parameter, which the runner ignores]"; fail=$((fail + 1))
-else echo "PASS [no env. parameter is buried in the runner block]"; pass=$((pass + 1)); fi
-
-settings="$(awk '/<settings>/,/<build-runners>/' "$xml")"
-if grep -q '<param name="env.BUILD_NUMBER" value="%BUILD_NUMBER%"/>' <<<"$settings" \
-   && grep -q '<param name="env.LAST_RELEASE_VERSION" value="%LAST_RELEASE_VERSION%"/>' <<<"$settings"; then
-  echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
-else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
-
 # TeamCity cannot source a script from a repository, so the meta-runner carries a copy. The
 # values are bound as environment variables, so no VALUE has to be rewritten into that copy -
 # which is the point: a parameter reference substituted into the script body would be executed,
@@ -206,28 +195,17 @@ if grep -q '^\]\]></param>' "$xml"; then
   echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
 else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
 
-# The bytes alone prove nothing about how they run: this must stay a Command Line step. Nothing
-# pinned that here, so type="jetbrains_powershell" passed the whole suite - the sibling script's
-# suite has always checked it.
-if grep -q 'type="simpleRunner"' <<<"$runner" \
-   && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner" \
-   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner"; then
-  echo "PASS [runner is a Command Line step that runs this script with stderr at error severity]"; pass=$((pass + 1))
-else echo "FAIL [runner type, script mode or stderr mode is missing]"; fail=$((fail + 1)); fi
+# Exercise the shared checker here so its regression cases run in the existing CI job.
+if python3 ./test-meta-runner-xml.py; then
+  echo "PASS [XML checker regression cases]"; pass=$((pass + 1))
+else fail=$((fail + 1)); fi
 
-# ...and it must not be eligible for a Windows agent, where a .cmd is what TeamCity writes and
-# cmd.exe reads the shebang as a command name. Every configuration using this runner is already
-# restricted by its own settings, so this asserts a property of the file rather than a change in
-# behaviour - the point is that a configuration created later inherits it. Read from inside
-# <requirements> with comments removed and matched attribute by attribute, for the reasons the
-# calculate suite gives: grepping the whole file passes on the element commented out, and a
-# fixed attribute order fails on valid XML.
-requirements="$(perl -0777 -ne 's/<!--.*?-->//gs; print $1 if m{<settings>.*(<requirements\b.*?(?:/>|</requirements>)).*</settings>}s' "$xml")"
-if grep -q 'does-not-contain' <<<"$requirements" \
-   && grep -q 'name="teamcity.agent.jvm.os.name"' <<<"$requirements" \
-   && grep -q 'value="Windows"' <<<"$requirements"; then
-  echo "PASS [runner refuses Windows agents, where its script cannot run]"; pass=$((pass + 1))
-else echo "FAIL [runner does not exclude Windows agents]"; fail=$((fail + 1)); fi
+# XML settings are structural: attribute order, quotes and whitespace do not change their
+# meaning. The shared checker pins runner mode, env. binding scope and the Windows exclusion.
+if python3 ./check-meta-runner-xml.py "$xml" "Check release version is new" \
+  'env.BUILD_NUMBER=%BUILD_NUMBER%' 'env.LAST_RELEASE_VERSION=%LAST_RELEASE_VERSION%'; then
+  echo "PASS [meta-runner XML settings]"; pass=$((pass + 1))
+else fail=$((fail + 1)); fi
 
 marker="$(mktemp -u)"
 BUILD_NUMBER="\"; : > ${marker}; x=\"" LAST_RELEASE_VERSION=2.0.16 bash <(printf '%s\n' "$embedded" | sed 's/%%/%/g') >/dev/null 2>&1
