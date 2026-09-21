@@ -169,6 +169,7 @@ jobs:
           REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: bash .octopus-base-sonar/.github/scripts/sonar-analysis-params.sh
 
       # `install`, not `package`: the analysis is a second mvn process that builds nothing, so a

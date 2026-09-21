@@ -12,6 +12,7 @@
 #   REPO_DEFAULT_BRANCH    the repository's default branch, empty means "main"
 #   EVENT_NAME             github.event_name
 #   REF_NAME               github.ref_name
+#   REF_TYPE               github.ref_type, "branch" or "tag"
 set -euo pipefail
 
 repo_name="${GITHUB_REPOSITORY##*/}"
@@ -36,9 +37,12 @@ version="${version#v}"
 # wants "previous version", which has no scanner property.
 #
 # sonar.branch.name is deliberately absent: the scanner reads the branch from the CI environment.
+#
+# A tag push carries the tag in REF_NAME, so without the REF_TYPE guard a release would be
+# analysed as a feature branch diffed against the default branch.
 default_branch="${DEFAULT_BRANCH_INPUT:-${REPO_DEFAULT_BRANCH:-main}}"
 reference_branch=""
-if [[ "$EVENT_NAME" != "pull_request" && "$REF_NAME" != "$default_branch" ]]; then
+if [[ "$EVENT_NAME" != "pull_request" && "$REF_TYPE" == "branch" && "$REF_NAME" != "$default_branch" ]]; then
   reference_branch="$default_branch"
 fi
 

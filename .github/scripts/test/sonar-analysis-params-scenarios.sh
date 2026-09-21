@@ -25,6 +25,7 @@ run_case() {
       REPO_DEFAULT_BRANCH="${REPO_DEFAULT_BRANCH:-main}" \
       EVENT_NAME="${EVENT_NAME:-push}" \
       REF_NAME="${REF_NAME:-main}" \
+      REF_TYPE="${REF_TYPE:-branch}" \
       bash "$S" > /dev/null
   cat "$out"
 }
@@ -52,6 +53,14 @@ expect "push to feature branch" reference-branch "main"
 # property can make the PR be analysed as a branch instead.
 ( EVENT_NAME=pull_request REF_NAME=feature/abc run_case ) >/dev/null
 expect "pull request" reference-branch ""
+
+# A tag push reaches the workflow with the tag in REF_NAME. Comparing a release against the
+# default branch is wrong, and it registers the tag as a branch in Sonar.
+( EVENT_NAME=push REF_NAME=v2.0.8 REF_TYPE=tag run_case ) >/dev/null
+expect "tag push" reference-branch ""
+
+( EVENT_NAME=workflow_dispatch REF_NAME=v2.0.8 REF_TYPE=tag run_case ) >/dev/null
+expect "manual run on a tag" reference-branch ""
 
 # A repository whose default branch is not `main` must compare against its own default.
 ( EVENT_NAME=push REF_NAME=feature/abc REPO_DEFAULT_BRANCH=trunk run_case ) >/dev/null
