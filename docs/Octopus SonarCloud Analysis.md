@@ -30,10 +30,11 @@ The project's new-code definition must be **Previous version**, which is the Son
 what provisioning sets. The version scheme below depends on it, so a project someone has
 reconfigured needs it put back.
 
-### Maven — nothing to change in the project
+### Maven — add the caller, and check the Kotlin source roots
 
-The scanner is a pinned command-line plugin invocation, so nothing about Sonar reaches the POM. Add
-the caller and you are done:
+The scanner is a pinned command-line plugin invocation, so nothing about Sonar reaches the POM. A
+repository with Kotlin sources has one thing to check first — see below. Otherwise add the caller
+and you are done:
 
 ```yaml
 name: Sonar
@@ -51,6 +52,50 @@ jobs:
       java-version: "8"
     secrets: inherit
 ```
+
+#### Kotlin sources have to be registered in the POM
+
+`kotlin-maven-plugin` compiles `src/main/kotlin` and `src/test/kotlin` through its own `sourceDirs`,
+which never enter the Maven model. The scanner reads the model, so a repository that registers
+nothing is analysed as its `src/main/java` alone — successfully, in green, reporting on a fraction
+of the code. Four repositories passed this way before it was noticed.
+
+`octopus-parent` 2.1.0 and later registers both roots, so a repository on that parent needs
+nothing. On an older parent, register them with `build-helper-maven-plugin`:
+
+```xml
+<plugin>
+    <groupId>org.codehaus.mojo</groupId>
+    <artifactId>build-helper-maven-plugin</artifactId>
+    <version>3.6.1</version>
+    <executions>
+        <execution>
+            <id>add-main-kotlin-sources</id>
+            <phase>generate-sources</phase>
+            <goals><goal>add-source</goal></goals>
+            <configuration><sources><source>src/main/kotlin</source></sources></configuration>
+        </execution>
+        <execution>
+            <id>add-test-kotlin-sources</id>
+            <phase>generate-sources</phase>
+            <goals><goal>add-test-source</goal></goals>
+            <configuration><sources><source>src/test/kotlin</source></sources></configuration>
+        </execution>
+    </executions>
+</plugin>
+```
+
+Both executions must be bound to `generate-sources`, including the test one. The analysis is a
+second `mvn` process that runs `generate-sources` and then the scanner goal, so a registration
+bound to any later phase — `generate-test-sources` is the obvious choice, and the wrong one — never
+executes. It cannot simply run later either: `octopus-parent` binds `maven-javadoc-plugin:jar` to
+`generate-resources`, so a scanner invocation reaching that phase rebuilds javadoc on the scanner
+JDK and fails.
+
+Verify by counting, not by reading the log for the word Kotlin. The analysis log reports
+`N source files to be analyzed` under the Kotlin sensor; that number should match the `.kt` files on
+disk. The weaker check — grepping for `Quality profile for kotlin` — passes as soon as a single
+Kotlin file is indexed anywhere, including one that happens to sit under `src/main/java`.
 
 ### Gradle — apply the plugin, then add the caller
 
