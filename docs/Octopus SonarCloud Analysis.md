@@ -24,7 +24,13 @@ second one matters because while Automatic Analysis is on, a CI analysis of the 
 *fails, and fails the build with it*.
 
 `SONAR_TOKEN` must also be available to the repository. It is a SonarCloud token, not a GitHub one,
-and it needs only *Execute Analysis*.
+and it needs only *Execute Analysis*. It lives in the **`Prod` environment**, which both workflows
+declare, alongside the other release credentials.
+
+That is why both workflows declare the secret `required: false` while the analysis cannot run
+without it. `secrets: inherit` passes repository-level secrets only; an environment secret is
+resolved by the job, after it starts. Declaring it required makes the workflow fail at startup
+with no steps and no log — a failure that names nothing and points nowhere.
 
 The project's new-code definition must be **Previous version**, which is the SonarCloud default and
 what provisioning sets. The version scheme below depends on it, so a project someone has
@@ -294,7 +300,8 @@ Maven only:
 | `scanner-maven-plugin-version` | `5.7.0.6970` | Pinned scanner plugin |
 | `mvn-parameters` | *(empty)* | Extra Maven parameters, passed to **both** the build and the analysis |
 
-Secret: `SONAR_TOKEN`, required.
+Secret: `SONAR_TOKEN`. Declared optional in both workflow contracts, but the analysis cannot run
+without it — see *Prerequisites* for why the declaration reads that way.
 
 ---
 
@@ -305,7 +312,11 @@ Secret: `SONAR_TOKEN`, required.
   project is deleted and re-imported. Switch it off under *Project → Administration → Analysis
   Method*. This is the most common cause of a Sonar job failing for no apparent reason.
 
-- **The job fails on a missing secret.** The caller is missing `secrets: inherit`.
+- **The job fails on a missing secret.** The caller is missing `secrets: inherit`. Every level of a
+  nested call chain needs it, not just the innermost one.
+
+- **The job fails at startup, with no steps and no log.** `SONAR_TOKEN` is not reaching the job.
+  Check that the repository has it in the `Prod` environment.
 
 - **The gate fails on coverage.** The project is on a quality gate that includes a coverage
   condition. Coverage is not reported — see above.
