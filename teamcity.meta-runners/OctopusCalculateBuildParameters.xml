@@ -210,7 +210,7 @@ echo "##teamcity[setParameter name='PROJECT_VERSION' value='${version}']"
            verify it after uploading: docs/adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md
            (TeamCity drops these comments when it round-trips a meta-runner; the ADR is the copy
            that survives). -->
-      <does-not-contain id="RQ_META_NO_WINDOWS" name="teamcity.agent.jvm.os.name" value="Windows" />
+      <does-not-contain id="RQ_META_NO_WINDOWS_CALC" name="teamcity.agent.jvm.os.name" value="Windows" />
     </requirements>
   </settings>
 </meta-runner>

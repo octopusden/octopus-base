@@ -208,14 +208,26 @@ else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the
 
 # The bytes alone prove nothing about how they run: this must stay a Command Line step. Nothing
 # pinned that here, so type="jetbrains_powershell" passed the whole suite - the sibling script's
-# suite has always checked it. This runner declares no agent requirement: all 31 configurations
-# using it are already restricted to non-Windows agents by their own settings, so a requirement
-# here would have no consumer and no way to be verified (ADR 0009).
+# suite has always checked it.
 if grep -q 'type="simpleRunner"' <<<"$runner" \
    && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner" \
    && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner"; then
   echo "PASS [runner is a Command Line step that runs this script with stderr at error severity]"; pass=$((pass + 1))
 else echo "FAIL [runner type, script mode or stderr mode is missing]"; fail=$((fail + 1)); fi
+
+# ...and it must not be eligible for a Windows agent, where a .cmd is what TeamCity writes and
+# cmd.exe reads the shebang as a command name. Every configuration using this runner is already
+# restricted by its own settings, so this asserts a property of the file rather than a change in
+# behaviour - the point is that a configuration created later inherits it. Read from inside
+# <requirements> with comments removed and matched attribute by attribute, for the reasons the
+# calculate suite gives: grepping the whole file passes on the element commented out, and a
+# fixed attribute order fails on valid XML.
+requirements="$(perl -0777 -ne 's/<!--.*?-->//gs; print $1 if m{<settings>.*(<requirements\b.*?(?:/>|</requirements>)).*</settings>}s' "$xml")"
+if grep -q 'does-not-contain' <<<"$requirements" \
+   && grep -q 'name="teamcity.agent.jvm.os.name"' <<<"$requirements" \
+   && grep -q 'value="Windows"' <<<"$requirements"; then
+  echo "PASS [runner refuses Windows agents, where its script cannot run]"; pass=$((pass + 1))
+else echo "FAIL [runner does not exclude Windows agents]"; fail=$((fail + 1)); fi
 
 marker="$(mktemp -u)"
 BUILD_NUMBER="\"; : > ${marker}; x=\"" LAST_RELEASE_VERSION=2.0.16 bash <(printf '%s\n' "$embedded" | sed 's/%%/%/g') >/dev/null 2>&1

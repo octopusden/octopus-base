@@ -1,8 +1,7 @@
-# Meta-runner scripts are bash, and the runner that can meet Windows refuses it
+# Meta-runner scripts are bash, and their runners refuse Windows agents
 
 `OctopusCalculateBuildParameters` and `OctopusCheckReleaseVersionIsNew` carry bash scripts in
-Command Line runners. The first declares `teamcity.agent.jvm.os.name does-not-contain Windows`;
-the second does not, for the reason in Consequences.
+Command Line runners, and both declare `teamcity.agent.jvm.os.name does-not-contain Windows`.
 
 TeamCity's Command Line runner does not choose an interpreter. On a Unix agent it writes the
 custom script to a file and the shebang picks bash; on a Windows agent it writes the same text to
@@ -47,12 +46,19 @@ No absolute agent counts appear here on purpose. The pool is elastic: the same c
 measured 34 compatible agents (12 of them Windows) and, an hour later, 54 (17 Windows). Any
 runbook comparing against a remembered number is wrong before it is followed.
 
-`OctopusCheckReleaseVersionIsNew` therefore declares no requirement. All 31 of its consumers are
-already restricted, so it would have no consumer today, and — worse — no way to be verified: the
-post-upload check below cannot fail for a runner whose configurations have no Windows agent to
-lose, so it would report success whether or not the requirement applied. The accepted risk is a
-future consumer of that runner landing on Windows and getting an unexplained exit 255; the
-failure signature is documented here and in the other meta-runner, so the answer is in the repo.
+`OctopusCheckReleaseVersionIsNew` declares the requirement too, although all 31 of its consumers
+are already restricted and it therefore changes nothing today. Those restrictions are incidental
+— each configuration carries its own, and a configuration created later from the wrong starting
+point would be eligible for a Windows agent and fail with an unexplained exit 255 during release
+post-processing, which is the worst moment to learn it. A constraint that belongs to the runner
+is declared on the runner.
+
+This was argued the other way first, on the grounds that the check below cannot fail for that
+runner, so the requirement could never be shown to have taken effect. That conflates two
+questions. Whether TeamCity propagates `<requirements>` to configurations that already carry a
+step is one global question about TeamCity, answered once, on a runner where it *is* observable.
+Whether a runner declares the constraint is a fact about this repository, asserted by its test
+suite. Only the first needs an upload to answer.
 
 ### Verifying an upload
 
@@ -62,8 +68,9 @@ this for `<requirements>`, so it is verified, not assumed — and verified as a 
 than a count, since counts move on their own:
 
 1. Pick a configuration that **can currently land on a Windows agent** — one whose compatible
-   list still contains agents whose OS is Windows. Only those can show the change; on the other
-   21 the check cannot fail.
+   list still contains agents whose OS is Windows. Only those can show the change. On the other
+   21, and on every consumer of `OctopusCheckReleaseVersionIsNew`, the check cannot fail, so it
+   proves nothing there: answer the propagation question once, here.
 2. After uploading, no Windows agent may remain compatible with it:
 
    ```

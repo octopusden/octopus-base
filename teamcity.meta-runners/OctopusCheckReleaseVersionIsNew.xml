@@ -108,6 +108,18 @@ fi
         </parameters>
       </runner>
     </build-runners>
-    <requirements />
+    <requirements>
+      <!-- The Command Line step above carries a bash script, which cannot run on a Windows agent:
+           TeamCity writes it as a .cmd and cmd.exe reads the shebang as a command name, so the
+           step exits 255 having run none of the logic. Every configuration using this runner is
+           restricted to non-Windows agents today, so this changes nothing now - it is here so a
+           configuration created later cannot be eligible, which would surface as an unexplained
+           exit 255 during a release. Unlike the calculate runner, that means observing agent
+           compatibility here cannot confirm the requirement applied; propagation is verified
+           once, on a Windows-capable consumer of the calculate runner:
+           docs/adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md (TeamCity drops these
+           comments when it round-trips a meta-runner; the ADR is the copy that survives). -->
+      <does-not-contain id="RQ_META_NO_WINDOWS_CHECK" name="teamcity.agent.jvm.os.name" value="Windows" />
+    </requirements>
   </settings>
 </meta-runner>

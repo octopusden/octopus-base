@@ -39,8 +39,9 @@ saved on the server.
 Both `OctopusCalculateBuildParameters` and `OctopusCheckReleaseVersionIsNew` run bash, which a
 Command Line runner cannot execute on a Windows agent: TeamCity writes the script as a `.cmd` and
 `cmd.exe` reads the shebang as a command name, so the step exits 255 having run none of the
-logic. `OctopusCalculateBuildParameters` therefore excludes Windows agents; the other does not
-need to, and the reasoning for both is in
+logic. Both therefore exclude Windows agents — for `OctopusCheckReleaseVersionIsNew` that
+changes nothing today, since all its consumers are already restricted, and it is there so a
+configuration created later cannot be eligible. The reasoning is in
 [ADR 0009](adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md), which also gives the
 post-upload verification — a property to check, not an agent count to compare, because the pool
 size changes on its own.
