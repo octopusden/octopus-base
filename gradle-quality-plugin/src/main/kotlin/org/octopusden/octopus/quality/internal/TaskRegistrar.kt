@@ -2,8 +2,11 @@ package org.octopusden.octopus.quality.internal
 
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.tasks.testing.Test
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.octopusden.octopus.quality.CoverageExtension
 import org.octopusden.octopus.quality.OctopusQualityExtension
+import java.util.concurrent.Callable
 
 /**
  * Registers root-level aggregate quality tasks: qualityStatic, qualityCoverage, qualityCheck.
@@ -93,7 +96,22 @@ internal object TaskRegistrar {
         extension: OctopusQualityExtension,
         excludedTasks: Set<String>,
     ) {
+        // Resolved eagerly: this runs from `gradle.projectsEvaluated`, and Gradle forbids mutating
+        // the task container from inside another task's configuration action — registering the
+        // aggregate tasks there made `qualityCoverage` unrealizable in multi-module builds (#231).
         val coverageEnabled = extension.coverage.enabled.get()
+        val coverageTool =
+            if (coverageEnabled) {
+                val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
+                resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
+            } else {
+                null
+            }
+        val aggregateJacoco = coverageTool == CoverageExtension.Tool.JACOCO && targets.size > 1
+
+        if (aggregateJacoco) {
+            registerJacocoOverallTasks(rootProject, targets, extension)
+        }
 
         rootProject.tasks.register("qualityCoverage") { task ->
             task.group = "verification"
@@ -110,9 +128,6 @@ internal object TaskRegistrar {
 
             if (!coverageEnabled) return@register
 
-            val overallLanguages = LanguageDetector.detectAll(rootProject, extension.coverageExcludedProjects.get())
-            val coverageTool = resolveCoverageTool(extension.coverage.tool.get(), overallLanguages)
-
             for (project in targets) {
                 when (coverageTool) {
                     CoverageExtension.Tool.JACOCO -> {
@@ -128,8 +143,7 @@ internal object TaskRegistrar {
             }
 
             // Overall aggregation
-            if (coverageTool == CoverageExtension.Tool.JACOCO && targets.size > 1) {
-                registerJacocoOverallTasks(rootProject, targets, extension)
+            if (aggregateJacoco) {
                 task.dependsOn("jacocoOverallCoverageReport")
                 task.dependsOn("jacocoOverallCoverageVerification")
             }
@@ -161,53 +175,62 @@ internal object TaskRegistrar {
     ) {
         rootProject.pluginManager.apply("jacoco")
         val excludedTasks = extension.excludedTasks.get()
-        val filteredTargets =
-            targets.filter { project ->
-                val testPath = "${project.path}:test"
-                // Skip projects without a test task (non-Java modules) or where test is excluded
-                "test" in project.tasks.names &&
-                    "test" !in excludedTasks &&
-                    testPath !in excludedTasks
+        val additionalTestTasks = extension.coverage.additionalTestTasks.get()
+
+        // Which CLASSES count: every coverage target, including those whose suites are excluded.
+        // Filtering the denominator too would let a repo raise its reported coverage merely by
+        // excluding a suite its CI cannot run (#231). Opting a project out of coverage entirely is
+        // `coverageExcludedProjects`, which `targets` already honours.
+        val sourceDirs =
+            rootProject.files(
+                targets.mapNotNull { project -> project.mainSourceSet()?.allSource?.srcDirs },
+            )
+        val classDirs =
+            rootProject.files(
+                targets.mapNotNull { project -> project.mainSourceSet()?.output },
+            )
+
+        // Which SUITES contribute, selected per TASK rather than per module: excluding `:m:test`
+        // (a suite CI cannot run) must not discard a declared `:m:unitTest`, which is the case
+        // this aggregation exists for. An EXCLUDED suite's execution data is never counted,
+        // whether or not its `.exec` happens to be on disk. Note this says nothing about staleness
+        // in general: a selected suite that is disabled or skipped leaves its previous `.exec` in
+        // place, and that data is still read.
+        //
+        // `matching` keeps the collections live, so a `Test` task registered after this point is
+        // still picked up, and each task's own `JacocoTaskExtension` destination is the
+        // authoritative path rather than a guessed one.
+        //
+        // Both are read through a Callable rather than `JacocoReport.executionData(TaskCollection)`,
+        // which is the API that fits but cannot be used here: it calls `TaskCollection.all`, and
+        // doing that to the ROOT project's own container from inside the `register` action of a
+        // root task fails with "DefaultTaskCollection#all(Action) on task set cannot be executed
+        // in the current context" — the same constraint as #231 itself. It only bites when the
+        // root carries sources and is therefore a coverage target, which is why it is easy to miss.
+        val coverageSuites =
+            targets.map { project ->
+                project.tasks.withType(Test::class.java).matching { task ->
+                    isCoverageSuite(project.path, task.name, excludedTasks, additionalTestTasks)
+                }
             }
+        val suiteTasks = Callable { coverageSuites.flatten() }
+        val executionData =
+            rootProject.files(
+                Callable {
+                    coverageSuites.flatten().mapNotNull { task ->
+                        task.extensions.findByType(JacocoTaskExtension::class.java)?.destinationFile
+                    }
+                },
+            )
 
         rootProject.tasks.register("jacocoOverallCoverageReport", org.gradle.testing.jacoco.tasks.JacocoReport::class.java) { task ->
             task.group = "verification"
             task.description = "Generates an aggregated JaCoCo report across all coverage modules"
 
-            task.dependsOn(filteredTargets.map { "${it.path}:test" })
-
-            task.executionData.from(
-                rootProject.files(
-                    filteredTargets.map { project ->
-                        project.fileTree(project.layout.buildDirectory) { tree ->
-                            tree.include("jacoco/test.exec")
-                        }
-                    },
-                ),
-            )
-            task.sourceDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.allSource
-                            ?.srcDirs
-                    },
-                ),
-            )
-            task.classDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.output
-                    },
-                ),
-            )
+            task.dependsOn(suiteTasks)
+            task.executionData.from(executionData)
+            task.sourceDirectories.from(sourceDirs)
+            task.classDirectories.from(classDirs)
 
             task.reports.xml.required
                 .set(true)
@@ -226,40 +249,10 @@ internal object TaskRegistrar {
             task.group = "verification"
             task.description = "Verifies aggregated JaCoCo coverage across all coverage modules"
 
-            task.dependsOn(filteredTargets.map { "${it.path}:test" })
-
-            task.executionData.from(
-                rootProject.files(
-                    filteredTargets.map { project ->
-                        project.fileTree(project.layout.buildDirectory) { tree ->
-                            tree.include("jacoco/test.exec")
-                        }
-                    },
-                ),
-            )
-            task.sourceDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.allSource
-                            ?.srcDirs
-                    },
-                ),
-            )
-            task.classDirectories.from(
-                rootProject.files(
-                    filteredTargets.mapNotNull { project ->
-                        project.extensions
-                            .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
-                            ?.sourceSets
-                            ?.findByName("main")
-                            ?.output
-                    },
-                ),
-            )
+            task.dependsOn(suiteTasks)
+            task.executionData.from(executionData)
+            task.sourceDirectories.from(sourceDirs)
+            task.classDirectories.from(classDirs)
 
             task.violationRules.rule { rule ->
                 rule.element = "BUNDLE"
@@ -305,10 +298,9 @@ internal object TaskRegistrar {
         taskName: String,
         excludedTasks: Set<String>,
     ) {
-        val fullPath = if (project.path == ":") ":$taskName" else "${project.path}:$taskName"
-        if (taskName in excludedTasks || fullPath in excludedTasks) return
+        if (isTaskExcluded(project.path, taskName, excludedTasks)) return
         if (taskName in project.tasks.names) {
-            task.dependsOn(fullPath)
+            task.dependsOn(qualifiedTaskPath(project.path, taskName))
         }
     }
 
@@ -324,10 +316,9 @@ internal object TaskRegistrar {
         taskName: String,
         excludedTasks: Set<String>,
     ) {
-        val fullPath = if (project.path == ":") ":$taskName" else "${project.path}:$taskName"
-        if (taskName in excludedTasks || fullPath in excludedTasks) return
+        if (isTaskExcluded(project.path, taskName, excludedTasks)) return
         if (taskName in project.tasks.names) {
-            task.dependsOn(fullPath)
+            task.dependsOn(qualifiedTaskPath(project.path, taskName))
         } else {
             project.logger.warn(
                 "octopusQuality: expected task '$taskName' not found on project '${project.path}'. " +
@@ -346,3 +337,12 @@ internal object TaskRegistrar {
         }
     }
 }
+
+/**
+ * The `main` source set of [this] project, or null when it applies no Java-based plugin.
+ */
+private fun Project.mainSourceSet() =
+    extensions
+        .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
+        ?.sourceSets
+        ?.findByName("main")

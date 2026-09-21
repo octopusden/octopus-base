@@ -77,6 +77,23 @@ open class CoverageExtension
         /** Coverage tool selection. AUTO detects based on project languages. */
         val tool = objects.property(Tool::class.java).convention(Tool.AUTO)
 
+        /**
+         * Names of ADDITIONAL `Test` tasks whose coverage the aggregated JaCoCo report counts,
+         * beyond the standard `test`. Empty by default.
+         *
+         * Names are matched unqualified, so one entry covers that task in every module that
+         * defines it. [OctopusQualityExtension.excludedTasks] wins over a declaration here.
+         *
+         * The rationale for making this opt-in is on `isCoverageSuite` in `internal/TaskSelection`.
+         *
+         * ```
+         * coverage { additionalTestTasks.add("unitTest") }
+         * excludeTasks(":teamcity-client:test")   // docker-bound; `unitTest` still counts
+         * ```
+         */
+        val additionalTestTasks: SetProperty<String> =
+            objects.setProperty(String::class.java).convention(emptySet())
+
         /** Minimum line coverage per module (default 10%). */
         val minimumLineCoverage =
             objects

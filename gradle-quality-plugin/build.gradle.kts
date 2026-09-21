@@ -47,6 +47,12 @@ kover {
                     "org.octopusden.octopus.quality.internal.SubprojectConfigurer\$*",
                     "org.octopusden.octopus.quality.internal.TaskRegistrar",
                     "org.octopusden.octopus.quality.internal.TaskRegistrar\$*",
+                    // Top-level helper in TaskRegistrar.kt compiles into this file class. It
+                    // takes a Project and reads its extensions, so it shares the exclusion reason
+                    // above and the TestKit functional tests cover it. The pure task-selection
+                    // logic lives in TaskSelection.kt, which is deliberately NOT excluded and is
+                    // unit-tested by TaskSelectionTest.
+                    "org.octopusden.octopus.quality.internal.TaskRegistrarKt",
                     "org.octopusden.octopus.quality.internal.PublicationValidator",
                     "org.octopusden.octopus.quality.internal.PublicationValidator\$*",
                     "org.octopusden.octopus.quality.internal.CentralPublicationPolicy",
