@@ -47,6 +47,7 @@ name: Sonar
 
 on:
   push:
+    branches: [ '**' ]
   pull_request:
     types: [ opened, synchronize, reopened ]
   workflow_dispatch:
@@ -147,6 +148,7 @@ name: Sonar
 
 on:
   push:
+    branches: [ '**' ]
   pull_request:
     types: [ opened, synchronize, reopened ]
   workflow_dispatch:
@@ -158,6 +160,10 @@ jobs:
       java-version: "21"
     secrets: inherit
 ```
+
+`branches: [ '**' ]` is what keeps tags out. A bare `push:` also fires on tag pushes, and Sonar
+would then record the release tag as a branch of its own. The workflow no longer gives such a run
+a reference branch, but it still analyses it.
 
 `secrets: inherit` is required. Reusable workflows do not inherit secrets on their own, and a
 caller without it fails on a missing secret rather than on anything Sonar-shaped.
