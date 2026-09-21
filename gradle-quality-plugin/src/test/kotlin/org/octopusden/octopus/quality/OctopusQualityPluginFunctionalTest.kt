@@ -2103,10 +2103,14 @@ class OctopusQualityPluginFunctionalTest {
      * `add` → 2 of 5 lines. Per-module packages keep the aggregate report free of duplicate class
      * names, which JaCoCo's analyzer rejects.
      */
-    private fun writeJavaCalcModule(module: String) {
+    private fun writeJavaCalcModule(
+        module: String,
+        dir: String = module,
+    ) {
         val pkgPath = "com/example/$module"
-        subDir("$module/src/main/java/$pkgPath")
-        File(projectDir, "$module/src/main/java/$pkgPath/Calc.java").writeText(
+        val base = if (dir.isEmpty()) "" else "$dir/"
+        subDir("${base}src/main/java/$pkgPath")
+        File(projectDir, "${base}src/main/java/$pkgPath/Calc.java").writeText(
             """
             package com.example.$module;
             public class Calc {
@@ -2117,8 +2121,8 @@ class OctopusQualityPluginFunctionalTest {
             }
             """.trimIndent().withTrailingNewline(),
         )
-        subDir("$module/src/test/java/$pkgPath")
-        File(projectDir, "$module/src/test/java/$pkgPath/CalcTest.java").writeText(
+        subDir("${base}src/test/java/$pkgPath")
+        File(projectDir, "${base}src/test/java/$pkgPath/CalcTest.java").writeText(
             """
             package com.example.$module;
             import org.junit.jupiter.api.Test;
@@ -2147,13 +2151,17 @@ class OctopusQualityPluginFunctionalTest {
     private fun multiModuleJacocoBuild(
         quality: String = "",
         coverageExtra: String = "",
+        rootPlugins: String = "",
+        rootExtra: String = "",
     ) = """
         import java.math.BigDecimal
         import org.octopusden.octopus.quality.CoverageExtension
         plugins {
+            $rootPlugins
             id("org.octopusden.octopus-quality")
         }
         repositories { mavenCentral() }
+        $rootExtra
         subprojects {
             apply(plugin = "java")
             repositories { mavenCentral() }
@@ -2197,7 +2205,6 @@ class OctopusQualityPluginFunctionalTest {
         val covered = Regex("covered=\"(\\d+)\"").find(counter)!!.groupValues[1].toInt()
         return missed to covered
     }
-
 
     // ---------------------------------------------------------------
     // Defect 1: the aggregate tasks were registered from INSIDE the `qualityCoverage`
@@ -2424,6 +2431,47 @@ class OctopusQualityPluginFunctionalTest {
             5 to 0,
             aggregateLineCounter("com/example/beta"),
             "An undeclared extra Test task must not contribute execution data",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Root-project exclusions reach the aggregate.
+    //
+    // The aggregate's own exclusion check used to build `"${project.path}:test"`, which for the
+    // root project is `"::test"` — so an entry written `":test"` never matched and the root's
+    // suite was pulled in regardless. `dependOnIfExists` and `dependOnExpectedTask` always
+    // carried the `":"` guard; only this third copy lacked it, and unifying them supplies it.
+    //
+    // Reachable whenever a multi-module JaCoCo build keeps sources in the root, which
+    // `coverageTargetProjects` includes as a coverage target.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - a root-project task exclusion is honoured by the aggregate`() {
+        settingsFile(kotlinSettings("test-jacoco-aggregate-root-exclusion", """include("alpha")"""))
+        buildFile(
+            multiModuleJacocoBuild(
+                quality = """excludeTasks(":test", ":jacocoTestReport", ":jacocoTestCoverageVerification")""",
+                rootPlugins = "java",
+                rootExtra = junitDeps,
+            ),
+        )
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("root", dir = "")
+
+        val result = runner("qualityCoverage").build()
+        assertTrue(
+            result.task(":test") == null,
+            "The root's excluded suite must not be scheduled by the aggregate; got: ${result.output}",
+        )
+        assertEquals(
+            3 to 2,
+            aggregateLineCounter("com/example/alpha"),
+            "alpha's own suite still runs and counts",
+        )
+        assertEquals(
+            5 to 0,
+            aggregateLineCounter("com/example/root"),
+            "The root's classes stay in the denominator although its suite is excluded",
         )
     }
 }
