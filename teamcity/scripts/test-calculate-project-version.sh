@@ -6,6 +6,7 @@
 # passes on an implementation that emits every service message on every path.
 cd "$(dirname "$0")" || exit 1
 script="$PWD/calculate-project-version.sh"
+xml_check="$PWD/check-meta-runner-xml.py"
 xml="$PWD/../../teamcity.meta-runners/OctopusCalculateBuildParameters.xml"
 pass=0; fail=0
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
@@ -382,44 +383,12 @@ if grep -q '^\]\]></param>' "$xml"; then
   echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
 else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
 
-# The bytes alone prove nothing about how they run: the step must be a Command Line runner that
-# runs this script and reports its stderr.
-runner="$(awk '/<runner name="Calculate PROJECT_VERSION"/,/<\/runner>/' "$xml")"
-if grep -q 'type="simpleRunner"' <<<"$runner" \
-   && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner" \
-   && grep -q '<param name="log.stderr.as.errors" value="true" />' <<<"$runner"; then
-  echo "PASS [runner is a Command Line step that runs this script with stderr at error severity]"; pass=$((pass + 1))
-else echo "FAIL [runner type, script mode or stderr mode is missing]"; fail=$((fail + 1)); fi
-
-# An env. parameter is a BUILD parameter. Declared inside the runner it is an unknown runner
-# setting, which TeamCity ignores without a word - the whole defect. Declared in the meta-runner's
-# own parameters it reaches the process.
-if grep -q 'name="env\.' <<<"$runner"; then
-  echo "FAIL [runner declares an env. parameter, which the runner ignores]"; fail=$((fail + 1))
-else echo "PASS [no env. parameter is buried in the runner block]"; pass=$((pass + 1)); fi
-
-settings="$(awk '/<settings>/,/<build-runners>/' "$xml")"
-if grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%"/>' <<<"$settings" \
-   && grep -q '<param name="env.IS_DEFAULT_BRANCH" value="%teamcity.build.branch.is_default%"/>' <<<"$settings"; then
-  echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
-else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
-
-# A bash script in a Command Line runner cannot run on a Windows agent at all: TeamCity writes
-# it as a .cmd and cmd.exe reads the shebang as a command name. The runner must say so itself -
-# a requirement added to one build configuration does nothing for the other 37 that use it.
-#
-# Read from inside <requirements> with comments removed, and asserted attribute by attribute.
-# Greping the whole file passed on the element commented out - which is how someone will disable
-# it to force a build onto one agent - and on the block moved outside <settings>, where TeamCity
-# ignores it. Matching the attributes in a fixed order instead went red on id/name swapped, which
-# is valid XML and what a round-trip through the server can produce: a suite that fails on
-# correct input gets "fixed" by editing the input.
-requirements="$(perl -0777 -ne 's/<!--.*?-->//gs; print $1 if m{<settings>.*(<requirements\b.*?(?:/>|</requirements>)).*</settings>}s' "$xml")"
-if grep -q 'does-not-contain' <<<"$requirements" \
-   && grep -q 'name="teamcity.agent.jvm.os.name"' <<<"$requirements" \
-   && grep -q 'value="Windows"' <<<"$requirements"; then
-  echo "PASS [runner refuses Windows agents, where its script cannot run]"; pass=$((pass + 1))
-else echo "FAIL [runner does not exclude Windows agents]"; fail=$((fail + 1)); fi
+# XML settings are structural: attribute order, quotes and whitespace do not change their
+# meaning. The shared checker pins runner mode, env. binding scope and the Windows exclusion.
+if python3 "$xml_check" "$xml" "Calculate PROJECT_VERSION" \
+  'env.BUILD_COUNTER=%build.counter%' 'env.IS_DEFAULT_BRANCH=%teamcity.build.branch.is_default%'; then
+  echo "PASS [meta-runner XML settings]"; pass=$((pass + 1))
+else fail=$((fail + 1)); fi
 
 repo l v2.0.3; line $'2.0\n'
 marker="$(mktemp -u)"
