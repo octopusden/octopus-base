@@ -77,6 +77,27 @@ open class CoverageExtension
         /** Coverage tool selection. AUTO detects based on project languages. */
         val tool = objects.property(Tool::class.java).convention(Tool.AUTO)
 
+        /**
+         * Names of ADDITIONAL `Test` tasks whose coverage the aggregated JaCoCo report counts,
+         * beyond the standard `test`.
+         *
+         * Opt-in by design, and empty by default, so bumping the plugin never changes what
+         * `qualityCoverage` runs in a repository that has not asked for it. This mirrors the
+         * per-module wiring in `SubprojectConfigurer.configureJaCoCo`, which is deliberately
+         * scoped to the `test` / `jacocoTestReport` / `jacocoTestCoverageVerification` triplet
+         * rather than coupling every `Test` task to every report task.
+         *
+         * Declare a task here when its coverage belongs in the aggregate — typically a docker-free
+         * subset such as `unitTest` in a repository whose `test` cannot run in CI and is therefore
+         * listed in [OctopusQualityExtension.excludedTasks]. Names are matched unqualified, so one
+         * entry covers that task in every module that defines it.
+         *
+         * A declared task is still subject to [OctopusQualityExtension.excludedTasks]: exclusion
+         * wins over declaration.
+         */
+        val additionalTestTasks: SetProperty<String> =
+            objects.setProperty(String::class.java).convention(emptySet())
+
         /** Minimum line coverage per module (default 10%). */
         val minimumLineCoverage =
             objects

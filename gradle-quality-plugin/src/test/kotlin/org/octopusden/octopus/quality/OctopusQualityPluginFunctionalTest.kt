@@ -54,6 +54,27 @@ class OctopusQualityPluginFunctionalTest {
 
     private val ansiEscape = Regex("\\u001B\\[[0-9;]*m")
 
+    /** Opt-in declaration that `unitTest` is a coverage-producing suite. */
+    private val declareUnitTest = """additionalTestTasks.add("unitTest")"""
+
+    /**
+     * `beta` gets a `unitTest` task over the test source set and its default `test` disabled, so
+     * its coverage lands in `build/jacoco/unitTest.exec` and never in `test.exec`. This is the
+     * shape of the repository that reported the issue.
+     */
+    private val betaUnitTestOnly =
+        """
+        project(":beta") {
+            val sets = extensions.getByType<SourceSetContainer>()
+            tasks.register<Test>("unitTest") {
+                testClassesDirs = sets["test"].output.classesDirs
+                classpath = sets["test"].runtimeClasspath
+                useJUnitPlatform()
+            }
+            tasks.named<Test>("test") { isEnabled = false }
+        }
+        """.trimIndent()
+
     /**
      * `this.value = this.value` trips SelfAssignment, one of ErrorProne's on-by-default ERROR
      * checks. Deliberately a check from that set and not a warning: the plugin runs with
@@ -2123,8 +2144,10 @@ class OctopusQualityPluginFunctionalTest {
      * floor would otherwise fail `beta`, whose coverage deliberately does not reach `test.exec`, and
      * the 70% default `overallMinimum` does not fit a fixture covering 2 of 5 lines per module.
      */
-    private fun multiModuleJacocoBuild(quality: String = "") =
-        """
+    private fun multiModuleJacocoBuild(
+        quality: String = "",
+        coverageExtra: String = "",
+    ) = """
         import java.math.BigDecimal
         import org.octopusden.octopus.quality.CoverageExtension
         plugins {
@@ -2147,6 +2170,7 @@ class OctopusQualityPluginFunctionalTest {
                 tool.set(CoverageExtension.Tool.JACOCO)
                 minimumLineCoverage.set(BigDecimal("0.0"))
                 overallMinimum.set(BigDecimal("0.10"))
+                $coverageExtra
             }
             $quality
         }
@@ -2173,6 +2197,7 @@ class OctopusQualityPluginFunctionalTest {
         val covered = Regex("covered=\"(\\d+)\"").find(counter)!!.groupValues[1].toInt()
         return missed to covered
     }
+
 
     // ---------------------------------------------------------------
     // Defect 1: the aggregate tasks were registered from INSIDE the `qualityCoverage`
@@ -2225,21 +2250,7 @@ class OctopusQualityPluginFunctionalTest {
                 """.trimIndent(),
             ),
         )
-        buildFile(
-            multiModuleJacocoBuild() +
-                "\n" +
-                """
-                project(":beta") {
-                    val sets = extensions.getByType<SourceSetContainer>()
-                    tasks.register<Test>("unitTest") {
-                        testClassesDirs = sets["test"].output.classesDirs
-                        classpath = sets["test"].runtimeClasspath
-                        useJUnitPlatform()
-                    }
-                    tasks.named<Test>("test") { isEnabled = false }
-                }
-                """.trimIndent(),
-        )
+        buildFile(multiModuleJacocoBuild(coverageExtra = declareUnitTest) + "\n" + betaUnitTestOnly)
         writeJavaCalcModule("alpha")
         writeJavaCalcModule("beta")
 
@@ -2294,6 +2305,125 @@ class OctopusQualityPluginFunctionalTest {
         assertTrue(
             beta != null && beta.first > 0 && beta.second == 0,
             "beta's classes must stay in the denominator with zero covered lines; got LINE (missed to covered) = $beta",
+        )
+    }
+
+    // ===============================================================
+    // Execution-data SELECTION (review of #233)
+    //
+    // The first cut globbed `jacoco/*.exec` under each module's build directory. That imports
+    // whatever is on disk: it honours no exclusion and schedules no producer. These two cases
+    // pin the two halves of the replacement — select per Test task, and depend on those tasks.
+    // ===============================================================
+
+    // ---------------------------------------------------------------
+    // An EXCLUDED suite must not contribute, even when its `.exec` is sitting on disk from an
+    // earlier local run. Under the glob, beta read as 2 of 5 covered; a local gate could pass on
+    // coverage that clean CI never produces.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - an excluded suite's stale exec file is not counted`() {
+        settingsFile(
+            kotlinSettings(
+                "test-jacoco-aggregate-stale-exec",
+                """
+                include("alpha")
+                include("beta")
+                """.trimIndent(),
+            ),
+        )
+        buildFile(
+            multiModuleJacocoBuild("""excludeTasks(":beta:unitTest")""", coverageExtra = declareUnitTest) + "\n" + betaUnitTestOnly,
+        )
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("beta")
+
+        // Produce beta/build/jacoco/unitTest.exec, then run the gate that excludes its producer.
+        runner(":beta:unitTest").build()
+        runner("qualityCoverage").build()
+
+        assertEquals(
+            5 to 0,
+            aggregateLineCounter("com/example/beta"),
+            "An excluded suite's exec file must not reach the aggregate, on disk or not",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // Excluding the DEFAULT suite must not discard a module's other suites. This is the
+    // octopus-external-systems-client case: `test` needs docker and is excluded, `unitTest` is
+    // the docker-free subset and has to count. Module-level filtering reported 0 of 5.
+    //
+    // The gate is invoked on its own, with no prior `:beta:unitTest` run, so this also pins that
+    // the aggregate SCHEDULES its producers rather than assuming someone ran them.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - excluding the default suite keeps another suite's coverage`() {
+        settingsFile(
+            kotlinSettings(
+                "test-jacoco-aggregate-unit-suite",
+                """
+                include("alpha")
+                include("beta")
+                """.trimIndent(),
+            ),
+        )
+        buildFile(
+            multiModuleJacocoBuild(
+                """excludeTasks(":beta:test", ":beta:jacocoTestReport", ":beta:jacocoTestCoverageVerification")""",
+                coverageExtra = declareUnitTest,
+            ) + "\n" + betaUnitTestOnly,
+        )
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("beta")
+
+        val result = runner("qualityCoverage").build()
+        assertEquals(
+            TaskOutcome.SUCCESS,
+            result.task(":beta:unitTest")?.outcome,
+            "The aggregate must schedule the surviving suite itself; got: ${result.output}",
+        )
+        assertEquals(
+            3 to 2,
+            aggregateLineCounter("com/example/beta"),
+            "beta's unitTest coverage must count although its default `test` is excluded",
+        )
+    }
+
+    // ---------------------------------------------------------------
+    // The default must not move. An extra `Test` task that the consumer has NOT declared in
+    // `additionalTestTasks` is neither scheduled by `qualityCoverage` nor read for coverage.
+    //
+    // This is the guarantee for every existing consumer: repositories with an `integrationTest`
+    // source set or a custom `Test` task see exactly the behaviour they saw before. Extra suites
+    // are opt-in for the same reason `SubprojectConfigurer.configureJaCoCo` scopes its wiring to
+    // the standard triplet rather than coupling every `Test` task to every report task.
+    // ---------------------------------------------------------------
+    @Test
+    fun `multi-module jacoco - an undeclared extra Test task is neither scheduled nor counted`() {
+        settingsFile(
+            kotlinSettings(
+                "test-jacoco-aggregate-undeclared-suite",
+                """
+                include("alpha")
+                include("beta")
+                """.trimIndent(),
+            ),
+        )
+        // No additionalTestTasks: beta's `unitTest` exists but was never declared.
+        buildFile(multiModuleJacocoBuild() + "\n" + betaUnitTestOnly)
+        writeJavaCalcModule("alpha")
+        writeJavaCalcModule("beta")
+
+        val result = runner("qualityCoverage").build()
+        assertTrue(
+            result.task(":beta:unitTest") == null,
+            "An undeclared extra Test task must not be scheduled by qualityCoverage; got: ${result.output}",
+        )
+        assertEquals(
+            5 to 0,
+            aggregateLineCounter("com/example/beta"),
+            "An undeclared extra Test task must not contribute execution data",
         )
     }
 }

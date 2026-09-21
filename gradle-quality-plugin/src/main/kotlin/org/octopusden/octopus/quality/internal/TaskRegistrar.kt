@@ -2,8 +2,12 @@ package org.octopusden.octopus.quality.internal
 
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.tasks.testing.Test
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
 import org.octopusden.octopus.quality.CoverageExtension
 import org.octopusden.octopus.quality.OctopusQualityExtension
+import java.io.File
+import java.util.concurrent.Callable
 
 /**
  * Registers root-level aggregate quality tasks: qualityStatic, qualityCoverage, qualityCheck.
@@ -172,17 +176,9 @@ internal object TaskRegistrar {
     ) {
         rootProject.pluginManager.apply("jacoco")
         val excludedTasks = extension.excludedTasks.get()
-        // Which SUITES run: a project without a `test` task (non-Java module) or whose `test` is
-        // excluded contributes no execution data and must not be depended on.
-        val executionTargets =
-            targets.filter { project ->
-                val testPath = "${project.path}:test"
-                "test" in project.tasks.names &&
-                    "test" !in excludedTasks &&
-                    testPath !in excludedTasks
-            }
+        val additionalTestTasks = extension.coverage.additionalTestTasks.get()
 
-        // Which CLASSES count: every coverage target, including those whose `test` is excluded.
+        // Which CLASSES count: every coverage target, including those whose suites are excluded.
         // Filtering the denominator too would let a repo raise its reported coverage merely by
         // excluding a suite its CI cannot run (#231). Opting a project out of coverage entirely is
         // `coverageExcludedProjects`, which `targets` already honours.
@@ -194,24 +190,27 @@ internal object TaskRegistrar {
             rootProject.files(
                 targets.mapNotNull { project -> project.mainSourceSet()?.output },
             )
-        // Glob rather than `jacoco/test.exec`: a module whose coverage-bearing suite is any other
-        // Test task (e.g. `unitTest`) writes `jacoco/<taskName>.exec`. JaCoCo merges execution data
-        // per class id, OR-ing the probe arrays, so overlapping suites do not double-count.
+
+        // Which SUITES contribute: selected per TASK, not per module, and scheduled rather than
+        // assumed. Both halves are load-bearing. Excluding `:m:test` (a suite CI cannot run) must
+        // not discard a declared `:m:unitTest`, which is the case this aggregation exists for; and
+        // depending on these exact tasks means the data is produced by THIS build, so an excluded
+        // or stale `.exec` left on disk by an earlier local run can no longer inflate the aggregate.
+        //
+        // Each task's own `JacocoTaskExtension.destinationFile` is the authoritative path, so
+        // relocating a destination stays correct. Resolved through a Callable so the file list is
+        // computed after the producers have run: a destination that does not exist is dropped,
+        // which also lets JaCoCo's own "Any of the execution data files exists" guard skip the
+        // report cleanly when nothing ran.
+        val coverageTasks = Callable { coverageTestTasks(targets, excludedTasks, additionalTestTasks) }
         val executionData =
-            rootProject.files(
-                executionTargets.map { project ->
-                    project.fileTree(project.layout.buildDirectory) { tree ->
-                        tree.include("jacoco/*.exec")
-                    }
-                },
-            )
-        val testDependencies = executionTargets.map { "${it.path}:test" }
+            rootProject.files(Callable { coverageExecutionFiles(targets, excludedTasks, additionalTestTasks) })
 
         rootProject.tasks.register("jacocoOverallCoverageReport", org.gradle.testing.jacoco.tasks.JacocoReport::class.java) { task ->
             task.group = "verification"
             task.description = "Generates an aggregated JaCoCo report across all coverage modules"
 
-            task.dependsOn(testDependencies)
+            task.dependsOn(coverageTasks)
             task.executionData.from(executionData)
             task.sourceDirectories.from(sourceDirs)
             task.classDirectories.from(classDirs)
@@ -233,7 +232,7 @@ internal object TaskRegistrar {
             task.group = "verification"
             task.description = "Verifies aggregated JaCoCo coverage across all coverage modules"
 
-            task.dependsOn(testDependencies)
+            task.dependsOn(coverageTasks)
             task.executionData.from(executionData)
             task.sourceDirectories.from(sourceDirs)
             task.classDirectories.from(classDirs)
@@ -334,3 +333,52 @@ private fun Project.mainSourceSet() =
         .findByType(org.gradle.api.plugins.JavaPluginExtension::class.java)
         ?.sourceSets
         ?.findByName("main")
+
+/** True when [taskName] on [project] is excluded, by bare name or by fully qualified path. */
+private fun jacocoExcluded(
+    project: Project,
+    taskName: String,
+    excludedTasks: Set<String>,
+): Boolean {
+    val fullPath = if (project.path == ":") ":$taskName" else "${project.path}:$taskName"
+    return taskName in excludedTasks || fullPath in excludedTasks
+}
+
+/**
+ * The `Test` tasks across [targets] whose coverage the aggregate counts: the standard `test`, plus
+ * anything the consumer declared in [additionalTestTasks], minus anything in [excludedTasks].
+ *
+ * Selection is per TASK rather than per module, so a module whose `test` is excluded because it
+ * needs docker still contributes a declared `unitTest`; module-level filtering dropped both.
+ *
+ * Extra suites are opt-in rather than automatic, following the same reasoning as
+ * `SubprojectConfigurer.configureJaCoCo`, which scopes its wiring to the standard triplet instead
+ * of coupling every `Test` task to every report task. With an empty declaration this selects
+ * exactly what the previous implementation did.
+ */
+private fun coverageTestTasks(
+    targets: List<Project>,
+    excludedTasks: Set<String>,
+    additionalTestTasks: Set<String>,
+): List<Test> =
+    targets.flatMap { project ->
+        project.tasks.withType(Test::class.java).filter { task ->
+            (task.name == "test" || task.name in additionalTestTasks) &&
+                !jacocoExcluded(project, task.name, excludedTasks)
+        }
+    }
+
+/**
+ * JaCoCo destination files of [coverageTestTasks] that exist on disk.
+ *
+ * Call this lazily. Evaluated after the producing tasks have run, it drops the destinations of
+ * suites that were skipped, which would otherwise abort the report as unreadable.
+ */
+private fun coverageExecutionFiles(
+    targets: List<Project>,
+    excludedTasks: Set<String>,
+    additionalTestTasks: Set<String>,
+): List<File> =
+    coverageTestTasks(targets, excludedTasks, additionalTestTasks)
+        .mapNotNull { task -> task.extensions.findByType(JacocoTaskExtension::class.java)?.destinationFile }
+        .filter { it.exists() }
