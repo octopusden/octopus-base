@@ -1,0 +1,232 @@
+name: Maven Sonar
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: Java version the project is built with. The analysis itself always runs on the scanner JDK below, because the scanner cannot load on Java 8.
+        required: true
+        type: string
+      scanner-java-version:
+        description: Java version the scanner runs on. SonarQube Cloud rejects analyses on a runtime below 21.
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: Java distribution passed to actions/setup-java
+        required: false
+        type: string
+        default: temurin
+      runs-on:
+        description: GitHub runner label
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout-minutes:
+        description: Timeout in minutes for the analysis job
+        required: false
+        type: number
+        default: 20
+      sonar-host-url:
+        description: Sonar server URL
+        required: false
+        type: string
+        default: https://sonarcloud.io
+      sonar-organization:
+        description: Sonar organization key. Defaults to the GitHub owner.
+        required: false
+        type: string
+        default: ''
+      sonar-project-key:
+        description: Sonar project key. Defaults to <owner>_<repo>.
+        required: false
+        type: string
+        default: ''
+      scanner-maven-plugin-version:
+        description: Pinned sonar-maven-plugin version. Pinned rather than `mvn sonar:sonar`, which resolves the latest release and makes the build irreproducible.
+        required: false
+        type: string
+        default: 5.7.0.6970
+      mvn-parameters:
+        description: Extra Maven parameters, passed to both the build and the analysis so the two cannot be pointed at different projects
+        required: false
+        type: string
+        default: ''
+      quality-gate-wait:
+        description: Fail the job when the quality gate is red
+        required: false
+        type: boolean
+        default: true
+      version-tag-regex:
+        description: Regex selecting release tags. Must match the release workflow's.
+        required: false
+        type: string
+        default: '^v([0-9]+)\..*'
+      fallback-version:
+        description: sonar.projectVersion for a repository that has no release tag yet
+        required: false
+        type: string
+        default: '0.0.0'
+      default-branch:
+        description: Branch that non-default branches are compared against for new code. Empty means the repository's own default branch.
+        required: false
+        type: string
+        default: ''
+      continue-on-error:
+        description: Report without failing the workflow
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SONAR_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    name: sonar/analysis
+    runs-on: ${{ inputs.runs-on }}
+    environment: Prod
+    continue-on-error: ${{ inputs.continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      # Sonar reads SCM blame; a shallow clone does not fail, it answers wrongly.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Scanner JDK first so the build JDK ends up as JAVA_HOME — setup-java points it at whichever
+      # it installed last. Java 8 cannot load the scanner, and every Maven repo here builds on 8.
+      - name: Set up scanner JDK
+        id: scanner-jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.scanner-java-version }}
+
+      - name: Set up build JDK
+        id: build-jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java-distribution }}
+          java-version: ${{ inputs.java-version }}
+
+      - name: Cache Sonar analyzers and provisioned JRE
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Cache Maven repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      # A reusable workflow runs against the caller's checkout, so this repo's scripts are fetched.
+      - name: Resolve helper ref
+        id: helper-ref
+        env:
+          HELPER_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HELPER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Cannot pin the Sonar helper::job.workflow_sha resolved to '${HELPER_SHA}', which is not a full commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${HELPER_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Sonar helper
+        uses: actions/checkout@v4
+        with:
+          repository: octopusden/octopus-base
+          ref: ${{ steps.helper-ref.outputs.sha }}
+          path: .octopus-base-sonar
+          sparse-checkout: .github/scripts
+
+      - name: Find latest release tag
+        id: latest-tag
+        shell: bash
+        env:
+          VERSION_TAG_REGEX: ${{ inputs.version-tag-regex }}
+        run: bash .octopus-base-sonar/.github/scripts/latest-release-tag.sh
+
+      - name: Resolve analysis parameters
+        id: params
+        shell: bash
+        env:
+          ORGANIZATION_INPUT: ${{ inputs.sonar-organization }}
+          PROJECT_KEY_INPUT: ${{ inputs.sonar-project-key }}
+          LATEST_TAG: ${{ steps.latest-tag.outputs.latest-tag }}
+          FALLBACK_VERSION: ${{ inputs.fallback-version }}
+          DEFAULT_BRANCH_INPUT: ${{ inputs.default-branch }}
+          REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: bash .octopus-base-sonar/.github/scripts/sonar-analysis-params.sh
+
+      # `install`, not `package`: the analysis is a second mvn process that builds nothing, so a
+      # multi-module project resolves siblings from ~/.m2 — which `package` never populates.
+      #
+      # `-DskipTests`, not `-Dmaven.test.skip`: the first still compiles test sources, which Sonar
+      # needs bytecode for. Reverse when coverage is wired up.
+      - name: Build with the project JDK
+        shell: bash
+        env:
+          JAVA_HOME: ${{ steps.build-jdk.outputs.path }}
+          MVN_PARAMETERS: ${{ inputs.mvn-parameters }}
+        run: |
+          set -euo pipefail
+          echo "Building with $("${JAVA_HOME}/bin/java" -version 2>&1 | head -1)"
+          # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
+          mvn --batch-mode --update-snapshots install -DskipTests ${MVN_PARAMETERS:-}
+
+      # sonar.java.jdkHome points the analyser back at the build JDK for the project's java.*.
+      - name: Run Sonar analysis on the scanner JDK
+        shell: bash
+        env:
+          JAVA_HOME: ${{ steps.scanner-jdk.outputs.path }}
+          BUILD_JAVA_HOME: ${{ steps.build-jdk.outputs.path }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+          SCANNER_VERSION: ${{ inputs.scanner-maven-plugin-version }}
+          MVN_PARAMETERS: ${{ inputs.mvn-parameters }}
+          SONAR_ORGANIZATION: ${{ steps.params.outputs.organization }}
+          SONAR_PROJECT_KEY: ${{ steps.params.outputs.project-key }}
+          SONAR_PROJECT_VERSION: ${{ steps.params.outputs.version }}
+          SONAR_REFERENCE_BRANCH: ${{ steps.params.outputs.reference-branch }}
+          QUALITY_GATE_WAIT: ${{ inputs.quality-gate-wait }}
+        run: |
+          set -euo pipefail
+          echo "Analysing with $("${JAVA_HOME}/bin/java" -version 2>&1 | head -1)"
+          echo "Analyser resolves java.* against ${BUILD_JAVA_HOME}"
+
+          reference_arg=()
+          if [[ -n "${SONAR_REFERENCE_BRANCH}" ]]; then
+            reference_arg=(-Dsonar.newCode.referenceBranch="${SONAR_REFERENCE_BRANCH}")
+          fi
+
+          # `generate-sources` before the goal: kotlin-maven-plugin compiles src/{main,test}/kotlin
+          # through its own sourceDirs, which never reach the Maven model — build-helper's
+          # add-source executions do that, and they are bound to phases. A bare goal invocation
+          # runs no phases, so the scanner would see src/main/java and nothing else.
+          #
+          # Not a later phase: octopus-parent binds maven-javadoc-plugin:jar to generate-resources,
+          # so anything past that rebuilds javadoc on the scanner JDK and fails. Consumers must
+          # therefore register BOTH source roots at generate-sources, not generate-test-sources.
+          # shellcheck disable=SC2086 # mvn-parameters is a parameter list, splitting is the point
+          mvn --batch-mode ${MVN_PARAMETERS:-} \
+            generate-sources \
+            "org.sonarsource.scanner.maven:sonar-maven-plugin:${SCANNER_VERSION}:sonar" \
+            "${reference_arg[@]}" \
+            -Dsonar.host.url="${SONAR_HOST_URL}" \
+            -Dsonar.organization="${SONAR_ORGANIZATION}" \
+            -Dsonar.projectKey="${SONAR_PROJECT_KEY}" \
+            -Dsonar.projectVersion="${SONAR_PROJECT_VERSION}" \
+            -Dsonar.java.jdkHome="${BUILD_JAVA_HOME}" \
+            -Dsonar.qualitygate.wait="${QUALITY_GATE_WAIT}"

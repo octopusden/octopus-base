@@ -228,6 +228,14 @@ jobs:
       # reconciler that refuses them refuses the canary itself. The cases that matter are the
       # ones that write: one line inserted, every other byte unchanged, and nothing written at
       # all until the tag and the release are confirmed.
+      - name: Latest release tag scenarios
+        shell: bash
+        run: bash .github/scripts/test/latest-release-tag-scenarios.sh
+
+      - name: Sonar analysis parameter scenarios
+        shell: bash
+        run: bash .github/scripts/test/sonar-analysis-params-scenarios.sh
+
       - name: Recover release scenarios
         shell: bash
         run: bash .github/scripts/test/recover-release-scenarios.sh

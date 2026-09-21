@@ -321,3 +321,18 @@ Reference repository:
 In `octopus-base`, `Merge Gate` delegates `build` to reusable canary verification in `octopus-test`.
 This makes downstream consumer verification a merge blocker while preserving the same external check contract:
 - `gate/merge`
+
+### SonarCloud analysis workflow
+
+Reusable workflows:
+
+- `.github/workflows/common-java-gradle-sonar.yml`
+- `.github/workflows/common-java-maven-sonar.yml`
+
+They provide `sonar/analysis`, which uploads the analysis and then waits for the SonarCloud quality
+gate — a red gate fails the job.
+
+Adoption differs by build tool: a Maven repository needs only the caller, while a Gradle repository
+also applies `org.sonarqube` itself. Inputs, the branch and pull-request model, what counts as new
+code, and the common failure modes are in
+[Octopus SonarCloud Analysis.md](Octopus%20SonarCloud%20Analysis.md).
