@@ -305,6 +305,33 @@ without it — see *Prerequisites* for why the declaration reads that way.
 
 ---
 
+## Known limits
+
+Both of these are accepted behaviour, not bugs waiting to be fixed. They are written down because
+each one surfaces as a red check that looks like something else.
+
+### `-x test` does not exclude every test
+
+The Gradle command excludes the task named `test`. A repository that wires `integrationTest`,
+`functionalTest` or anything similar into `check` still runs it under `build`, so a slow or
+infrastructure-dependent suite runs during analysis and can fail it.
+
+Such a repository should pass its own `sonar-command`, naming the compile tasks it wants instead of
+`build` — for example `./gradlew classes testClasses sonar --no-daemon`. Whatever it names must
+still compile both source sets: analysis without bytecode silently drops every rule needing type
+resolution.
+
+### Pull requests from forks cannot be analysed
+
+GitHub withholds repository and environment secrets from a pull request opened from a fork, so
+`SONAR_TOKEN` is empty there whatever the caller does. The job runs and fails on authentication.
+
+There is no fix that keeps the analysis: `pull_request_target` would supply the token, and would
+run a fork's build code with it. For an external contribution, read the analysis from the branch
+after the change merges.
+
+---
+
 ## Troubleshooting
 
 - **"You are running CI analysis while Automatic Analysis is enabled."** Automatic Analysis is on
