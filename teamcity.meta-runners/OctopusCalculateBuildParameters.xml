@@ -202,6 +202,15 @@ echo "##teamcity[setParameter name='PROJECT_VERSION' value='${version}']"
         </parameters>
       </runner>
     </build-runners>
-    <requirements />
+    <requirements>
+      <!-- The Command Line step above carries a bash script, which cannot run on a Windows agent:
+           TeamCity writes it as a .cmd and cmd.exe reads the shebang as a command name, so the
+           step exits 255 having run none of the logic. The requirement applies to the whole
+           configuration, the Kotlin step included. Why here and not on each caller, and how to
+           verify it after uploading: docs/adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md
+           (TeamCity drops these comments when it round-trips a meta-runner; the ADR is the copy
+           that survives). -->
+      <does-not-contain id="RQ_META_NO_WINDOWS" name="teamcity.agent.jvm.os.name" value="Windows" />
+    </requirements>
   </settings>
 </meta-runner>

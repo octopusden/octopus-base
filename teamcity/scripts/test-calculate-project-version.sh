@@ -348,7 +348,7 @@ exact_with "false is a value, not a missing binding" \
 #
 # The copy is not byte-for-byte: TeamCity collapses every %% in script.content to one %, so the
 # XML carries this file with every % doubled and the comparison escapes the source the same way.
-# The %% collapse is unconditional: it applies to a %% that opens no reference at all.
+# Why, and what it broke: docs/adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md
 #
 #   regenerate with: sed 's/%/%%/g' teamcity/scripts/calculate-project-version.sh
 #   and replace the text between the CDATA markers of the script.content param with the result.
@@ -402,6 +402,22 @@ if grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%"/>' <<<"$sett
   echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
 else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
 
+# A bash script in a Command Line runner cannot run on a Windows agent at all: TeamCity writes
+# it as a .cmd and cmd.exe reads the shebang as a command name. The runner must say so itself -
+# a requirement added to one build configuration does nothing for the other 37 that use it.
+#
+# Read from inside <requirements> with comments removed, and asserted attribute by attribute.
+# Greping the whole file passed on the element commented out - which is how someone will disable
+# it to force a build onto one agent - and on the block moved outside <settings>, where TeamCity
+# ignores it. Matching the attributes in a fixed order instead went red on id/name swapped, which
+# is valid XML and what a round-trip through the server can produce: a suite that fails on
+# correct input gets "fixed" by editing the input.
+requirements="$(perl -0777 -ne 's/<!--.*?-->//gs; print $1 if m{<settings>.*(<requirements\b.*?(?:/>|</requirements>)).*</settings>}s' "$xml")"
+if grep -q 'does-not-contain' <<<"$requirements" \
+   && grep -q 'name="teamcity.agent.jvm.os.name"' <<<"$requirements" \
+   && grep -q 'value="Windows"' <<<"$requirements"; then
+  echo "PASS [runner refuses Windows agents, where its script cannot run]"; pass=$((pass + 1))
+else echo "FAIL [runner does not exclude Windows agents]"; fail=$((fail + 1)); fi
 
 repo l v2.0.3; line $'2.0\n'
 marker="$(mktemp -u)"

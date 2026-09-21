@@ -172,7 +172,7 @@ else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((
 # The copy is not byte-for-byte: TeamCity collapses every %% in script.content to one %, so the
 # XML carries this file with every % doubled and the comparison escapes the source the same way.
 # This script's ${build%$'\r'} survived only because a lone % happens to pass through untouched,
-# which is not a rule to rely on - a future printf '%s%s' would contain the reference %s%.
+# which is not a rule to rely on: docs/adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md
 #
 #   regenerate with: sed 's/%/%%/g' teamcity/scripts/check-release-version-is-new.sh
 #   and replace the text between the CDATA markers of the script.content param with the result.
@@ -204,6 +204,15 @@ if grep -q '^\]\]></param>' "$xml"; then
   echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
 else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
 
+# The bytes alone prove nothing about how they run: this must stay a Command Line step. Nothing
+# pinned that here, so type="jetbrains_powershell" passed the whole suite - the sibling script's
+# suite has always checked it. This runner declares no agent requirement: all 31 configurations
+# using it are already restricted to non-Windows agents by their own settings, so a requirement
+# here would have no consumer and no way to be verified (ADR 0009).
+if grep -q 'type="simpleRunner"' <<<"$runner" \
+   && grep -q '<param name="use.custom.script" value="true" />' <<<"$runner"; then
+  echo "PASS [runner is a Command Line step that runs this script]"; pass=$((pass + 1))
+else echo "FAIL [runner is not a Command Line custom-script step]"; fail=$((fail + 1)); fi
 
 marker="$(mktemp -u)"
 BUILD_NUMBER="\"; : > ${marker}; x=\"" LAST_RELEASE_VERSION=2.0.16 bash <(printf '%s\n' "$embedded" | sed 's/%%/%/g') >/dev/null 2>&1
