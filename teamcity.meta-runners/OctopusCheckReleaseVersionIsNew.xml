@@ -34,7 +34,7 @@
 
 build="${BUILD_NUMBER-}"; last="${LAST_RELEASE_VERSION-}"
 
-build="${build%$'\r'}"; last="${last%$'\r'}"   # the release log can be committed CRLF
+build="${build%%$'\r'}"; last="${last%%$'\r'}"   # the release log can be committed CRLF
 
 # TeamCity service-message values are single-quoted; ' | [ ] CR and newlines must be escaped
 # or the message is silently mangled. This applies to the values ECHOED below just as much as
@@ -44,15 +44,15 @@ build="${build%$'\r'}"; last="${last%$'\r'}"   # the release log can be committe
 esc() {
   local s=$1
   s=${s//|/||}; s=${s//$'\r'/|r}; s=${s//$'\n'/|n}; s=${s//\'/|\'}; s=${s//[/|[}; s=${s//]/|]}
-  printf '%s' "$s"
+  printf '%%s' "$s"
 }
 
 # buildProblem alone only fills the build's problem list; the log gets no error-severity line.
 # Emit both: the message macro puts the reason in the log, the problem marks the build and
 # carries the identity used to filter or mute it.
 problem() {
-  printf "##teamcity[message text='%s' status='ERROR']\n" "$(esc "$1")"
-  printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
+  printf "##teamcity[message text='%%s' status='ERROR']\n" "$(esc "$1")"
+  printf "##teamcity[buildProblem description='%%s' identity='%%s']\n" "$(esc "$1")" "$2"
   exit 1
 }
 
@@ -101,7 +101,7 @@ elif newer "$last" "$build"; then
   problem "Release log went backwards: first line is '${build}' but '${last}' was already processed. Expected the newest version first - an old version was prepended instead of inserted in order." "releaselog_regressed"
 else
   # Ordinary: a commit to the module file that added no newer version - a repair, or a rerun.
-  printf "##teamcity[buildStatus text='%s']\n" "$(esc "${build} already processed - nothing to do")"
+  printf "##teamcity[buildStatus text='%%s']\n" "$(esc "${build} already processed - nothing to do")"
   echo "##teamcity[setParameter name='ALREADY_PROCESSED' value='true']"
 fi
 ]]></param>

@@ -68,15 +68,15 @@ file=.release-line
 esc() {
   local s=$1
   s=${s//|/||}; s=${s//$'\r'/|r}; s=${s//$'\n'/|n}; s=${s//\'/|\'}; s=${s//[/|[}; s=${s//]/|]}
-  printf '%s' "$s"
+  printf '%%s' "$s"
 }
 
 # buildProblem alone only fills the build's problem list; the log gets no error-severity line.
 # Emit both: the message macro puts the reason in the log, the problem marks the build and
 # carries the identity used to filter or mute it.
 problem() {
-  printf "##teamcity[message text='%s' status='ERROR']\n" "$(esc "$1")"
-  printf "##teamcity[buildProblem description='%s' identity='%s']\n" "$(esc "$1")" "$2"
+  printf "##teamcity[message text='%%s' status='ERROR']\n" "$(esc "$1")"
+  printf "##teamcity[buildProblem description='%%s' identity='%%s']\n" "$(esc "$1")" "$2"
   exit 1
 }
 
@@ -134,15 +134,15 @@ if [ -f "$file" ]; then
   # and the same version as 2.5 downstream.
   IFS= read -r line < "$file" || true
   # Trim both ends. Written with extglob rather than the usual pair of nested expansions,
-  # ${line#"${line%%[![:space:]]*}"} and its mirror: those are correct but unreadable, and a
-  # single % where the first needs %% silently turns 2.1 into 1 - a reader of this file has
+  # ${line#"${line%%%%[![:space:]]*}"} and its mirror: those are correct but unreadable, and a
+  # single %% where the first needs %%%% silently turns 2.1 into 1 - a reader of this file has
   # already read it that way. +([[:space:]]) is one-or-more blanks, and the pattern is bash's
   # own. A [[ =~ ]] with the blanks outside the capture reads better still, but it leans on the
   # C library's regex to prefer the longest leading match: musl gives the capture the leading
   # blanks instead, so on an Alpine agent that form would not trim them.
   shopt -s extglob
   line="${line##+([[:space:]])}"
-  line="${line%%+([[:space:]])}"
+  line="${line%%%%+([[:space:]])}"
   [[ "$line" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || problem "${file} must hold major.minor on its first line, got '${line}'." "releaseline_bad_format"
   echo "Release line: ${line} (from ${file})"
 
@@ -167,7 +167,7 @@ if [ -f "$file" ]; then
     done <<<"$tags"
   fi
 else
-  tag="${tags%%$'\n'*}"
+  tag="${tags%%%%$'\n'*}"
   if [ -z "$tag" ]; then
     line=2.0
     echo "Release line: ${line} (no ${file} and no version tag)"
