@@ -70,7 +70,8 @@ than a count, since counts move on their own:
 1. Pick a configuration that **can currently land on a Windows agent** — one whose compatible
    list still contains agents whose OS is Windows. Only those can show the change. On the other
    21, and on every consumer of `OctopusCheckReleaseVersionIsNew`, the check cannot fail, so it
-   proves nothing there: answer the propagation question once, here.
+   proves nothing there: answer the propagation question once, here. Step 2 separately verifies
+   that every affected configuration remains runnable.
 2. After uploading, inspect this endpoint for **every affected configuration**. In each compatible
    agent list, no Windows agent may remain and at least one non-Windows agent must remain:
 
@@ -85,7 +86,6 @@ than a count, since counts move on their own:
    requirement, or replace the bash step with the Kotlin implementation.
 3. Then run **one build** on the Windows-capable configuration before relying on the change across
    the fleet, and read its log. The agent count says nothing about the `%` escaping, which has the
-   file, and read its log. The agent count says nothing about the `%` escaping, which has the
    larger blast radius and cannot be verified by any test in this repository:
    - the step must print a real `Release line:` and a `##teamcity[buildNumber …]`;
    - a service message must carry **its text**, not a bare `%`. If the escaping model were wrong,
