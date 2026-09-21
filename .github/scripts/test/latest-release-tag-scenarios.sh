@@ -16,7 +16,7 @@ run_case() {
     git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
     for t in "$@"; do git tag "$t"; done )
   : > "$tmp/out"
-  ( cd "$dir" && env GITHUB_OUTPUT="$tmp/out" VERSION_TAG_REGEX="$REGEX" bash "$S" ) > /dev/null
+  ( cd "$dir" && env GITHUB_OUTPUT="$tmp/out" VERSION_TAG_REGEX="${REGEX_OVERRIDE:-$REGEX}" bash "$S" ) > /dev/null
 }
 
 expect() {
@@ -47,6 +47,20 @@ expect "no release tags" ""
 
 run_case v1.0.0 sprint-42
 expect "release tag among others" "v1.0.0"
+
+# An unusable version-tag-regex is a configuration error, not an unreleased repository. grep says
+# so with exit 2, and conflating that with exit 1 would submit the fallback version and move the
+# baseline — twice, once when the regex breaks and once when it is fixed.
+: > "$tmp/out"
+if ( cd "$tmp/repo" && env GITHUB_OUTPUT="$tmp/out" VERSION_TAG_REGEX='[' bash "$S" ) > /dev/null 2>&1; then
+  echo "FAIL  invalid regex: expected a failure, got success" >&2
+  failures=$((failures + 1))
+elif grep -q "^latest-tag=" "$tmp/out"; then
+  echo "FAIL  invalid regex: wrote a tag output despite failing" >&2
+  failures=$((failures + 1))
+else
+  echo "ok    invalid regex: rejected, nothing written"
+fi
 
 # A shallow checkout has no tags, so every released repository would read as unreleased. That must
 # fail rather than quietly resolve to the fallback version.
