@@ -36,6 +36,23 @@ files reaches a server only when someone re-uploads it there. An octopus-base re
 a meta-runner says so in its notes. Keep the file name on upload: the step type is the file name as
 saved on the server.
 
+Both `OctopusCalculateBuildParameters` and `OctopusCheckReleaseVersionIsNew` run bash, which a
+Command Line runner cannot execute on a Windows agent: TeamCity writes the script as a `.cmd` and
+`cmd.exe` reads the shebang as a command name, so the step exits 255 having run none of the
+logic. Both therefore exclude Windows agents — for `OctopusCheckReleaseVersionIsNew` that
+changes nothing today, since all its consumers are already restricted, and it is there so a
+configuration created later cannot be eligible. The reasoning is in
+[ADR 0009](adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md), which also gives the
+post-upload verification — a property to check, not an agent count to compare, because the pool
+size changes on its own.
+
+The bash scripts embedded in these two files carry **every `%` doubled**. TeamCity collapses `%%`
+to one `%` inside `script.content`, so an unescaped script reaches the agent altered; this
+silently turned `${var%%pattern}` into `${var%pattern}` and broke version calculation in 2026-09.
+Regenerate an embedded copy with `sed 's/%/%%/g' teamcity/scripts/<script>.sh` rather than
+pasting the script as-is; the test suites check it. (The Kotlin `scriptContent` blocks are
+subject to the same resolution but contain no `%` today, and nothing checks them.)
+
 `OctopusCalculateBuildParameters` reads `.release-line` from the repository root to decide the
 version (see [Developer Guide, Release lines](Octopus%20Developer%20Guide.md#release-lines) for
 the rule). A repository that does not have the file yet keeps working, so the upload need not wait

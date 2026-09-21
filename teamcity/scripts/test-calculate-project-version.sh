@@ -343,15 +343,41 @@ exact_with "false is a value, not a missing binding" \
 # --- the meta-runner copy --------------------------------------------------------------------
 
 # TeamCity cannot source a script from a repository, so the meta-runner carries a copy. The
-# counter is bound as an environment variable, so nothing is rewritten for that copy - which
+# counter is bound as an environment variable, so no VALUE is rewritten into that copy - which
 # is the point: a parameter reference substituted into the script body would be executed.
-embedded="$(awk '/<!\[CDATA\[#!\/usr\/bin\/env bash/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\]\]>.*/,"");if(length)print;exit} print}' "$xml")"
-if [ "$embedded" = "$(cat "$script")" ]; then echo "PASS [meta-runner copy matches the script line for line]"; pass=$((pass + 1))
-else echo "FAIL [meta-runner copy has drifted]"; diff <(cat "$script") <(printf '%s\n' "$embedded") | sed 's/^/       /'; fail=$((fail + 1)); fi
+#
+# The copy is not byte-for-byte: TeamCity collapses every %% in script.content to one %, so the
+# XML carries this file with every % doubled and the comparison escapes the source the same way.
+# Why, and what it broke: docs/adr/0009-meta-runner-scripts-are-bash-on-posix-agents.md
+#
+#   regenerate with: sed 's/%/%%/g' teamcity/scripts/calculate-project-version.sh
+#   and replace the text between the CDATA markers of the script.content param with the result.
+# Extracted to a file, not into a variable: $(...) strips trailing newlines, so blank lines
+# added before ]]> vanished at capture time and no comparison downstream could see them.
+awk '/<!\[CDATA\[#!\/usr\/bin\/env bash/{sub(/.*<!\[CDATA\[/,"");f=1} f{if(/\]\]>/){sub(/\]\]>.*/,"");if(length)print;exit} print}' "$xml" > "$work/embedded"
+embedded="$(cat "$work/embedded")"   # the stripped form, for the greps and the injection case
+# awk's print re-appends a newline whether or not the CDATA had one, so a source file without a
+# final newline diffs against a faithful copy of itself. This does not prevent that - it names
+# it: when it fires, the comparison below goes red too, showing a phantom
+# "\ No newline at end of file" that means the source, not the XML.
+if [ -z "$(tail -c1 "$script")" ]; then echo "PASS [script ends with a newline]"; pass=$((pass + 1))
+else echo "FAIL [script has no final newline: the embedded copy cannot be compared byte for byte]"; fail=$((fail + 1)); fi
 
-# The comparison above cannot see a missing final newline - command substitution strips it from
-# both sides - so the terminator's own line is pinned separately. Re-embedding that swallows it
-# is a silent edit to a file nobody diffs by eye.
+# diff rather than string equality: $(...) strips trailing newlines from both operands, so blank
+# lines added before ]]> compared equal. diff is verdict and diagnostic in one, and its
+# "\ No newline at end of file" marker names the case above if it ever slips through.
+if drift="$(diff <(sed 's/%/%%/g' "$script") "$work/embedded")"; then
+  echo "PASS [meta-runner copy is this script, escaped for TeamCity]"; pass=$((pass + 1))
+else
+  echo "FAIL [meta-runner copy has drifted from the escaped script]"
+  printf '%s\n' "$drift" | sed 's/^/       /'
+  fail=$((fail + 1))
+fi
+
+# The comparison above still cannot see a ]]> folded onto the last code line: awk supplies the
+# newline the CDATA lost, so both sides match. Not redundant now that the comparison is a diff -
+# this is the one tail case diff cannot reach, and re-embedding that swallows the terminator is
+# a silent edit to a file nobody reads by eye.
 if grep -q '^\]\]></param>' "$xml"; then
   echo "PASS [embedded script keeps its final newline]"; pass=$((pass + 1))
 else echo "FAIL [embedded script lost its final newline: ]]> was folded onto the last code line]"; fail=$((fail + 1)); fi
@@ -378,16 +404,26 @@ if grep -q '<param name="env.BUILD_COUNTER" value="%build.counter%"/>' <<<"$sett
   echo "PASS [both values are declared as meta-runner env. parameters]"; pass=$((pass + 1))
 else echo "FAIL [a meta-runner env. parameter declaration is missing]"; fail=$((fail + 1)); fi
 
-# Checked on the whole text, comments included: TeamCity resolves a reference anywhere in
-# script.content, and an unresolved one becomes an implicit agent requirement that leaves the
-# build queued with no compatible agent.
-if grep -q '%[A-Za-z_.][A-Za-z0-9_.]*%' <<<"$embedded"; then
-  echo "FAIL [embedded script contains a TeamCity parameter reference]"; fail=$((fail + 1))
-else echo "PASS [embedded script contains no TeamCity parameter reference]"; pass=$((pass + 1)); fi
+# A bash script in a Command Line runner cannot run on a Windows agent at all: TeamCity writes
+# it as a .cmd and cmd.exe reads the shebang as a command name. The runner must say so itself -
+# a requirement added to one build configuration does nothing for the other 37 that use it.
+#
+# Read from inside <requirements> with comments removed, and asserted attribute by attribute.
+# Greping the whole file passed on the element commented out - which is how someone will disable
+# it to force a build onto one agent - and on the block moved outside <settings>, where TeamCity
+# ignores it. Matching the attributes in a fixed order instead went red on id/name swapped, which
+# is valid XML and what a round-trip through the server can produce: a suite that fails on
+# correct input gets "fixed" by editing the input.
+requirements="$(perl -0777 -ne 's/<!--.*?-->//gs; print $1 if m{<settings>.*(<requirements\b.*?(?:/>|</requirements>)).*</settings>}s' "$xml")"
+if grep -q 'does-not-contain' <<<"$requirements" \
+   && grep -q 'name="teamcity.agent.jvm.os.name"' <<<"$requirements" \
+   && grep -q 'value="Windows"' <<<"$requirements"; then
+  echo "PASS [runner refuses Windows agents, where its script cannot run]"; pass=$((pass + 1))
+else echo "FAIL [runner does not exclude Windows agents]"; fail=$((fail + 1)); fi
 
 repo l v2.0.3; line $'2.0\n'
 marker="$(mktemp -u)"
-BUILD_COUNTER="\"; : > ${marker}; x=\"" bash <(printf '%s\n' "$embedded") >/dev/null 2>&1
+BUILD_COUNTER="\"; : > ${marker}; x=\"" bash <(printf '%s\n' "$embedded" | sed 's/%%/%/g') >/dev/null 2>&1
 if [ -e "$marker" ]; then echo "FAIL [embedded copy executed an injected command]"; rm -f "$marker"; fail=$((fail + 1))
 else echo "PASS [embedded copy treats a hostile counter as data]"; pass=$((pass + 1)); fi
 
