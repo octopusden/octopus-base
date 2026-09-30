@@ -57,7 +57,7 @@ Consumers can also use the shared [workflow lint and Gradle dependency submissio
 `consumer-verify` validates reusable workflow changes against `octopus-test` (real consumer repo):
 - Creates branch `verify/octopus-base-pr-<N>` in `octopus-test`, rewrites workflow refs to PR SHA
 - Waits for `octopus-test` Merge Gate to pass
-- Deletes the branch when it passes (only `verify/octopus-base-*` names, and only if no newer run moved it); a failed run's branch is kept for investigation
+- Deletes the branch when it passes (only the generated name, never a custom `verify_branch`, and only if no newer run moved it); a failed run's branch is kept for investigation
 - Runs only when PR changes touch `.github/workflows/**`, `.github/actions/**`, or `update-octopus-test-refs.sh`
 
 Manual trigger: `Actions` → `Merge Gate` → provide `octopus_base_ref`, `verify_branch`.

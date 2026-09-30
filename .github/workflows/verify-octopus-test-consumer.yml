@@ -139,18 +139,21 @@ jobs:
           octopus_base_ref="${INPUT_OCTOPUS_BASE_REF:-$GITHUB_SHA}"
           octopus_test_base_ref="${INPUT_OCTOPUS_TEST_BASE_REF:-main}"
 
-          if [[ -n "${INPUT_VERIFY_BRANCH}" ]]; then
-            verify_branch="${INPUT_VERIFY_BRANCH}"
-          elif [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            verify_branch="verify/octopus-base-pr-${{ github.event.pull_request.number }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            auto_branch="verify/octopus-base-pr-${{ github.event.pull_request.number }}"
           else
-            verify_branch="verify/octopus-base-run-${GITHUB_RUN_ID}"
+            auto_branch="verify/octopus-base-run-${GITHUB_RUN_ID}"
           fi
+          verify_branch="${INPUT_VERIFY_BRANCH:-$auto_branch}"
+          # Only the generated name is ours to delete; callers may pass that same name explicitly.
+          delete_branch=false
+          if [[ "$verify_branch" == "$auto_branch" ]]; then delete_branch=true; fi
 
           {
             echo "octopus_base_ref=$octopus_base_ref"
             echo "octopus_test_base_ref=$octopus_test_base_ref"
             echo "verify_branch=$verify_branch"
+            echo "delete_branch=$delete_branch"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -316,10 +319,10 @@ jobs:
           exit 1
 
       # Passed branches are deleted; failed ones stay for investigation (the stale-branch cleanup
-      # removes them later). Only auto-named branches, and only while the tip is still this run's
-      # commit: a newer run of the same PR may have force-pushed the branch meanwhile.
+      # removes them later). Only the generated name (never a custom verify_branch), and only while the
+      # tip is still this run's commit: a newer run of the same PR may have force-pushed it meanwhile.
       - name: Delete verification branch
-        if: ${{ inputs.enabled && startsWith(steps.context.outputs.verify_branch, 'verify/octopus-base-') }}
+        if: ${{ inputs.enabled && steps.context.outputs.delete_branch == 'true' }}
         shell: bash
         env:
           VERIFY_BRANCH: ${{ steps.context.outputs.verify_branch }}
