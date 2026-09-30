@@ -279,7 +279,9 @@ jobs:
     needs:
       - flags
       - calculate-version
-    if: ${{ inputs.resume-deployment-id == '' }}
+    # A status function is required: verify-octopus-test is skipped unless asked for, and GitHub
+    # skips every job below a skipped one whose if: has none — this one included, on every release.
+    if: ${{ !failure() && !cancelled() && needs.calculate-version.result == 'success' && inputs.resume-deployment-id == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -456,7 +458,9 @@ jobs:
       - flags
       - calculate-version
       - publish-quality-plugin
-    if: ${{ needs.flags.outputs.dry-run != 'true' }}
+    # A status function, as in every job below verify-octopus-test and the check job: GitHub skips a
+    # job whose if: has none when any job above it was skipped, and the run stays green.
+    if: ${{ !failure() && !cancelled() && needs.publish-quality-plugin.result == 'success' && needs.flags.outputs.dry-run != 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -484,7 +488,7 @@ jobs:
           echo "- Target SHA: ${{ needs.calculate-version.outputs.target_sha }}"
 
   register-release-in-log:
-    if: ${{ needs.flags.outputs.dry-run != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.create-release.result == 'success' && needs.flags.outputs.dry-run != 'true' }}
     needs:
       - flags
       - calculate-version
