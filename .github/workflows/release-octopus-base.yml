@@ -270,21 +270,24 @@ jobs:
           echo "Dry run enabled: no GitHub Release will be created."
           echo "Calculated tag: ${{ steps.version.outputs.next_tag }}"
 
-  # A dry run of this workflow runs no Gradle at all: the publish job is skipped whole. So the
-  # checksum check gets a job of its own there, with the publish job's setup, on the same target
-  # SHA, unsigned, because a dry run holds no key. It still catches the flag no longer taking
-  # effect before a real release finds out.
+  # The upload passes -Dorg.gradle.internal.publish.checksums.insecure=true, so sha256 and sha512
+  # stay off Central's File Count. The property is internal, so before anything is staged this job
+  # publishes the build to a throwaway file:// repository with the flag, and refuses any file that
+  # is not an artifact file of a mavenLocal view of the same build, or its md5, sha1 or signature.
+  # The reusable workflow's step of the same name explains the rule. This build routes nothing, and
+  # signs only when publishToSonatype is requested, so it needs neither the routing nor the
+  # no-signing script.
   #
-  # This is the one dry-run job that EXECUTES code from the target SHA (a Gradle build), and a dry
-  # run accepts any commit SHA. So its token is read-only and is not left in .git/config for that
-  # build to find. Signing needs no switch: the plugin build signs only when publishToSonatype is
-  # requested, and there is no key here anyway.
-  central-checksum-dry-run:
-    name: Check Central checksum files (dry run)
+  # One job for a dry run and a real release alike. A dry run otherwise runs no Gradle at all, and
+  # the publish job waits for this one. It runs the target SHA's build, and a dry run accepts any
+  # commit SHA, so its token is read-only and is not left in .git/config for that build to find. No
+  # secrets. Skipped on a resume, like the upload.
+  central-checksum-check:
+    name: Check Central checksum files
     needs:
       - flags
       - calculate-version
-    if: ${{ needs.flags.outputs.dry-run == 'true' }}
+    if: ${{ inputs.resume-deployment-id == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -310,21 +313,19 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Check Central checksum files (dry run)
+      - name: Check Central checksum files
         working-directory: gradle-quality-plugin
         env:
-          CHECK_MODE: unsigned
           RELEASE_VERSION: ${{ needs.calculate-version.outputs.release_version }}
         run: |
           set -euo pipefail
           expected="$RUNNER_TEMP/central-checksum-expected"
           check="$RUNNER_TEMP/central-checksum-check"
-          rm -rf "$expected" "$check" "$check.gradle-version"
+          rm -rf "$expected" "$check"
           OCTOPUS_CHECKSUM_CHECK_REPO="$check" ./gradlew publishToMavenLocal publishAllPublicationsToCentralChecksumCheckRepository \
             -Pversion="$RELEASE_VERSION" -Pnexus=true \
             -Dmaven.repo.local="$expected" \
             -Dorg.gradle.internal.publish.checksums.insecure=true \
-            -Dorg.gradle.configuration-cache=false \
             --init-script ../.github/scripts/central-checksum-check.init.gradle \
             --no-daemon -s
           python3 ../.github/scripts/check-central-checksums.py "$check" "$expected"
@@ -334,7 +335,10 @@ jobs:
     needs:
       - flags
       - calculate-version
-    if: ${{ needs.flags.outputs.dry-run != 'true' }}
+      - central-checksum-check
+    # !failure(), not success(): the check job is skipped on a resume, and a skipped need must not
+    # skip the publish that the resume exists for. A failed check still stops it.
+    if: ${{ !failure() && !cancelled() && needs.calculate-version.result == 'success' && needs.flags.outputs.dry-run != 'true' }}
     runs-on: ubuntu-latest
     environment: Prod
 
@@ -376,35 +380,6 @@ jobs:
           }
           GRADLE
           echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
-
-      # The upload below passes -Dorg.gradle.internal.publish.checksums.insecure=true, so sha256 and
-      # sha512 stay off Central's File Count (octopus-base#238). The property is internal, so this
-      # checks it still works, before anything is staged: publish to a throwaway file:// repository
-      # with the flag, and compare against a mavenLocal view of the same build. Signed, with the
-      # same credentials as the upload. The reusable workflow's step of the same name explains the
-      # rules; this build routes nothing, so it needs no routing script. Skipped on a resume, like
-      # the upload.
-      - name: Check Central checksum files
-        if: ${{ inputs.resume-deployment-id == '' }}
-        working-directory: gradle-quality-plugin
-        env:
-          CHECK_MODE: signed
-          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.GPG_PRIVATE_KEY }}
-          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.GPG_PASSPHRASE }}
-          RELEASE_VERSION: ${{ needs.calculate-version.outputs.release_version }}
-        run: |
-          set -euo pipefail
-          expected="$RUNNER_TEMP/central-checksum-expected"
-          check="$RUNNER_TEMP/central-checksum-check"
-          rm -rf "$expected" "$check" "$check.gradle-version"
-          OCTOPUS_CHECKSUM_CHECK_REPO="$check" ./gradlew publishToMavenLocal publishAllPublicationsToCentralChecksumCheckRepository \
-            -Pversion="$RELEASE_VERSION" -Pnexus=true \
-            -Dmaven.repo.local="$expected" \
-            -Dorg.gradle.internal.publish.checksums.insecure=true \
-            -Dorg.gradle.configuration-cache=false \
-            --init-script ../.github/scripts/central-checksum-check.init.gradle \
-            --no-daemon -s
-          python3 ../.github/scripts/check-central-checksums.py "$check" "$expected"
 
       # Upload + close only. The Nexus2-compat `release` transition leaves the
       # deployment `closed` (nothing reaches Central), so the publish is driven

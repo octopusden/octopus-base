@@ -226,7 +226,7 @@ start publishing to the wrong registry. Covered by
 | Central preflight | `publish-to-nexus` and no `resume-deployment-id` |
 | Validate publication routing | `github-packages-publications` non-blank — **nothing else** |
 | Publication guard | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run** |
-| Central checksum check | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run**, unsigned there |
+| Central checksum check | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run** |
 | Publish to Sonatype | not dry-run, `publish-to-nexus`, no `resume-deployment-id` |
 | Publish via Central Portal | not dry-run and `publish-to-nexus` |
 | Publish to GitHub Packages | not dry-run and `github-packages-publications` non-blank |
@@ -333,19 +333,22 @@ needs only `.md5` and `.sha1` of each. So the upload passes
 `.sha512`. Each artifact file then goes up with `.md5`, `.sha1`, `.asc`, and the `.asc`'s own `.md5`
 and `.sha1`. Gradle 9.7 and later write no checksums of signatures, which leaves `.md5`, `.sha1` and
 `.asc`. The property is internal: a Gradle that ignores it writes `.sha256` and `.sha512` without any
-error. The **Central checksum check** makes that an error:
-- it publishes the same Central publications again, with the flag, into a throwaway `file://`
-  repository (mavenLocal writes no checksums);
-- it requires exactly the guard's set of artifact files, each with `.md5` and `.sha1`;
-- it refuses any `.sha256` or `.sha512`, `maven-metadata.xml` included;
-- on a real release it also requires a signature for each artifact file, and on Gradle 9.7+ no
-  checksums of that signature.
+error. The **Central checksum check** makes that an error. It publishes the same Central publications
+again, with the flag and unsigned, into a throwaway `file://` repository (mavenLocal writes no
+checksums), and refuses every **extra file** there. A file is allowed only if it is one of:
+- an artifact file in the guard's view;
+- that file's `.md5`, `.sha1`, `.asc`, `.asc.md5` or `.asc.sha1`;
+- `maven-metadata.xml`, or its `.md5` or `.sha1`.
 
-A dry run holds no key, so it checks the checksums only. A broken rule is classified
-`deterministic`: nothing was staged, so a re-dispatch after the fix is safe. The plugin release
-(`release-octopus-base.yml`) runs the same check, including a job of its own for a dry run.
-Covered by `.github/scripts/test/central-checksum-fixture.sh` (a real build on two Gradle versions)
-and `.github/scripts/test/central-checksum-scenarios.sh` (the rules).
+Anything else is refused, most often a `.sha256`/`.sha512` or a publication routed away from
+Central. What must be present is not checked here: the Central Portal validates that, and the Portal
+publish step classifies its refusal.
+
+An extra file is classified `deterministic`: nothing was staged, so a re-dispatch after the fix is
+safe. The plugin release (`release-octopus-base.yml`) runs the same check as a job of its own, before
+its upload job, on a dry run and a real release alike. Covered by
+`.github/scripts/test/central-checksum-fixture.sh` (a real build on two Gradle versions) and
+`.github/scripts/test/central-checksum-scenarios.sh` (the rule and the wiring).
 
 The upload itself is `./gradlew publishToSonatype closeSonatypeStagingRepository`.
 

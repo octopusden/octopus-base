@@ -830,25 +830,24 @@ jobs:
       # Maven Central counts every uploaded file against the org's monthly File Count, checksums
       # included, and needs only md5 + sha1. So the upload below passes
       # -Dorg.gradle.internal.publish.checksums.insecure=true, which stops Gradle writing sha256 and
-      # sha512 (octopus-base#238). The property is internal: if Gradle stops honouring it, the extra
-      # files come back and nothing fails. This step is what fails.
+      # sha512. The property is internal: a Gradle that ignores it writes them without any error.
+      # This step is the error.
       #
       # It publishes the Central publications again, with the flag, into a throwaway file://
       # repository (the same publisher as the HTTP upload; mavenLocal writes no checksums), and
-      # checks the files against the guard's routed view above. A real release signs, so the
-      # signature rules are checked too. A dry run holds no key and checks the checksums only.
-      # Skipped on a resume, like the upload: the deployment being resumed was built by an earlier
-      # run, and a new local publication would check other files.
+      # refuses any file there that is not one of the guard's artifact files or its md5, sha1 or
+      # signature. Unsigned, with the guard's own no-signing script: the flag treats every file
+      # alike, and this way the step needs no key. What must be present is the Central Portal's to
+      # validate. Skipped on a resume, like the upload: the deployment being resumed was built by an
+      # earlier run, and a new local publication would check other files.
       #
       # Covered by .github/scripts/test/central-checksum-fixture.sh (a real build, two Gradle
-      # versions) and .github/scripts/test/central-checksum-scenarios.sh (the rules).
+      # versions) and .github/scripts/test/central-checksum-scenarios.sh (the rule and the wiring).
       - name: Check Central checksum files
         if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         env:
           DRY_RUN: ${{ inputs.dry-run }}
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
-          SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          SIGNING_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           helper=".octopus-base-helper/.github/scripts"
@@ -862,28 +861,15 @@ jobs:
           fi
 
           CHECK_REPO="$RUNNER_TEMP/central-checksum-check"
-          rm -rf "$CHECK_REPO" "$CHECK_REPO.gradle-version"
-          # A dry run holds no key: turn signing off with the guard's own script, written above.
-          if [ "${DRY_RUN}" = "true" ]; then
-            mode=unsigned
-            signing=(--init-script "$RUNNER_TEMP/no-signing.init.gradle")
-          else
-            mode=signed
-            signing=()
-            . "$helper/export-signing-env.sh"
-          fi
-          # The configuration cache stays off: the init script records the Gradle version at
-          # configuration time, and a reused cache entry would skip it.
+          rm -rf "$CHECK_REPO"
           OCTOPUS_CHECKSUM_CHECK_REPO="$CHECK_REPO" ./gradlew publishAllPublicationsToCentralChecksumCheckRepository \
             -Pnexus=true \
             -Dorg.gradle.internal.publish.checksums.insecure=true \
-            -Dorg.gradle.configuration-cache=false \
             --init-script "$helper/central-checksum-check.init.gradle" \
             --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
-            "${signing[@]}" \
+            --init-script "$RUNNER_TEMP/no-signing.init.gradle" \
             -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
-          CHECK_MODE="$mode" python3 "$helper/check-central-checksums.py" \
-            "$CHECK_REPO" "$RUNNER_TEMP/m2-publication-guard"
+          python3 "$helper/check-central-checksums.py" "$CHECK_REPO" "$RUNNER_TEMP/m2-publication-guard"
 
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
