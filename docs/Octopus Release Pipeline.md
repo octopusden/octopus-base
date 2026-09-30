@@ -330,9 +330,10 @@ that point rather than today. See the Developer Guide for which remedy fits whic
 **Checksum files.** Central counts every uploaded file against the org's monthly File Count, and
 needs only `.md5` and `.sha1` of each. So the upload passes
 `-Dorg.gradle.internal.publish.checksums.insecure=true`, which stops Gradle writing `.sha256` and
-`.sha512`: 6 files per artifact file instead of 10, or 4 on Gradle 9.7 and later, which also stops
-writing checksums of signatures (octopus-base#238). The property is internal, so if Gradle stops
-honouring it the extra files come back with no error. The **Central checksum check** turns that into one:
+`.sha512`. Each artifact file then goes up with `.md5`, `.sha1`, `.asc`, and the `.asc`'s own `.md5`
+and `.sha1`. Gradle 9.7 and later write no checksums of signatures, which leaves `.md5`, `.sha1` and
+`.asc`. The property is internal: a Gradle that ignores it writes `.sha256` and `.sha512` without any
+error. The **Central checksum check** makes that an error:
 - it publishes the same Central publications again, with the flag, into a throwaway `file://`
   repository (mavenLocal writes no checksums);
 - it requires exactly the guard's set of artifact files, each with `.md5` and `.sha1`;
