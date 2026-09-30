@@ -154,6 +154,46 @@ grep -qF 'contents: read' "$tmp/own-job" && grep -qF 'persist-credentials: false
   && ! grep -q 'secrets\.' "$tmp/own-job"; check \
   "the check job runs the target SHA's build with a read-only token and no secrets" \
   "a dry run accepts any SHA, and its build could use the workflow's write token"
+# The rule behind that: GitHub skips a job whose if: has no status function when ANY job above it
+# was skipped, transitively (run 33398058665: verify skipped, so publish, release and register were
+# skipped and the run was green). verify-octopus-test is skipped unless asked for, and the check job
+# on a resume, so every job below either must say always() or !failure().
+python3 - "$OWN" > "$tmp/downstream" <<'PY'
+import re, sys
+jobs, cur = {}, None
+for line in open(sys.argv[1], encoding="utf-8"):
+    m = re.match(r"^  ([a-z0-9-]+):\s*$", line)
+    if m:
+        cur = jobs.setdefault(m.group(1), {"needs": [], "if": ""})
+        continue
+    if cur is None or line.startswith("  ") is False:
+        continue
+    n = re.match(r"^      - ([a-z0-9-]+)\s*$", line)
+    if n and cur.get("in_needs"):
+        cur["needs"].append(n.group(1))
+        continue
+    cur["in_needs"] = bool(re.match(r"^    needs:\s*$", line))
+    i = re.match(r"^    if:\s*(.*)$", line)
+    if i:
+        cur["if"] = i.group(1)
+skippable = {"verify-octopus-test", "central-checksum-check"}
+below = set()
+changed = True
+while changed:
+    changed = False
+    for name, j in jobs.items():
+        if name not in below and any(n in skippable or n in below for n in j["needs"]):
+            below.add(name)
+            changed = True
+for name in sorted(below):
+    ok = "always()" in jobs[name]["if"] or "!failure()" in jobs[name]["if"]
+    print(("ok   " if ok else "BAD  ") + name + "  if: " + jobs[name]["if"])
+PY
+bad="$(grep '^BAD' "$tmp/downstream" | tr '\n' ';')"
+grep -q '^ok   create-release' "$tmp/downstream" && [ -z "$bad" ]; check \
+  "every job below a skippable one survives the skip" \
+  "${bad:-create-release not found} — a skipped verify or check job would skip it, and the run stays green"
+
 awk '/^  publish-quality-plugin:/ { s = 1; next } s && /^  [a-z]/ { exit } s { print }' "$OWN" > "$tmp/own-publish"
 grep -q '^      - central-checksum-check$' "$tmp/own-publish" && grep -q '!failure()' "$tmp/own-publish"; check \
   "the plugin upload waits for the check, and still runs on a resume" \
