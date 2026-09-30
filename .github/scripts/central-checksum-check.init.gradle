@@ -1,0 +1,35 @@
+// Adds a throwaway file:// repository named CentralChecksumCheck to every project that applies
+// maven-publish, so a release can publish its Central publications there and inspect the files
+// Gradle writes beside them before the real upload (octopus-base#238). A file:// URL goes through
+// the same publisher as the HTTP upload, checksums included; mavenLocal does not.
+//
+// Registered when maven-publish is applied, NOT in projectsEvaluated. The routing init script
+// disables publish tasks by walking them in its own projectsEvaluated hook, and a repository added
+// after that walk gets publish tasks routing never sees: a publication routed away from Central
+// would land here and fail a correct release.
+//
+// Env: OCTOPUS_CHECKSUM_CHECK_REPO, the directory (required). A dry run, which holds no key, adds
+// the publication guard's no-signing.init.gradle rather than a switch here.
+// Writes the running Gradle version to <directory>.gradle-version: whether signatures get
+// checksums depends on it (Gradle 9.7 stopped writing them). That write happens at configuration
+// time, so the invocation must disable the configuration cache: a reused entry skips this script.
+//
+// Run with publishAllPublicationsToCentralChecksumCheckRepository only. `publish` would also
+// target sonatype and GitHubPackages.
+//
+// Covered by .github/scripts/test/central-checksum-fixture.sh.
+def dir = System.getenv('OCTOPUS_CHECKSUM_CHECK_REPO')
+if (!dir) {
+    throw new GradleException('OCTOPUS_CHECKSUM_CHECK_REPO is not set')
+}
+def versionFile = new File(dir + '.gradle-version')
+versionFile.parentFile?.mkdirs()
+versionFile.text = gradle.gradleVersion
+allprojects { proj ->
+    proj.plugins.withId('maven-publish') {
+        proj.extensions.getByName('publishing').repositories.maven { r ->
+            r.name = 'CentralChecksumCheck'
+            r.url = new File(dir).toURI()
+        }
+    }
+}

@@ -827,6 +827,64 @@ jobs:
 
           DRY_RUN="${DRY_RUN}" python3 "$inspector" "$GUARD_REPO"
 
+      # Maven Central counts every uploaded file against the org's monthly File Count, checksums
+      # included, and needs only md5 + sha1. So the upload below passes
+      # -Dorg.gradle.internal.publish.checksums.insecure=true, which stops Gradle writing sha256 and
+      # sha512 (octopus-base#238). The property is internal: if Gradle stops honouring it, the extra
+      # files come back and nothing fails. This step is what fails.
+      #
+      # It publishes the Central publications again, with the flag, into a throwaway file://
+      # repository (the same publisher as the HTTP upload; mavenLocal writes no checksums), and
+      # checks the files against the guard's routed view above. A real release signs, so the
+      # signature rules are checked too. A dry run holds no key and checks the checksums only.
+      # Skipped on a resume, like the upload: the deployment being resumed was built by an earlier
+      # run, and a new local publication would check other files.
+      #
+      # Covered by .github/scripts/test/central-checksum-fixture.sh (a real build, two Gradle
+      # versions) and .github/scripts/test/central-checksum-scenarios.sh (the rules).
+      - name: Check Central checksum files
+        if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+          OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}
+          SIGNING_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          helper=".octopus-base-helper/.github/scripts"
+          if [ ! -f "$helper/check-central-checksums.py" ]; then
+            if [ "${DRY_RUN}" = "true" ]; then
+              echo "::warning title=Central checksum files not checked::The release helpers are not on disk. Continuing because this is a dry run; a real release would refuse."
+              exit 0
+            fi
+            echo "::error title=Cannot check the Central checksum files::${helper}/check-central-checksums.py is not on disk, so the files this release would upload cannot be checked." >&2
+            exit 1
+          fi
+
+          CHECK_REPO="$RUNNER_TEMP/central-checksum-check"
+          rm -rf "$CHECK_REPO" "$CHECK_REPO.gradle-version"
+          # A dry run holds no key: turn signing off with the guard's own script, written above.
+          if [ "${DRY_RUN}" = "true" ]; then
+            mode=unsigned
+            signing=(--init-script "$RUNNER_TEMP/no-signing.init.gradle")
+          else
+            mode=signed
+            signing=()
+            . "$helper/export-signing-env.sh"
+          fi
+          # The configuration cache stays off: the init script records the Gradle version at
+          # configuration time, and a reused cache entry would skip it.
+          OCTOPUS_CHECKSUM_CHECK_REPO="$CHECK_REPO" ./gradlew publishAllPublicationsToCentralChecksumCheckRepository \
+            -Pnexus=true \
+            -Dorg.gradle.internal.publish.checksums.insecure=true \
+            -Dorg.gradle.configuration-cache=false \
+            --init-script "$helper/central-checksum-check.init.gradle" \
+            --init-script "$RUNNER_TEMP/publication-routing.init.gradle" \
+            "${signing[@]}" \
+            -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" -s
+          CHECK_MODE="$mode" python3 "$helper/check-central-checksums.py" \
+            "$CHECK_REPO" "$RUNNER_TEMP/m2-publication-guard"
+
       # Bind -PstagingProfileId to the gradle-nexus publish-plugin extension for
       # every project that applies it, without requiring any consumer build-script
       # change. Bypasses the flaky OSSRH-compat staging-profile auto-lookup. No-op
@@ -847,7 +905,9 @@ jobs:
           GRADLE
           echo "Wrote $RUNNER_TEMP/staging-profile.init.gradle"
 
-      # Upload + close the staging repository. The Nexus2-compat `release`
+      # Upload + close the staging repository. The checksum flag keeps sha256/sha512 off Central,
+      # whose File Count they would otherwise take (octopus-base#238); the check above fails the
+      # release if it stops working. The Nexus2-compat `release`
       # transition is NOT used: it leaves the deployment `closed`, so nothing ever
       # reaches Maven Central. The publish is driven explicitly through the Central
       # Portal API in the next step. Skipped entirely when resuming an existing
@@ -858,7 +918,7 @@ jobs:
         run: |
           set -o pipefail
           . .octopus-base-helper/.github/scripts/export-signing-env.sh
-          ./gradlew -Pnexus=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" --init-script "$RUNNER_TEMP/publication-routing.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
+          ./gradlew -Pnexus=true -Dorg.gradle.internal.publish.checksums.insecure=true -PstagingProfileId="$STAGING_PROFILE_ID" --init-script "$RUNNER_TEMP/staging-profile.init.gradle" --init-script "$RUNNER_TEMP/publication-routing.init.gradle" publishToSonatype closeSonatypeStagingRepository -PbuildVersion="$BUILD_VERSION" -Pversion="$BUILD_VERSION" --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
         env:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS: ${{ inputs.github-packages-publications }}

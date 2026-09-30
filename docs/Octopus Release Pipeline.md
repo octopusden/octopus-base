@@ -226,6 +226,7 @@ start publishing to the wrong registry. Covered by
 | Central preflight | `publish-to-nexus` and no `resume-deployment-id` |
 | Validate publication routing | `github-packages-publications` non-blank — **nothing else** |
 | Publication guard | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run** |
+| Central checksum check | `publish-to-nexus` and no `resume-deployment-id` — **including dry-run**, unsigned there |
 | Publish to Sonatype | not dry-run, `publish-to-nexus`, no `resume-deployment-id` |
 | Publish via Central Portal | not dry-run and `publish-to-nexus` |
 | Publish to GitHub Packages | not dry-run and `github-packages-publications` non-blank |
@@ -325,6 +326,25 @@ that point rather than today. See the Developer Guide for which remedy fits whic
 > The guard runs in dry-run too, deliberately, so a dry run rehearses it. It is skipped by
 > `publish-to-nexus: false` **and** by `resume-deployment-id` — a resumed publish is never
 > re-inspected.
+
+**Checksum files.** Central counts every uploaded file against the org's monthly File Count, and
+needs only `.md5` and `.sha1` of each. So the upload passes
+`-Dorg.gradle.internal.publish.checksums.insecure=true`, which stops Gradle writing `.sha256` and
+`.sha512`: 6 files per artifact file instead of 10, or 4 on Gradle 9.7 and later, which also stops
+writing checksums of signatures (octopus-base#238). The property is internal, so if Gradle stops
+honouring it the extra files come back with no error. The **Central checksum check** turns that into one:
+- it publishes the same Central publications again, with the flag, into a throwaway `file://`
+  repository (mavenLocal writes no checksums);
+- it requires exactly the guard's set of artifact files, each with `.md5` and `.sha1`;
+- it refuses any `.sha256` or `.sha512`, `maven-metadata.xml` included;
+- on a real release it also requires a signature for each artifact file, and on Gradle 9.7+ no
+  checksums of that signature.
+
+A dry run holds no key, so it checks the checksums only. A broken rule is classified
+`deterministic`: nothing was staged, so a re-dispatch after the fix is safe. The plugin release
+(`release-octopus-base.yml`) runs the same check, including a job of its own for a dry run.
+Covered by `.github/scripts/test/central-checksum-fixture.sh` (a real build on two Gradle versions)
+and `.github/scripts/test/central-checksum-scenarios.sh` (the rules).
 
 The upload itself is `./gradlew publishToSonatype closeSonatypeStagingRepository`.
 
