@@ -43,6 +43,8 @@ def unusable(msg):
 
 
 def files_under(d):
+    if not d.is_dir():
+        return set()
     return {p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()}
 
 
@@ -65,11 +67,9 @@ check_dir, expected_dir = Path(sys.argv[1]), Path(sys.argv[2])
 mode = os.environ.get("CHECK_MODE", "")
 if mode not in ("signed", "unsigned"):
     unusable(f"CHECK_MODE must be signed or unsigned, got '{mode}'.")
-if not check_dir.is_dir():
-    unusable(f"the check directory {check_dir} does not exist; the Gradle publication did not run.")
-if not expected_dir.is_dir():
-    unusable(f"the publication guard's directory {expected_dir} does not exist, so there is nothing "
-             f"to compare against.")
+# A missing directory is an empty one: Gradle creates neither when every publication is routed away
+# from Central, and that run succeeded. That the check's Gradle run happened at all is proven by the
+# version file below, which its init script writes whatever gets published.
 version_file = Path(str(check_dir) + ".gradle-version")
 if not version_file.is_file():
     unusable(f"{version_file.name} is missing; the check's init script did not run.")

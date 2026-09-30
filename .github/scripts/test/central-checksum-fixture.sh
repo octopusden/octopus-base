@@ -197,6 +197,22 @@ for version in $VERSIONS; do
   checker signed; [ $? = 1 ] && grep -q '\.sha256 would be uploaded' "$tmp/checker.log"; check \
     "without the flag, the checker refuses the upload" "a real sha256 went unnoticed"
 
+  # Everything routed away: Gradle skips every publish task and creates neither directory. The
+  # guard warns and passes on this, so the check must too, not fail on the missing directories.
+  rm -rf "$GUARD" "$CHECK" "$CHECK.gradle-version"
+  ( cd "$fixture" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava, :libJava" ./gradlew publishToMavenLocal \
+      -Pnexus=true -Dmaven.repo.local="$GUARD" --init-script "$NOSIGN" --init-script "$ROUTING" \
+      -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false -s ) > "$tmp/guard.log" 2>&1
+  check "the guard's publication runs with everything routed away" "publishToMavenLocal failed" "$tmp/guard.log"
+  ( cd "$fixture" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava, :libJava" OCTOPUS_CHECKSUM_CHECK_REPO="$CHECK" \
+      ./gradlew publishAllPublicationsToCentralChecksumCheckRepository -Pnexus=true "$FLAG" \
+      --init-script "$INIT" --init-script "$ROUTING" --init-script "$NOSIGN" \
+      -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false -s ) > "$tmp/check.log" 2>&1
+  check "the check publication runs with everything routed away" "Gradle failed" "$tmp/check.log"
+  checker unsigned; check "nothing bound for Central passes, as the guard does" \
+    "see the checker log" "$tmp/checker.log"
+  grep -q 'nothing to check' "$tmp/checker.log"; check "and says there was nothing to check" "the warning is missing"
+
   (cd "$fixture" && ./gradlew --stop >/dev/null 2>&1)
 done
 

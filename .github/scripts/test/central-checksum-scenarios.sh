@@ -145,8 +145,14 @@ fixture 9.4.1 signed
 echo "banana" > "$tmp/check.gradle-version"
 run "an unreadable Gradle version: exits 2" signed 2 'banana' "$DET"
 fixture 9.4.1 signed
+rm -rf "$tmp/guard" "$tmp/check"
+run "neither directory, as Gradle leaves it when everything is routed away: passes" signed 0 'nothing to check' "$DET"
+fixture 9.4.1 signed
 rm -rf "$tmp/guard"
-run "no guard directory: exits 2" signed 2 'guard' "$DET"
+run "no guard directory while the check published files: refused" signed 1 'not in the guard'
+fixture 9.4.1 signed
+rm -rf "$tmp/check"
+run "no check directory while the guard expects files: refused" signed 1 'is missing'
 fixture 9.4.1 signed
 run "an unknown mode: exits 2" maybe 2 'CHECK_MODE' "$DET"
 
