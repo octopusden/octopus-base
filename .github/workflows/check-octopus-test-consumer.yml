@@ -77,6 +77,13 @@ jobs:
         shell: bash
         run: bash .github/scripts/test/publication-routing-fixture.sh
 
+      # What Gradle really writes beside each file with the checksum flag, on one version below
+      # 9.7 and one at or above it, and that the check's repository is registered early enough for
+      # the routing to keep a routed publication out of it. Directory fixtures cannot show either.
+      - name: Central checksum check against a real build
+        shell: bash
+        run: bash .github/scripts/test/central-checksum-fixture.sh
+
       # Executes the absent-secret case rather than grepping for variable names: an unset GitHub
       # secret still creates its env entry, empty, and consumers read it with containsKey.
       - name: Signing environment
@@ -202,6 +209,12 @@ jobs:
       - name: Publication guard step scenarios
         shell: bash
         run: bash .github/scripts/test/publication-guard-step-scenarios.sh
+      # The checksum check's rules, above all its refusals, which a real build cannot be made to
+      # produce on demand; and the wiring GitHub evaluates: the flag on both uploads, and the
+      # check step's gate and position.
+      - name: Central checksum scenarios
+        shell: bash
+        run: bash .github/scripts/test/central-checksum-scenarios.sh
       # The shared-registry validation has two halves that must not collapse into each other:
       # the destination's shape is checked on every run, a dry one included, while the
       # credential is checked only on a release that will use it. Extracted and executed like

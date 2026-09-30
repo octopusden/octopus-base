@@ -270,12 +270,67 @@ jobs:
           echo "Dry run enabled: no GitHub Release will be created."
           echo "Calculated tag: ${{ steps.version.outputs.next_tag }}"
 
+  # The Central checksum check (see the reusable workflow's step of the same name), as one job for a
+  # dry run and a real release alike, which the upload waits for. This build routes nothing and signs
+  # only for publishToSonatype, so it needs neither the routing nor the no-signing script. It runs the
+  # target SHA's build, and a dry run accepts any SHA: read-only token, not persisted, no secrets.
+  central-checksum-check:
+    name: Check Central checksum files
+    needs:
+      - flags
+      - calculate-version
+    if: ${{ inputs.resume-deployment-id == '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout target SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.calculate-version.outputs.target_sha }}
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v5
+        with:
+          min-wrapper-count: 0
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Check Central checksum files
+        working-directory: gradle-quality-plugin
+        env:
+          RELEASE_VERSION: ${{ needs.calculate-version.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          expected="$RUNNER_TEMP/central-checksum-expected"
+          check="$RUNNER_TEMP/central-checksum-check"
+          rm -rf "$expected" "$check"
+          OCTOPUS_CHECKSUM_CHECK_REPO="$check" ./gradlew publishToMavenLocal publishAllPublicationsToCentralChecksumCheckRepository \
+            -Pversion="$RELEASE_VERSION" -Pnexus=true \
+            -Dmaven.repo.local="$expected" \
+            -Dorg.gradle.internal.publish.checksums.insecure=true \
+            --init-script ../.github/scripts/central-checksum-check.init.gradle \
+            --no-daemon -s
+          python3 ../.github/scripts/check-central-checksums.py "$check" "$expected"
+
   publish-quality-plugin:
     name: Publish quality convention plugin
     needs:
       - flags
       - calculate-version
-    if: ${{ needs.flags.outputs.dry-run != 'true' }}
+      - central-checksum-check
+    # !failure(), not success(): the check job is skipped on a resume, and a skipped need must not
+    # skip the publish that the resume exists for. A failed check still stops it.
+    if: ${{ !failure() && !cancelled() && needs.calculate-version.result == 'success' && needs.flags.outputs.dry-run != 'true' }}
     runs-on: ubuntu-latest
     environment: Prod
 
@@ -335,6 +390,7 @@ jobs:
           ./gradlew build publishToSonatype closeSonatypeStagingRepository \
             -Pversion=${{ needs.calculate-version.outputs.release_version }} \
             -Pnexus=true \
+            -Dorg.gradle.internal.publish.checksums.insecure=true \
             -PstagingProfileId=org.octopusden \
             --init-script "$RUNNER_TEMP/staging-profile.init.gradle" \
             --no-daemon --info -s 2>&1 | tee "$RUNNER_TEMP/publish.log"
