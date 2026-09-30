@@ -141,8 +141,15 @@ at() { grep -n "^ *- name: $2\$" "$1" | head -1 | cut -d: -f1; }
   "the check runs after the guard and before the upload" "it reads the guard's directory, and must stop the release before anything is staged"
 
 awk '/^  central-checksum-check:/ { s = 1; next } s && /^  [a-z]/ { exit } s { print }' "$OWN" > "$tmp/own-job"
-grep -qF "if: \${{ inputs.resume-deployment-id == '' }}" "$tmp/own-job" && ! grep -q 'dry-run' "$tmp/own-job"; check \
+own_gate="$(grep -E '^    if:' "$tmp/own-job")"
+case "$own_gate" in *"inputs.resume-deployment-id == ''"*) ! grep -q 'dry-run' <<< "$own_gate" ;; *) false ;; esac; check \
   "the plugin release checks every fresh upload, dry or real" "the check job lost its resume gate, or skips one of the modes"
+# verify-octopus-test is skipped unless asked for, and GitHub propagates a skip down the needs chain
+# to every job whose if: uses no status function. calculate-version survives it with always(); this
+# job must too, or it is skipped on every release and the upload goes unchecked.
+case "$own_gate" in *'!failure()'*'!cancelled()'*"needs.calculate-version.result == 'success'"*) true ;; *) false ;; esac; check \
+  "the check job is not skipped when verify-octopus-test is" \
+  "without a status function in its if:, a skipped verify-octopus-test skips the check on every release"
 grep -qF 'contents: read' "$tmp/own-job" && grep -qF 'persist-credentials: false' "$tmp/own-job" \
   && ! grep -q 'secrets\.' "$tmp/own-job"; check \
   "the check job runs the target SHA's build with a read-only token and no secrets" \

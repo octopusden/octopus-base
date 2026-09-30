@@ -279,7 +279,9 @@ jobs:
     needs:
       - flags
       - calculate-version
-    if: ${{ inputs.resume-deployment-id == '' }}
+    # A status function is required: verify-octopus-test is skipped unless asked for, and GitHub
+    # skips every job below a skipped one whose if: has none — this one included, on every release.
+    if: ${{ !failure() && !cancelled() && needs.calculate-version.result == 'success' && inputs.resume-deployment-id == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
