@@ -314,3 +314,21 @@ jobs:
 
           echo "Timed out waiting for octopus-test workflows on branch '${VERIFY_BRANCH}'."
           exit 1
+
+      # Passed branches are deleted; failed ones stay for investigation (the stale-branch cleanup
+      # removes them later). Only auto-named branches, and only while the tip is still this run's
+      # commit: a newer run of the same PR may have force-pushed the branch meanwhile.
+      - name: Delete verification branch
+        if: ${{ inputs.enabled && startsWith(steps.context.outputs.verify_branch, 'verify/octopus-base-') }}
+        shell: bash
+        env:
+          VERIFY_BRANCH: ${{ steps.context.outputs.verify_branch }}
+          VERIFY_SHA: ${{ steps.push.outputs.verify_sha }}
+        run: |
+          set -euo pipefail
+
+          if git -C /tmp/octopus-test-consumer push --force-with-lease="${VERIFY_BRANCH}:${VERIFY_SHA}" origin ":${VERIFY_BRANCH}"; then
+            echo "- verification branch deleted" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Could not delete ${VERIFY_BRANCH} in ${OCTOPUS_TEST_REPOSITORY} (moved by a newer run, or already gone)."
+          fi
