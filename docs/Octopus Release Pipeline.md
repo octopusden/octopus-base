@@ -341,8 +341,10 @@ checksums), and refuses every **extra file** there. A file is allowed only if it
 - `maven-metadata.xml`, or its `.md5` or `.sha1`.
 
 Anything else is refused, most often a `.sha256`/`.sha512` or a publication routed away from
-Central. What must be present is not checked here: the Central Portal validates that, and the Portal
-publish step classifies its refusal.
+Central. Every artifact file in the guard's view must also be in that repository, which proves the
+check ran for it; if one is not (for example, the build skips publish tasks by repository name), the
+check fails, classified `unknown`. What Central needs beside each artifact file is not checked here:
+the Central Portal validates that, and the Portal publish step classifies its refusal.
 
 An extra file is classified `deterministic`: nothing was staged, so a re-dispatch after the fix is
 safe. The plugin release (`release-octopus-base.yml`) runs the same check as a job of its own, before

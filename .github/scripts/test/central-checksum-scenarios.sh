@@ -91,6 +91,20 @@ fixture .md5 .sha1
 rm -rf "$tmp/guard"
 run "files with no guard view at all" 1 'lib-1.0.0.jar would be uploaded'
 
+echo "-- the check must have seen what the guard saw ------------------------"
+# Not "what Central needs" (the Portal validates that), but proof the check ran: a consumer build
+# that filters publish tasks by repository skips every task bound for CentralChecksumCheck.
+fixture .md5 .sha1
+rm -rf "$tmp/check"
+run "a guard view with no check directory: refused, not classified deterministic" 1 \
+  'RELEASE_PUBLISH_CLASS=unknown' "$DET|no extra files"
+fixture .md5 .sha1
+rm "$tmp/check/$G/lib-1.0.0-sources.jar" "$tmp/check/$G/lib-1.0.0-sources.jar".*
+run "an artifact file the check did not publish: refused" 1 'lib-1.0.0-sources.jar was not published' "$DET"
+fixture .md5 .sha1 .sha256
+rm "$tmp/check/$G/lib-1.0.0.pom" "$tmp/check/$G/lib-1.0.0.pom".*
+run "extra files outrank missing ones: deterministic" 1 "$DET"
+
 echo "-- the workflows are wired to it --------------------------------------"
 FLAG='-Dorg.gradle.internal.publish.checksums.insecure=true'
 REL="$root/.github/workflows/common-java-gradle-release.yml"

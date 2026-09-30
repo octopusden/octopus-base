@@ -136,6 +136,18 @@ for version in $VERSIONS; do
   checker; [ $? = 1 ] && grep -q 'lib-1.0.0.jar.sha256 would be uploaded' "$tmp/checker.log"; check \
     "without the flag, the checker refuses the upload" "a real sha256 went unnoticed"
 
+  # A build that filters publish tasks by repository skips every task bound for the check, so the
+  # check would pass on nothing. It must refuse, as "unknown": a fault in the check.
+  printf '%s\n' "allprojects { tasks.withType(org.gradle.api.publish.maven.tasks.PublishToMavenRepository).configureEach { t -> t.onlyIf { t.repository.name == 'sonatype' } } }" \
+    > "$tmp/only-sonatype.init.gradle"
+  rm -rf "$CHECK"
+  OCTOPUS_CHECKSUM_CHECK_REPO="$CHECK" gradle ":fatJava" "$tmp/check.log" \
+    publishAllPublicationsToCentralChecksumCheckRepository "$FLAG" --init-script "$INIT" \
+    --init-script "$tmp/only-sonatype.init.gradle"
+  check "a build that skips the check's publish tasks still runs" "Gradle failed" "$tmp/check.log"
+  checker; [ $? = 1 ] && grep -q 'RELEASE_PUBLISH_CLASS=unknown' "$tmp/checker.log"; check \
+    "and the checker refuses to pass on nothing" "the check passed although it saw no file"
+
   # Everything routed away: Gradle skips every publish task and creates neither directory.
   run_both ":fatJava, :libJava" "$FLAG"
   check "the publications run with everything routed away" "Gradle failed" "$tmp/check.log"

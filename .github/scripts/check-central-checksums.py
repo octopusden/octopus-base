@@ -15,11 +15,13 @@ Either may be missing: Gradle creates neither when every publication is routed a
 
 The rule: every file in <check-dir> must be an expected artifact file f or one of f.md5, f.sha1,
 f.asc, f.asc.md5, f.asc.sha1, or a maven-metadata.xml with its .md5 and .sha1. Anything else is an
-extra file, most often a sha256/sha512 or a publication routed away from Central. What must be
-present is not checked here: the Central Portal validates that, and portal-publish.sh classifies
+extra file, most often a sha256/sha512 or a publication routed away from Central. Every expected
+artifact file must also be in <check-dir>, which proves the check ran for it. What Central needs
+beside it is not checked here: the Central Portal validates that, and portal-publish.sh classifies
 its refusal.
 
-Exit 0 = nothing extra; 1 = extra files (classified deterministic: nothing was staged).
+Exit 0 = nothing extra; 1 = extra files (classified deterministic: nothing was staged), or an
+expected artifact file the check never saw (classified unknown: a fault in the check).
 Prints the full file list to the log.
 
 Covered by .github/scripts/test/central-checksum-scenarios.sh and
@@ -56,5 +58,18 @@ if extra:
     for p in extra:
         print(f"::error title=Extra file for Maven Central::{p} would be uploaded, and Central does not need it.")
     print(f"{len(extra)} extra file(s). Nothing was staged, so re-running after the fix is safe.")
+    sys.exit(1)
+
+# Proof the check ran: what the guard saw must have gone through the check's publisher too. A build
+# that filters publish tasks by repository skips every task bound for CentralChecksumCheck, and the
+# check would then pass on nothing. A fault in the check, not in the artifacts: unknown.
+missing = [f for f in artifacts if f not in present]
+if missing:
+    print("RELEASE_PUBLISH_CLASS=unknown")
+    print("RELEASE_PUBLISH_RETRYABLE=false")
+    for f in missing:
+        print(f"::error title=Central checksum check saw nothing::{f} was not published to the check "
+              f"repository, so its files were not checked. Does the build skip publish tasks by "
+              f"repository name?")
     sys.exit(1)
 print("OK: no extra files.")
