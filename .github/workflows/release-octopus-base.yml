@@ -270,18 +270,10 @@ jobs:
           echo "Dry run enabled: no GitHub Release will be created."
           echo "Calculated tag: ${{ steps.version.outputs.next_tag }}"
 
-  # The upload passes -Dorg.gradle.internal.publish.checksums.insecure=true, so sha256 and sha512
-  # stay off Central's File Count. The property is internal, so before anything is staged this job
-  # publishes the build to a throwaway file:// repository with the flag, and refuses any file that
-  # is not an artifact file of a mavenLocal view of the same build, or its md5, sha1 or signature.
-  # The reusable workflow's step of the same name explains the rule. This build routes nothing, and
-  # signs only when publishToSonatype is requested, so it needs neither the routing nor the
-  # no-signing script.
-  #
-  # One job for a dry run and a real release alike. A dry run otherwise runs no Gradle at all, and
-  # the publish job waits for this one. It runs the target SHA's build, and a dry run accepts any
-  # commit SHA, so its token is read-only and is not left in .git/config for that build to find. No
-  # secrets. Skipped on a resume, like the upload.
+  # The Central checksum check (see the reusable workflow's step of the same name), as one job for a
+  # dry run and a real release alike, which the upload waits for. This build routes nothing and signs
+  # only for publishToSonatype, so it needs neither the routing nor the no-signing script. It runs the
+  # target SHA's build, and a dry run accepts any SHA: read-only token, not persisted, no secrets.
   central-checksum-check:
     name: Check Central checksum files
     needs:

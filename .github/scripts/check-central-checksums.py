@@ -1,31 +1,18 @@
 #!/usr/bin/env python3
 """Refuse a Central upload that would carry files Central does not need.
 
-Central counts every uploaded file against the org's monthly File Count, checksums included, and
-needs only md5 + sha1 of each file. The upload runs with
--Dorg.gradle.internal.publish.checksums.insecure=true so that Gradle writes no sha256 or sha512. That
-property is internal: a Gradle that ignores it writes them without any error. This check is the error.
-
 Usage: check-central-checksums.py <check-dir> <expected-dir>
-  <check-dir>     a file:// repository the release just published its Central publications into,
-                  with the flag, through the same publisher the HTTP upload uses;
-  <expected-dir>  the publication guard's routed local repository from the same run, which holds
-                  every artifact file Central should receive (mavenLocal writes no checksums).
+  <check-dir>     a file:// repository the Central publications were just published into, with
+                  -Dorg.gradle.internal.publish.checksums.insecure=true;
+  <expected-dir>  the publication guard's routed local repository from the same run.
 Either may be missing: Gradle creates neither when every publication is routed away.
 
-The rule: every file in <check-dir> must be an expected artifact file f or one of f.md5, f.sha1,
-f.asc, f.asc.md5, f.asc.sha1, or a maven-metadata.xml with its .md5 and .sha1. Anything else is an
-extra file, most often a sha256/sha512 or a publication routed away from Central. Every expected
-artifact file must also be in <check-dir>, which proves the check ran for it. What Central needs
-beside it is not checked here: the Central Portal validates that, and portal-publish.sh classifies
-its refusal.
+Allowed in <check-dir>: each expected artifact file f with f.md5, f.sha1, f.asc, f.asc.md5 and
+f.asc.sha1, and maven-metadata.xml with its .md5 and .sha1. Every expected f must be there too.
+Exit 1 on an extra file (deterministic) or a missing f (unknown: the check did not run for it).
+See "Checksum files" in docs/Octopus Release Pipeline.md.
 
-Exit 0 = nothing extra; 1 = extra files (classified deterministic: nothing was staged), or an
-expected artifact file the check never saw (classified unknown: a fault in the check).
-Prints the full file list to the log.
-
-Covered by .github/scripts/test/central-checksum-scenarios.sh and
-.github/scripts/test/central-checksum-fixture.sh.
+Covered by .github/scripts/test/central-checksum-scenarios.sh and central-checksum-fixture.sh.
 """
 import sys
 from pathlib import Path
@@ -38,6 +25,14 @@ def files_under(d):
     return sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()) if d.is_dir() else []
 
 
+def fail(cls, title, items, message):
+    print(f"RELEASE_PUBLISH_CLASS={cls}")
+    print("RELEASE_PUBLISH_RETRYABLE=false")
+    for p in items:
+        print(f"::error title={title}::{p} {message}")
+    sys.exit(1)
+
+
 check_dir, expected_dir = Path(sys.argv[1]), Path(sys.argv[2])
 present = files_under(check_dir)
 artifacts = [p for p in files_under(expected_dir)
@@ -45,6 +40,8 @@ artifacts = [p for p in files_under(expected_dir)
              and not p.rsplit("/", 1)[-1].startswith("maven-metadata")]
 allowed = {f + s for f in artifacts for s in SIDECARS}
 extra = [p for p in present if p not in allowed and p.rsplit("/", 1)[-1] not in METADATA]
+# A build that skips publish tasks by repository name leaves the check with nothing to judge.
+missing = [f for f in artifacts if f not in present]
 
 print("::group::Files this release would upload to Maven Central")
 for p in present:
@@ -53,23 +50,10 @@ print("::endgroup::")
 print(f"{len(present)} files for {len(artifacts)} artifact files")
 
 if extra:
-    print("RELEASE_PUBLISH_CLASS=deterministic")
-    print("RELEASE_PUBLISH_RETRYABLE=false")
-    for p in extra:
-        print(f"::error title=Extra file for Maven Central::{p} would be uploaded, and Central does not need it.")
-    print(f"{len(extra)} extra file(s). Nothing was staged, so re-running after the fix is safe.")
-    sys.exit(1)
-
-# Proof the check ran: what the guard saw must have gone through the check's publisher too. A build
-# that filters publish tasks by repository skips every task bound for CentralChecksumCheck, and the
-# check would then pass on nothing. A fault in the check, not in the artifacts: unknown.
-missing = [f for f in artifacts if f not in present]
+    fail("deterministic", "Extra file for Maven Central", extra,
+         "would be uploaded, and Central does not need it. Nothing was staged, so re-running after the fix is safe.")
 if missing:
-    print("RELEASE_PUBLISH_CLASS=unknown")
-    print("RELEASE_PUBLISH_RETRYABLE=false")
-    for f in missing:
-        print(f"::error title=Central checksum check saw nothing::{f} was not published to the check "
-              f"repository, so its files were not checked. Does the build skip publish tasks by "
-              f"repository name?")
-    sys.exit(1)
+    fail("unknown", "Central checksum check saw nothing", missing,
+         "was not published to the check repository, so its files were not checked. "
+         "Does the build skip publish tasks by repository name?")
 print("OK: no extra files.")

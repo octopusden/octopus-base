@@ -827,22 +827,11 @@ jobs:
 
           DRY_RUN="${DRY_RUN}" python3 "$inspector" "$GUARD_REPO"
 
-      # Maven Central counts every uploaded file against the org's monthly File Count, checksums
-      # included, and needs only md5 + sha1. So the upload below passes
-      # -Dorg.gradle.internal.publish.checksums.insecure=true, which stops Gradle writing sha256 and
-      # sha512. The property is internal: a Gradle that ignores it writes them without any error.
-      # This step is the error.
-      #
-      # It publishes the Central publications again, with the flag, into a throwaway file://
-      # repository (the same publisher as the HTTP upload; mavenLocal writes no checksums), and
-      # refuses any file there that is not one of the guard's artifact files or its md5, sha1 or
-      # signature. Unsigned, with the guard's own no-signing script: the flag treats every file
-      # alike, and this way the step needs no key. What must be present is the Central Portal's to
-      # validate. Skipped on a resume, like the upload: the deployment being resumed was built by an
-      # earlier run, and a new local publication would check other files.
-      #
-      # Covered by .github/scripts/test/central-checksum-fixture.sh (a real build, two Gradle
-      # versions) and .github/scripts/test/central-checksum-scenarios.sh (the rule and the wiring).
+      # The upload below passes -Dorg.gradle.internal.publish.checksums.insecure=true to keep sha256
+      # and sha512 off Central's File Count. The property is internal, so this step publishes the same
+      # publications to a throwaway file:// repository with it, unsigned, and refuses any extra file.
+      # Skipped on a resume, like the upload. See "Checksum files" in docs/Octopus Release Pipeline.md.
+      # Covered by .github/scripts/test/central-checksum-fixture.sh and central-checksum-scenarios.sh.
       - name: Check Central checksum files
         if: ${{ inputs.publish-to-nexus && inputs.resume-deployment-id == '' }}
         env:
