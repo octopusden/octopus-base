@@ -57,6 +57,10 @@ on:
           **/build/reports/jacoco/**
           **/build/reports/tests/**
           **/build/test-results/**
+    secrets:
+      OCTOPUS_SHARED_PACKAGES_TOKEN:
+        description: 'Token with read:packages on octopusden/octopus-maven-packages, exported as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN for a build that resolves dependencies from that registry. Optional: unset, both are empty and nothing changes.'
+        required: false
 
 permissions:
   contents: read
@@ -77,7 +81,12 @@ jobs:
     needs: wrapper-validation
     if: ${{ always() && ( !inputs.enable-wrapper-validation || needs.wrapper-validation.result == 'success' ) }}
     runs-on: ${{ inputs.runs-on }}
+    # OCTOPUS_SHARED_PACKAGES_TOKEN is a Prod environment secret, as for the build and sonar jobs.
+    environment: Prod
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
+      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -100,7 +109,11 @@ jobs:
     needs: wrapper-validation
     if: ${{ always() && ( !inputs.enable-wrapper-validation || needs.wrapper-validation.result == 'success' ) }}
     runs-on: ${{ inputs.runs-on }}
+    environment: Prod
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
+      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

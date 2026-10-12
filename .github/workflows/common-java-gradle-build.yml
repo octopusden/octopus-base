@@ -18,6 +18,10 @@ on:
         required: false
         type: boolean
         default: true
+    secrets:
+      OCTOPUS_SHARED_PACKAGES_TOKEN:
+        description: 'Token with read:packages on octopusden/octopus-maven-packages, exported as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN for a build that resolves dependencies from that registry. Optional: unset, both are empty and nothing changes.'
+        required: false
 
 jobs:
   build:
@@ -26,6 +30,10 @@ jobs:
     env:
       SKIP_TESTS: '' # run tests for public flow only
       BUILD_VERSION: 1.0-SNAPSHOT # dummy version which is not really used
+      # GitHub Packages authenticates every read, so a dependency from the shared registry needs
+      # a credential; the build script reads these two names.
+      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
+      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
 
     steps:
       - name: Public flow

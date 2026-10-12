@@ -70,6 +70,9 @@ on:
     secrets:
       SONAR_TOKEN:
         required: false
+      OCTOPUS_SHARED_PACKAGES_TOKEN:
+        description: 'Token with read:packages on octopusden/octopus-maven-packages, exported as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN for a build that resolves dependencies from that registry. Optional: unset, both are empty and nothing changes.'
+        required: false
 
 permissions:
   contents: read
@@ -81,6 +84,10 @@ jobs:
     environment: Prod
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    # The analysis compiles the project, so it resolves dependencies like the build does.
+    env:
+      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
+      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
     steps:
       # Sonar reads SCM blame; a shallow clone does not fail, it answers wrongly.
       - uses: actions/checkout@v4

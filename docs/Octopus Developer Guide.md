@@ -360,6 +360,31 @@ instead of one per project. It also needs a `OCTOPUS_SHARED_PACKAGES_TOKEN` secr
 cannot write to another repository; the release refuses to start without it. Unset, nothing
 changes.
 
+**Resolving a dependency from the shared registry.** The build, quality, sonar, security and
+release workflows export `OCTOPUS_SHARED_PACKAGES_TOKEN` as `GITHUB_PACKAGES_USERNAME` /
+`GITHUB_PACKAGES_TOKEN` on every Gradle step. A consumer that depends on an artifact published
+there declares the registry with those credentials, limited to the groups it needs, and passes
+`secrets: inherit` on every calling job, `merge-gate.yml` included:
+
+```kotlin
+repositories {
+    maven {
+        name = "OctopusMavenPackages"
+        url = uri("https://maven.pkg.github.com/octopusden/octopus-maven-packages")
+        credentials {
+            username = System.getenv("GITHUB_PACKAGES_USERNAME")
+            password = System.getenv("GITHUB_PACKAGES_TOKEN")
+        }
+        content { includeGroup("org.octopusden.octopus.automation.teamcity") }
+    }
+}
+```
+
+> Don't name it `GitHubPackages`: the release treats a repository of that name as a publish
+> destination. The secret lives in the `Prod` environment, so a pull request from a fork gets no
+> token and cannot resolve the dependency. A local build needs a personal token with
+> `read:packages` in the same two variables.
+
 **"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
 dependency projects compile against. **There is no exception to reach for** — no input exists for
 waiving the size limit, and the one legacy input that happens to waive it is deprecated and not
