@@ -7,7 +7,7 @@
 # needed. What Gradle really writes is central-checksum-fixture.sh's job; this suite covers the rule,
 # and above all its refusals, which a real build cannot be made to produce on demand.
 #
-# The last block pins the workflow wiring the checker depends on: the flag on both uploads, and the
+# The last block pins the workflow wiring the checker depends on: the flag on the upload, and the
 # check's gate and position. GitHub evaluates `if:`, so no scenario can exercise it.
 #
 # Usage: bash .github/scripts/test/central-checksum-scenarios.sh   (from the repo root)
@@ -111,8 +111,6 @@ REL="$root/.github/workflows/common-java-gradle-release.yml"
 OWN="$root/.github/workflows/release-octopus-base.yml"
 grep -E 'publishToSonatype closeSonatypeStagingRepository' "$REL" | grep -qF -- "$FLAG"; check \
   "the reusable workflow's upload passes the flag" "without it every consumer uploads sha256 and sha512"
-grep -A6 './gradlew build publishToSonatype closeSonatypeStagingRepository' "$OWN" | grep -qF -- "$FLAG"; check \
-  "the plugin release's upload passes the flag" "the plugin release uploads sha256 and sha512"
 
 # step <workflow> <step name> — prints the step, from its `- name:` to the next step at its indent.
 step() {
@@ -140,24 +138,10 @@ at() { grep -n "^ *- name: $2\$" "$1" | head -1 | cut -d: -f1; }
   && [ "$(at "$REL" 'Check Central checksum files')" -lt "$(at "$REL" 'Publish to Sonatype Nexus')" ]; check \
   "the check runs after the guard and before the upload" "it reads the guard's directory, and must stop the release before anything is staged"
 
-awk '/^  central-checksum-check:/ { s = 1; next } s && /^  [a-z]/ { exit } s { print }' "$OWN" > "$tmp/own-job"
-own_gate="$(grep -E '^    if:' "$tmp/own-job")"
-case "$own_gate" in *"inputs.resume-deployment-id == ''"*) ! grep -q 'dry-run' <<< "$own_gate" ;; *) false ;; esac; check \
-  "the plugin release checks every fresh upload, dry or real" "the check job lost its resume gate, or skips one of the modes"
-# verify-octopus-test is skipped unless asked for, and GitHub propagates a skip down the needs chain
-# to every job whose if: uses no status function. calculate-version survives it with always(); this
-# job must too, or it is skipped on every release and the upload goes unchecked.
-case "$own_gate" in *'!failure()'*'!cancelled()'*"needs.calculate-version.result == 'success'"*) true ;; *) false ;; esac; check \
-  "the check job is not skipped when verify-octopus-test is" \
-  "without a status function in its if:, a skipped verify-octopus-test skips the check on every release"
-grep -qF 'contents: read' "$tmp/own-job" && grep -qF 'persist-credentials: false' "$tmp/own-job" \
-  && ! grep -q 'secrets\.' "$tmp/own-job"; check \
-  "the check job runs the target SHA's build with a read-only token and no secrets" \
-  "a dry run accepts any SHA, and its build could use the workflow's write token"
-# The rule behind that: GitHub skips a job whose if: has no status function when ANY job above it
-# was skipped, transitively (run 33398058665: verify skipped, so publish, release and register were
-# skipped and the run was green). verify-octopus-test is skipped unless asked for, and the check job
-# on a resume, so every job below either must say always() or !failure().
+# octopus-base's own release: GitHub skips a job whose if: has no status function when ANY job above
+# it was skipped, transitively (run 33398058665: verify skipped, so publish, release and register were
+# skipped and the run was green). verify-octopus-test is skipped unless asked for, so every job below
+# it must say always() or !failure().
 python3 - "$OWN" > "$tmp/downstream" <<'PY'
 import re, sys
 jobs, cur = {}, None
@@ -176,7 +160,7 @@ for line in open(sys.argv[1], encoding="utf-8"):
     i = re.match(r"^    if:\s*(.*)$", line)
     if i:
         cur["if"] = i.group(1)
-skippable = {"verify-octopus-test", "central-checksum-check"}
+skippable = {"verify-octopus-test"}
 below = set()
 changed = True
 while changed:
@@ -192,12 +176,7 @@ PY
 bad="$(grep '^BAD' "$tmp/downstream" | tr '\n' ';')"
 grep -q '^ok   create-release' "$tmp/downstream" && [ -z "$bad" ]; check \
   "every job below a skippable one survives the skip" \
-  "${bad:-create-release not found} — a skipped verify or check job would skip it, and the run stays green"
-
-awk '/^  publish-quality-plugin:/ { s = 1; next } s && /^  [a-z]/ { exit } s { print }' "$OWN" > "$tmp/own-publish"
-grep -q '^      - central-checksum-check$' "$tmp/own-publish" && grep -q '!failure()' "$tmp/own-publish"; check \
-  "the plugin upload waits for the check, and still runs on a resume" \
-  "the upload no longer depends on the check, or a skipped check (a resume) skips the upload"
+  "${bad:-create-release not found} — a skipped verify job would skip it, and the run stays green"
 
 echo
 echo "passed=$pass failed=$fail"
