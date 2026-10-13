@@ -74,13 +74,14 @@ publish and its secret check. A Maven repository needs them for every non-dry ru
 the consumer's calling job.
 
 `OCTOPUS_SHARED_PACKAGES_TOKEN` carries `read:packages` and `write:packages` on the registry named by
-`github-packages-repository`. The release publishes with it when that input is set. The build,
-quality, sonar, security and release workflows also export it to Gradle as
-`GITHUB_PACKAGES_USERNAME`/`GITHUB_PACKAGES_TOKEN`, so a repository that resolves a dependency
-from `octopusden/octopus-maven-packages` needs it in its `Prod` environment too. Those jobs run on
-pull requests, so code from a PR branch can read the token. It is kept separate from
-`OCTOPUS_GITHUB_TOKEN` so the publish path and release-log registration do not share one
-credential.
+`github-packages-repository`. The release publishes with it when that input is set. A repository
+that resolves a dependency from `octopusden/octopus-maven-packages` sets
+`resolve-from-shared-packages: true`, and the build, quality, sonar, security and release
+workflows then export the token to Gradle as `GITHUB_PACKAGES_USERNAME`/`GITHUB_PACKAGES_TOKEN`.
+Such a repository needs it in its `Prod` environment, and since those jobs run on pull requests,
+code from a PR branch of that repository can read it. No other repository's Gradle steps see it.
+It is kept separate from `OCTOPUS_GITHUB_TOKEN` so the publish path and release-log registration
+do not share one credential.
 
 ## Variables
 

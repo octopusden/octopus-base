@@ -360,11 +360,20 @@ instead of one per project. It also needs a `OCTOPUS_SHARED_PACKAGES_TOKEN` secr
 cannot write to another repository; the release refuses to start without it. Unset, nothing
 changes.
 
-**Resolving a dependency from the shared registry.** The build, quality, sonar, security and
-release workflows export `OCTOPUS_SHARED_PACKAGES_TOKEN` as `GITHUB_PACKAGES_USERNAME` /
-`GITHUB_PACKAGES_TOKEN` on every Gradle step. A consumer that depends on an artifact published
-there declares the registry with those credentials, limited to the groups it needs, and passes
-`secrets: inherit` on every calling job, `merge-gate.yml` included:
+**Resolving a dependency from the shared registry.** A consumer that depends on an artifact
+published there opts in on every calling job of the build, quality, sonar, security and release
+workflows, and passes `secrets: inherit`, `merge-gate.yml` included:
+
+```yaml
+    with:
+      resolve-from-shared-packages: true
+    secrets: inherit
+```
+
+The workflows then export `OCTOPUS_SHARED_PACKAGES_TOKEN` as `GITHUB_PACKAGES_USERNAME` /
+`GITHUB_PACKAGES_TOKEN` on every Gradle step, and run the quality and security jobs in the `Prod`
+environment that holds it. Without the input nothing changes. The build declares the registry
+with those credentials, limited to the groups it needs:
 
 ```kotlin
 repositories {
@@ -381,9 +390,11 @@ repositories {
 ```
 
 > Don't name it `GitHubPackages`: the release treats a repository of that name as a publish
-> destination. The secret lives in the `Prod` environment, so a pull request from a fork gets no
-> token and cannot resolve the dependency. A local build needs a personal token with
-> `read:packages` in the same two variables.
+> destination. The token can publish, and every Gradle step of the repository that opts in can
+> read it, plugins and test code included, so opt in only where a dependency needs it. The secret
+> lives in the `Prod` environment, so a pull request from a fork gets no token and cannot resolve
+> the dependency. A local build needs a personal token with `read:packages` in the same two
+> variables.
 
 **"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
 dependency projects compile against. **There is no exception to reach for** — no input exists for

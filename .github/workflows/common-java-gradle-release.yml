@@ -80,9 +80,14 @@ on:
         required: false
         type: string
         default: ''
+      resolve-from-shared-packages:
+        description: 'Export OCTOPUS_SHARED_PACKAGES_TOKEN to Gradle as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. Off by default: the token reaches no Gradle step of a repository that does not ask for it.'
+        required: false
+        type: boolean
+        default: false
     secrets:
       OCTOPUS_SHARED_PACKAGES_TOKEN:
-        description: 'Token with read:packages and write:packages on the repository named by github-packages-repository. Required to publish there when that input is set. Also exported as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN to every Gradle step, so a build that resolves dependencies from octopusden/octopus-maven-packages can read them; unset, both are empty and nothing changes.'
+        description: 'Token with read:packages and write:packages on the repository named by github-packages-repository. Required to publish there when that input is set. Also exported to every Gradle step when resolve-from-shared-packages is set.'
         required: false
       OSSRH_USERNAME:
         required: false
@@ -132,10 +137,11 @@ jobs:
       SKIP_TESTS: ''
       BUILD_VERSION: ''
       # GitHub Packages authenticates every read, so a dependency from the shared registry needs
-      # a credential on every Gradle step; the build script reads these two names. The GitHub
-      # Packages publish step sets its own pair, which follows the publish destination.
-      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
-      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
+      # a credential on every Gradle step; the build script reads these two names. Empty unless the
+      # caller opts in. The GitHub Packages publish step sets its own pair, which follows the publish
+      # destination.
+      GITHUB_PACKAGES_USERNAME: ${{ inputs.resolve-from-shared-packages && github.repository_owner || '' }}
+      GITHUB_PACKAGES_TOKEN: ${{ inputs.resolve-from-shared-packages && secrets.OCTOPUS_SHARED_PACKAGES_TOKEN || '' }}
 
     steps:
       # check input parameters

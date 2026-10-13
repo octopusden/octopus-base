@@ -113,9 +113,14 @@ on:
         required: false
         type: boolean
         default: false
+      resolve-from-shared-packages:
+        description: 'Export OCTOPUS_SHARED_PACKAGES_TOKEN to Gradle as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. Off by default: the token reaches no Gradle step of a repository that does not ask for it.'
+        required: false
+        type: boolean
+        default: false
     secrets:
       OCTOPUS_SHARED_PACKAGES_TOKEN:
-        description: 'Token with read:packages on octopusden/octopus-maven-packages, exported as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN for a build that resolves dependencies from that registry. Optional: unset, both are empty and nothing changes.'
+        description: 'Token with read:packages on octopusden/octopus-maven-packages. Read only when resolve-from-shared-packages is set.'
         required: false
 
 permissions:
@@ -127,13 +132,14 @@ jobs:
     name: security/dependency-check
     if: ${{ inputs.enable-dependency-check }}
     runs-on: ${{ inputs.runs-on }}
-    # OCTOPUS_SHARED_PACKAGES_TOKEN is a Prod environment secret, as for the build and sonar jobs.
-    environment: Prod
+    # OCTOPUS_SHARED_PACKAGES_TOKEN is a Prod environment secret. Only a repository that resolves
+    # from the shared registry enters Prod; every other one stays outside any environment, as before.
+    environment: ${{ inputs.resolve-from-shared-packages && 'Prod' || '' }}
     continue-on-error: ${{ inputs.dependency-check-continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
-      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
-      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
+      GITHUB_PACKAGES_USERNAME: ${{ inputs.resolve-from-shared-packages && github.repository_owner || '' }}
+      GITHUB_PACKAGES_TOKEN: ${{ inputs.resolve-from-shared-packages && secrets.OCTOPUS_SHARED_PACKAGES_TOKEN || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate Gradle wrapper
@@ -165,11 +171,11 @@ jobs:
     if: ${{ inputs.enable-codeql }}
     runs-on: ${{ inputs.runs-on }}
     # Autobuild runs Gradle, so it resolves dependencies like the build does.
-    environment: Prod
+    environment: ${{ inputs.resolve-from-shared-packages && 'Prod' || '' }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
-      GITHUB_PACKAGES_USERNAME: ${{ github.repository_owner }}
-      GITHUB_PACKAGES_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_TOKEN }}
+      GITHUB_PACKAGES_USERNAME: ${{ inputs.resolve-from-shared-packages && github.repository_owner || '' }}
+      GITHUB_PACKAGES_TOKEN: ${{ inputs.resolve-from-shared-packages && secrets.OCTOPUS_SHARED_PACKAGES_TOKEN || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate Gradle wrapper
