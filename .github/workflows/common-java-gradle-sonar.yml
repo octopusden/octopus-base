@@ -68,15 +68,15 @@ on:
         type: boolean
         default: false
       resolve-from-shared-packages:
-        description: 'Export OCTOPUS_SHARED_PACKAGES_TOKEN to Gradle as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. Off by default: the token reaches no Gradle step of a repository that does not ask for it.'
+        description: 'Export OCTOPUS_SHARED_PACKAGES_READ_TOKEN to Gradle as SHARED_PACKAGES_READ_USERNAME/SHARED_PACKAGES_READ_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. The job fails early if the secret did not reach it. Off by default: the token reaches no Gradle step of a repository that does not ask for it, and the two variables stay unset.'
         required: false
         type: boolean
         default: false
     secrets:
       SONAR_TOKEN:
         required: false
-      OCTOPUS_SHARED_PACKAGES_TOKEN:
-        description: 'Token with read:packages on octopusden/octopus-maven-packages. Read only when resolve-from-shared-packages is set.'
+      OCTOPUS_SHARED_PACKAGES_READ_TOKEN:
+        description: 'Classic PAT with read:packages only, for resolving from octopusden/octopus-maven-packages. A repository secret, since octopusden is a user account with no organization secrets. Read only when resolve-from-shared-packages is set.'
         required: false
 
 permissions:
@@ -89,11 +89,20 @@ jobs:
     environment: Prod
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
-    # The analysis compiles the project, so it resolves dependencies like the build does.
-    env:
-      GITHUB_PACKAGES_USERNAME: ${{ inputs.resolve-from-shared-packages && github.repository_owner || '' }}
-      GITHUB_PACKAGES_TOKEN: ${{ inputs.resolve-from-shared-packages && secrets.OCTOPUS_SHARED_PACKAGES_TOKEN || '' }}
     steps:
+      # The analysis compiles the project, so it resolves dependencies like the build does.
+      - name: Shared packages credentials
+        if: ${{ inputs.resolve-from-shared-packages }}
+        env:
+          READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}
+        run: |
+          if [ -z "$READ_TOKEN" ]; then
+            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job." >&2
+            exit 1
+          fi
+          echo "SHARED_PACKAGES_READ_USERNAME=$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_ENV"
+          echo "SHARED_PACKAGES_READ_TOKEN=$READ_TOKEN" >> "$GITHUB_ENV"
+
       # Sonar reads SCM blame; a shallow clone does not fail, it answers wrongly.
       - uses: actions/checkout@v4
         with:

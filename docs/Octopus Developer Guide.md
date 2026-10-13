@@ -370,10 +370,12 @@ workflows, and passes `secrets: inherit`, `merge-gate.yml` included:
     secrets: inherit
 ```
 
-The workflows then export `OCTOPUS_SHARED_PACKAGES_TOKEN` as `GITHUB_PACKAGES_USERNAME` /
-`GITHUB_PACKAGES_TOKEN` on every Gradle step, and run the quality and security jobs in the `Prod`
-environment that holds it. Without the input nothing changes. The build declares the registry
-with those credentials, limited to the groups it needs:
+The repository needs an `OCTOPUS_SHARED_PACKAGES_READ_TOKEN` repository secret: a classic PAT with
+`read:packages` only, outside any environment. The workflows then export it as
+`SHARED_PACKAGES_READ_USERNAME` / `SHARED_PACKAGES_READ_TOKEN` on every Gradle step; a job that does
+not get it fails before Gradle runs, naming the missing secret. Without the input nothing changes,
+and the two variables stay unset. The build declares the registry with those credentials, limited
+to the groups it needs:
 
 ```kotlin
 repositories {
@@ -381,8 +383,8 @@ repositories {
         name = "OctopusMavenPackages"
         url = uri("https://maven.pkg.github.com/octopusden/octopus-maven-packages")
         credentials {
-            username = System.getenv("GITHUB_PACKAGES_USERNAME")
-            password = System.getenv("GITHUB_PACKAGES_TOKEN")
+            username = System.getenv("SHARED_PACKAGES_READ_USERNAME")
+            password = System.getenv("SHARED_PACKAGES_READ_TOKEN")
         }
         content { includeGroup("org.octopusden.octopus.automation.teamcity") }
     }
@@ -390,11 +392,11 @@ repositories {
 ```
 
 > Don't name it `GitHubPackages`: the release treats a repository of that name as a publish
-> destination. The token can publish, and every Gradle step of the repository that opts in can
-> read it, plugins and test code included, so opt in only where a dependency needs it. The secret
-> lives in the `Prod` environment, so a pull request from a fork gets no token and cannot resolve
-> the dependency. A local build needs a personal token with `read:packages` in the same two
-> variables.
+> destination. The read pair has names of its own because the release's GitHub Packages publish
+> step sets `GITHUB_PACKAGES_*` to the publish destination's credential, which may not reach this
+> registry. Every Gradle step of the repository that opts in can read the token, plugins and test
+> code included; it can only read. A pull request from a fork gets no secret and cannot resolve the
+> dependency. A local build needs a personal token with `read:packages` in the same two variables.
 
 **"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
 dependency projects compile against. **There is no exception to reach for** — no input exists for

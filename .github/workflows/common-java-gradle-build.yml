@@ -19,13 +19,13 @@ on:
         type: boolean
         default: true
       resolve-from-shared-packages:
-        description: 'Export OCTOPUS_SHARED_PACKAGES_TOKEN to Gradle as GITHUB_PACKAGES_USERNAME/GITHUB_PACKAGES_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. Off by default: the token reaches no Gradle step of a repository that does not ask for it.'
+        description: 'Export OCTOPUS_SHARED_PACKAGES_READ_TOKEN to Gradle as SHARED_PACKAGES_READ_USERNAME/SHARED_PACKAGES_READ_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. The job fails early if the secret did not reach it. Off by default: the token reaches no Gradle step of a repository that does not ask for it, and the two variables stay unset.'
         required: false
         type: boolean
         default: false
     secrets:
-      OCTOPUS_SHARED_PACKAGES_TOKEN:
-        description: 'Token with read:packages on octopusden/octopus-maven-packages. Read only when resolve-from-shared-packages is set.'
+      OCTOPUS_SHARED_PACKAGES_READ_TOKEN:
+        description: 'Classic PAT with read:packages only, for resolving from octopusden/octopus-maven-packages. A repository secret, since octopusden is a user account with no organization secrets. Read only when resolve-from-shared-packages is set.'
         required: false
 
 jobs:
@@ -35,10 +35,6 @@ jobs:
     env:
       SKIP_TESTS: '' # run tests for public flow only
       BUILD_VERSION: 1.0-SNAPSHOT # dummy version which is not really used
-      # GitHub Packages authenticates every read, so a dependency from the shared registry needs
-      # a credential; the build script reads these two names. Empty unless the caller opts in.
-      GITHUB_PACKAGES_USERNAME: ${{ inputs.resolve-from-shared-packages && github.repository_owner || '' }}
-      GITHUB_PACKAGES_TOKEN: ${{ inputs.resolve-from-shared-packages && secrets.OCTOPUS_SHARED_PACKAGES_TOKEN || '' }}
 
     steps:
       - name: Public flow
@@ -57,6 +53,21 @@ jobs:
         run: |
           echo "Unknown flow specified, should be one of {public, hybrid}: " ${{ inputs.flow-type }}
           exit 1
+
+      # GitHub Packages authenticates every read, so a dependency from the shared registry needs a
+      # credential. Exported only when the caller opts in, and under names of its own: the release's
+      # GitHub Packages publish step sets GITHUB_PACKAGES_*, which follow the publish destination.
+      - name: Shared packages credentials
+        if: ${{ inputs.resolve-from-shared-packages }}
+        env:
+          READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}
+        run: |
+          if [ -z "$READ_TOKEN" ]; then
+            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job." >&2
+            exit 1
+          fi
+          echo "SHARED_PACKAGES_READ_USERNAME=$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_ENV"
+          echo "SHARED_PACKAGES_READ_TOKEN=$READ_TOKEN" >> "$GITHUB_ENV"
 
       - name: Checkout
         uses: actions/checkout@v3
