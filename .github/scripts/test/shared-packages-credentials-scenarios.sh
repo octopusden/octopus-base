@@ -8,8 +8,9 @@
 # so there is no second copy here to drift.
 #
 #   - every copy is identical, gated on the input, and reads the read-only secret
-#   - in each job it comes before the first step that can run Gradle
-#   - each workflow that has the input declares the secret, and none of its Gradle jobs lacks the step
+#   - every job of a workflow that has the input carries it, unless EXEMPT names the job, and it
+#     comes before the job's checkout and before the first step that can run Gradle
+#   - each workflow that has the input declares the secret
 #   - opted in without the token: the job fails, names the secret, and writes nothing to GITHUB_ENV
 #   - opted in with the token: both variables reach GITHUB_ENV and the token is not printed
 #
@@ -32,8 +33,10 @@ wf_dir, out = sys.argv[1], sys.argv[2]
 STEP = "- name: Shared packages credentials"
 GATE = "if: ${{ inputs.resolve-from-shared-packages }}"
 SECRET = "READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}"
-# Anything that can start Gradle: the wrapper, the actions that drive it, CodeQL's autobuild, and
-# the `*-command` inputs whose defaults are ./gradlew invocations.
+# Anything that visibly starts Gradle: the wrapper, the actions that drive it, CodeQL's autobuild,
+# and the `*-command` inputs whose defaults are ./gradlew invocations. Used only to place the step
+# and to keep EXEMPT honest: a job is not let off because no line matches, since Gradle can also
+# start from a helper script or a composite action.
 GRADLE = re.compile(r"gradlew|gradle/actions/setup-gradle|gradle/actions/dependency-submission"
                     r"|codeql-action/autobuild|run: \$\{\{ inputs\.[a-z-]+-command \}\}")
 # The workflows that offer the opt-in. Pinned, so dropping the input from one fails here instead
@@ -47,7 +50,20 @@ EXPECTED = {
     "common-java-gradle-sonar.yml",
 }
 
+# The jobs that need no credential, each with the reason. Every other job with steps in those
+# workflows must carry the step, so a new job is covered until someone exempts it here on purpose.
+EXEMPT = {
+    "common-java-gradle-quality-gates.yml/wrapper-validation":
+        "checks the wrapper's checksum only; Gradle does not start",
+    "common-java-gradle-release.yml/tag-and-release":
+        "tags and creates the release with git and gh (tag-and-release.sh); no Gradle",
+    "common-java-gradle-security-reports.yml/trivy":
+        "scans files with Trivy; no Gradle",
+}
+CHECKOUT = re.compile(r"uses: actions/checkout@")
+
 problems, copies = [], []
+seen_exempt = set()
 
 def jobs_of(lines):
     """(name, first line, end line) of each job under `jobs:`, by indentation."""
@@ -86,22 +102,31 @@ for path in sorted(glob.glob(os.path.join(wf_dir, "common-*.yml"))):
         steps_at = next((i for i in range(first, end) if lines[i].strip() == "steps:"), None)
         if steps_at is None:
             continue  # a job that calls another workflow
+        where = "%s/%s" % (name, job)
         gradle_at = next((i for i in range(steps_at, end) if GRADLE.search(lines[i])), None)
+        checkout_at = next((i for i in range(steps_at, end) if CHECKOUT.search(lines[i])), None)
         step_at = [i for i in range(steps_at, end) if lines[i].strip() == STEP]
-        if gradle_at is None:
+        if where in EXEMPT:
+            seen_exempt.add(where)
+            if gradle_at is not None:
+                problems.append("%s: exempt, but runs Gradle (line %d); drop it from EXEMPT and add the step"
+                                % (where, gradle_at + 1))
             if step_at:
-                problems.append("%s/%s: carries the step but runs no Gradle" % (name, job))
+                problems.append("%s: exempt, but carries the step; drop one or the other" % where)
             continue
         if len(step_at) != 1:
-            problems.append("%s/%s: runs Gradle (line %d) but has %d copies of the step"
-                            % (name, job, gradle_at + 1, len(step_at)))
+            problems.append("%s: has %d copies of the step; every job that is not in EXEMPT needs one"
+                            % (where, len(step_at)))
             continue
-        if step_at[0] > gradle_at:
-            problems.append("%s/%s: the step (line %d) comes after Gradle can run (line %d)"
-                            % (name, job, step_at[0] + 1, gradle_at + 1))
+        for label, at in (("Gradle can run", gradle_at), ("the checkout", checkout_at)):
+            if at is not None and step_at[0] > at:
+                problems.append("%s: the step (line %d) comes after %s (line %d)"
+                                % (where, step_at[0] + 1, label, at + 1))
         block = step_block(lines, step_at[0])
-        copies.append(("%s/%s" % (name, job), block))
+        copies.append((where, block))
 
+for stale in sorted(set(EXEMPT) - seen_exempt):
+    problems.append("%s: in EXEMPT, but no such job" % stale)
 if found != EXPECTED:
     problems.append("workflows offering the input changed: missing %s, unexpected %s"
                     % (sorted(EXPECTED - found) or "none", sorted(found - EXPECTED) or "none"))
@@ -126,8 +151,8 @@ for p in problems:
     print("FAIL  " + p)
 if problems:
     sys.exit(1)
-print("PASS  %d copies across %d workflows are identical, gated, and ahead of Gradle"
-      % (len(copies), len(found)))
+print("PASS  %d copies across %d workflows are identical, gated, and ahead of checkout and Gradle;"
+      " %d jobs exempt" % (len(copies), len(found), len(seen_exempt)))
 
 run = stripped.index("run: |")
 indent = len(ref[run]) - len(ref[run].lstrip()) + 2
