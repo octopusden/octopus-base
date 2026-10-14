@@ -80,13 +80,15 @@ share one credential.
 
 `OCTOPUS_SHARED_PACKAGES_READ_TOKEN` is a classic PAT with `read:packages` only, from an account
 that can read `octopusden/octopus-maven-packages`. A repository that resolves a dependency from
-that registry sets `resolve-from-shared-packages: true`, and the build, quality, sonar, security and
-release workflows then export it to Gradle as `SHARED_PACKAGES_READ_USERNAME`/`SHARED_PACKAGES_READ_TOKEN`.
+that registry sets `resolve-from-shared-packages: true`, and the build, quality, sonar, security,
+release and dependency-submission workflows then export it to Gradle as `SHARED_PACKAGES_READ_USERNAME`/`SHARED_PACKAGES_READ_TOKEN`.
 `octopusden` is a user account, not an organization, so there is no organization secret to share
 it through: each such repository holds it as a repository secret, outside any environment, which
 every job can read. Since those jobs run on pull requests, code from a PR branch of that repository
 can read it; a leak exposes nothing that is not already public. No other repository's Gradle steps
-see it, and the write-capable `OCTOPUS_SHARED_PACKAGES_TOKEN` is never exported to Gradle.
+see it, and the write-capable `OCTOPUS_SHARED_PACKAGES_TOKEN` is never exported to Gradle. Pull
+requests opened by Dependabot get Dependabot secrets, not Actions secrets, so a repository that runs
+Dependabot also holds the token as a Dependabot secret of the same name.
 
 ## Variables
 

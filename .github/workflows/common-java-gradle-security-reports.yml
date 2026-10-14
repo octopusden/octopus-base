@@ -144,7 +144,7 @@ jobs:
           READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}
         run: |
           if [ -z "$READ_TOKEN" ]; then
-            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job." >&2
+            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job. A pull request from a fork never gets it, and one opened by Dependabot gets Dependabot secrets only: store a Dependabot secret of the same name too." >&2
             exit 1
           fi
           echo "SHARED_PACKAGES_READ_USERNAME=$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_ENV"
@@ -187,7 +187,7 @@ jobs:
           READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}
         run: |
           if [ -z "$READ_TOKEN" ]; then
-            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job." >&2
+            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job. A pull request from a fork never gets it, and one opened by Dependabot gets Dependabot secrets only: store a Dependabot secret of the same name too." >&2
             exit 1
           fi
           echo "SHARED_PACKAGES_READ_USERNAME=$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_ENV"
