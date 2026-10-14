@@ -148,7 +148,7 @@ pluginManagement {
         id("io.gitlab.arturbosch.detekt") version(extra["detekt.version"] as String)
         id("org.jlleitschuh.gradle.ktlint") version(extra["ktlint-gradle.version"] as String)
         id("org.jetbrains.kotlinx.kover") version(extra["kover.version"] as String)  // Kotlin-only repos
-        id("org.octopusden.octopus-quality") version "<octopus-base-version>"
+        id("org.octopusden.octopus-quality") version "<octopus-quality-gates-version>"  // released from octopusden/octopus-quality-gates
     }
     repositories {
         gradlePluginPortal()

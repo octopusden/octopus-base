@@ -31,7 +31,8 @@ The workflow:
 
 Steps 2–3 are skipped when `dry-run=true`.
 
-Required secret: `OCTOPUS_GITHUB_TOKEN`.
+Required secret: `OCTOPUS_GITHUB_TOKEN`, in the `Prod` environment — `register-release-in-log` reads it
+through `common-register-release.yml`, whose job runs in `Prod`.
 
 The `org.octopusden.octopus-quality` Gradle plugin is no longer released from here: it moved to
 [octopus-quality-gates](https://github.com/octopusden/octopus-quality-gates), which publishes it to
