@@ -22,7 +22,7 @@ root="$(cd "$here/../../.." && pwd)"
 WORKFLOW="$root/.github/workflows/common-java-gradle-release.yml"
 INIT="$root/.github/scripts/central-checksum-check.init.gradle"
 CHECKER="$root/.github/scripts/check-central-checksums.py"
-WRAPPER_DIR="$root/gradle-quality-plugin"
+WRAPPER_DIR="$here/fixture-plugin"
 FLAG='-Dorg.gradle.internal.publish.checksums.insecure=true'
 # Below 9.7: the most common version among consumers. At or above: the current release.
 VERSIONS="${CHECKSUM_FIXTURE_GRADLE_VERSIONS:-8.14.3 9.8.0}"
