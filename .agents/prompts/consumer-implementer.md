@@ -82,9 +82,9 @@ pluginManagement {
 }
 ```
 
-Use the latest released tag of `octopus-base` for `<octopus-quality-version>`.
+Use the latest release of `octopus-quality-gates` for `<octopus-quality-version>`.
 For Kotlin tool versions, use what is already pinned in
-`octopus-base/gradle-quality-plugin/gradle.properties` (or `libs.versions.toml`
+`octopus-quality-gates/gradle.properties` (or `libs.versions.toml`
 if the consumer has one). Do **not** introduce a second copy of a version that
 is already declared.
 

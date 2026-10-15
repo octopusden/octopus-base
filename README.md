@@ -36,8 +36,8 @@ through `common-register-release.yml`, whose job runs in `Prod`.
 
 The `org.octopusden.octopus-quality` Gradle plugin is no longer released from here: it moved to
 [octopus-quality-gates](https://github.com/octopusden/octopus-quality-gates), which publishes it to
-Maven Central. `gradle-quality-plugin/` stays only as the build the publication fixtures under
-`.github/scripts/test/` run against; change the plugin in octopus-quality-gates.
+Maven Central. Change the plugin there; the publication fixtures under `.github/scripts/test/` run
+against a minimal plugin build of their own (`fixture-plugin/`).
 
 To use automated `octopus-test` consumer verification (`Merge Gate` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.
@@ -48,8 +48,7 @@ Every PR runs the `Merge Gate` workflow with the following jobs:
 
 | Job | Always runs | What it checks |
 |-----|:-----------:|----------------|
-| `build` | yes | `gradle-quality-plugin`: `./gradlew build test` |
-| `quality` | yes | `gradle-quality-plugin`: `./gradlew detekt ktlintCheck` |
+| `build` | yes | Release fixtures against a real Gradle build (`.github/scripts/test/fixture-plugin`): publication listing, routing, Central checksum check, signing environment |
 | `workflow-lint` | yes | `actionlint` on all workflow YAML + `bash -n` on helper scripts + `shellcheck` (warning and above) on `teamcity/scripts/*.sh` |
 | `security` | yes | External `uses@ref` validation for resolvable refs |
 | `consumer-verify` | scope-driven | `octopus-test` canary (only when workflow/action files change) |
