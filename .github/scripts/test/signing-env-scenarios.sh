@@ -93,7 +93,7 @@ G
 # Exactly what the workflow does, with the secrets absent.
 ( export SIGNING_KEY="" SIGNING_PASSPHRASE="" \
   && . "$SCRIPT" >/dev/null \
-  && cd "$root/gradle-quality-plugin" \
+  && cd "$here/fixture-plugin" \
   && ./gradlew --project-dir "$proj" publishMavenPublicationToLocalRepository \
        -q -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false
 ) > "$tmp/log" 2>&1
@@ -106,7 +106,7 @@ check "$rc" "publishes with no signing secrets at all" \
 
 # And the naive version really would have failed, so the assertion above is not vacuous.
 ( export ORG_GRADLE_PROJECT_signingKey="" ORG_GRADLE_PROJECT_signingPassword="" \
-  && cd "$root/gradle-quality-plugin" \
+  && cd "$here/fixture-plugin" \
   && ./gradlew --project-dir "$proj" publishMavenPublicationToLocalRepository \
        -q -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false
 ) > "$tmp/log-naive" 2>&1

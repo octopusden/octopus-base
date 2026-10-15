@@ -1,0 +1,5 @@
+// A minimal Gradle plugin build for the release helper fixtures under .github/scripts/test.
+// It stands in for a consumer that publishes a Gradle plugin: java-gradle-plugin adds the plugin
+// marker publication in its own afterEvaluate, which list-publications-fixture.sh must see. The
+// other fixtures only borrow its Gradle wrapper. Nothing here is built or released by the CI.
+rootProject.name = 'fixture-plugin'

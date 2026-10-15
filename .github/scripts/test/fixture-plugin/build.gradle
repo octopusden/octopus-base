@@ -1,0 +1,16 @@
+plugins {
+    id 'java-gradle-plugin'
+    id 'maven-publish'
+}
+
+group = 'org.fixture'
+// The version comes from -Pversion, as it does on a release.
+
+gradlePlugin {
+    plugins {
+        fixture {
+            id = 'org.fixture.demo'
+            implementationClass = 'org.fixture.demo.DemoPlugin'
+        }
+    }
+}
