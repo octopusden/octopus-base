@@ -129,7 +129,7 @@ If enabled for a repository, start with defaults and tune only when there is a c
 
 ## Convention Plugin Setup
 
-The `org.octopusden.octopus-quality` convention plugin (in `gradle-quality-plugin/`) provides shared configuration (rules, baselines, reports, task wiring) for quality tools. Consumer repos declare and apply the quality tool plugins themselves (with their own versions), and the convention plugin configures them. This gives repos `qualityStatic`, `qualityCoverage`, and `qualityCheck` aggregate tasks.
+The `org.octopusden.octopus-quality` convention plugin (released from [octopus-quality-gates](https://github.com/octopusden/octopus-quality-gates)) provides shared configuration (rules, baselines, reports, task wiring) for quality tools. Consumer repos declare and apply the quality tool plugins themselves (with their own versions), and the convention plugin configures them. This gives repos `qualityStatic`, `qualityCoverage`, and `qualityCheck` aggregate tasks.
 
 > For the pinned tool-version matrix (detekt, ktlint, kover, checkstyle, pmd, spotbugs, codenarc), the Kotlin/JDK generation each targets (including the detekt run-on-JDK-17-or-21, not-25 caveat), and the exact per-analyzer report output paths for consuming from any CI system, see `docs/Octopus Quality Plugin CI Reference.md`.
 
