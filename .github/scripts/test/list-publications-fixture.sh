@@ -5,7 +5,7 @@
 # cannot be stubbed, and it is the half that decides whether the check does anything at all —
 # a silently empty coordinate file disables the preflight without failing anything.
 #
-# The fixture is this repository's own gradle-quality-plugin: it applies java-gradle-plugin,
+# The fixture is the minimal plugin build in fixture-plugin/: it applies java-gradle-plugin,
 # which creates its plugin MARKER publication inside its own `afterEvaluate`. That is the
 # case a hook running any earlier would miss, and the marker is a real Central coordinate.
 #
@@ -15,7 +15,7 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
 INIT="$root/.github/scripts/list-publications.init.gradle"
-FIXTURE="$root/gradle-quality-plugin"
+FIXTURE="$here/fixture-plugin"
 [ -f "$INIT" ] || { echo "list-publications.init.gradle not found"; exit 1; }
 [ -x "$FIXTURE/gradlew" ] || { echo "fixture build not found at $FIXTURE"; exit 1; }
 
@@ -52,9 +52,9 @@ check() {
 
 echo "-- publications at the release version ------------------------------------"
 list 9.9.9-fixture 9.9.9-fixture
-grep -qxF 'org.octopusden.octopus:octopus-quality-plugin' "$tmp/coords"; check \
+grep -qxF 'org.fixture:fixture-plugin' "$tmp/coords"; check \
   "lists the library publication" "main publication missing"
-grep -qxF 'org.octopusden.octopus-quality:org.octopusden.octopus-quality.gradle.plugin' "$tmp/coords"; check \
+grep -qxF 'org.fixture.demo:org.fixture.demo.gradle.plugin' "$tmp/coords"; check \
   "lists the plugin marker publication" "marker publication missing — a hook that runs before java-gradle-plugin's afterEvaluate would do this"
 ! grep -q ':.*:' "$tmp/coords"; check \
   "writes group:artifact, with no version attached" "a line carries a version, which central-preflight.sh would refuse"
@@ -62,7 +62,7 @@ grep -qxF 'org.octopusden.octopus-quality:org.octopusden.octopus-quality.gradle.
   "writes no duplicates" "the coordinate set is not deduplicated"
 
 echo "-- a multi-project build --------------------------------------------------"
-# Generated rather than reusing the plugin build, which is single-project: with only a root
+# Generated rather than reusing fixture-plugin/, which is single-project: with only a root
 # project, `allprojects` and `[rootProject]` are the same thing, so the traversal the release
 # workflow depends on is untested. On a real consumer that difference means every subproject's
 # publications go unchecked — silently, because the check fails open.

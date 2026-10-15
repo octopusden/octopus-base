@@ -17,7 +17,7 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../../.." && pwd)"
 WORKFLOW="$root/.github/workflows/common-java-gradle-release.yml"
-GRADLEW="$root/gradle-quality-plugin/gradlew"
+GRADLEW="$here/fixture-plugin/gradlew"
 [ -f "$WORKFLOW" ] || { echo "common-java-gradle-release.yml not found"; exit 1; }
 [ -x "$GRADLEW" ] || { echo "no gradle wrapper at $GRADLEW"; exit 1; }
 
@@ -103,7 +103,7 @@ HUB_URL=""
 route() {
   local pubs="$1" task="$2"; shift 2
   rm -rf "$fixture/out-github" "$fixture/out-sonatype" "$fixture/out-hub"
-  ( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS="$pubs" \
+  ( cd "$here/fixture-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS="$pubs" \
       OCTOPUS_GITHUB_PACKAGES_URL="$HUB_URL" \
       ./gradlew --project-dir "$fixture" "$task" --init-script "$INIT" \
       -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false "$@" \
@@ -199,7 +199,7 @@ echo "-- the Central guard does not see a routed publication -------------------
 # that list is keyed by artifactId, which the thin and fat publications of one module share.
 guard="$tmp/guard-m2"
 rm -rf "$guard"
-( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava, :sub:fatJava" \
+( cd "$here/fixture-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava, :sub:fatJava" \
     ./gradlew --project-dir "$fixture" publishToMavenLocal -Dmaven.repo.local="$guard" \
     --init-script "$INIT" \
     -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
@@ -248,7 +248,7 @@ G
 
 asym_run() {
   rm -rf "$asym/out-github" "$asym/out-sonatype"
-  ( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava" \
+  ( cd "$here/fixture-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava" \
       ./gradlew --project-dir "$asym" "$1" --init-script "$INIT" \
       -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
   ) > "$tmp/log" 2>&1
@@ -267,7 +267,7 @@ check "publishes to GitHub Packages in an asymmetric build" "the aggregate task 
 
 # The case qualification exists for. Under the old inference this selector matched nothing and
 # said nothing; the subproject then published to neither registry.
-( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":sub:fatJava" \
+( cd "$here/fixture-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":sub:fatJava" \
     ./gradlew --project-dir "$asym" publishSelectedPublicationsToGitHubPackages --init-script "$INIT" \
     -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
 ) > "$tmp/log" 2>&1
@@ -310,7 +310,7 @@ signing { sign(publishing.publications['fatJava']) }
 G
 # --dry-run, because the point is which tasks reach the graph. Executing would need a real key,
 # which is exactly what the workflow supplies and this fixture cannot.
-( cd "$root/gradle-quality-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava" \
+( cd "$here/fixture-plugin" && OCTOPUS_GITHUB_PACKAGES_PUBLICATIONS=":fatJava" \
     ./gradlew --project-dir "$signed" publishSelectedPublicationsToGitHubPackages --dry-run \
     --init-script "$INIT" \
     -Dorg.gradle.configureondemand=false -Dorg.gradle.configuration-cache=false \
