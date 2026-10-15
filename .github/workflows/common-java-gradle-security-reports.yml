@@ -113,6 +113,15 @@ on:
         required: false
         type: boolean
         default: false
+      resolve-from-shared-packages:
+        description: 'Export OCTOPUS_SHARED_PACKAGES_READ_TOKEN to Gradle as SHARED_PACKAGES_READ_USERNAME/SHARED_PACKAGES_READ_TOKEN, for a build that resolves dependencies from octopusden/octopus-maven-packages. The job fails early if the secret did not reach it. Off by default: the token reaches no Gradle step of a repository that does not ask for it, and the two variables stay unset.'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      OCTOPUS_SHARED_PACKAGES_READ_TOKEN:
+        description: 'Classic PAT with read:packages only, for resolving from octopusden/octopus-maven-packages. A repository secret, since octopusden is a user account with no organization secrets. Read only when resolve-from-shared-packages is set.'
+        required: false
 
 permissions:
   contents: read
@@ -126,6 +135,20 @@ jobs:
     continue-on-error: ${{ inputs.dependency-check-continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
+      # GitHub Packages authenticates every read, so a dependency from the shared registry needs a
+      # credential. Exported only when the caller opts in, and under names of its own: the release's
+      # GitHub Packages publish step sets GITHUB_PACKAGES_*, which follow the publish destination.
+      - name: Shared packages credentials
+        if: ${{ inputs.resolve-from-shared-packages }}
+        env:
+          READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}
+        run: |
+          if [ -z "$READ_TOKEN" ]; then
+            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job. A pull request from a fork never gets it, and one opened by Dependabot gets Dependabot secrets only: store a Dependabot secret of the same name too." >&2
+            exit 1
+          fi
+          echo "SHARED_PACKAGES_READ_USERNAME=$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_ENV"
+          echo "SHARED_PACKAGES_READ_TOKEN=$READ_TOKEN" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v5
@@ -157,6 +180,18 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
+      # Autobuild runs Gradle, so it resolves dependencies like the build does.
+      - name: Shared packages credentials
+        if: ${{ inputs.resolve-from-shared-packages }}
+        env:
+          READ_TOKEN: ${{ secrets.OCTOPUS_SHARED_PACKAGES_READ_TOKEN }}
+        run: |
+          if [ -z "$READ_TOKEN" ]; then
+            echo "::error title=No token for the shared packages registry::resolve-from-shared-packages is set, but OCTOPUS_SHARED_PACKAGES_READ_TOKEN did not reach this job. Store it as a repository secret (a classic PAT with read:packages only, outside any environment) and pass 'secrets: inherit' on the calling job. A pull request from a fork never gets it, and one opened by Dependabot gets Dependabot secrets only: store a Dependabot secret of the same name too." >&2
+            exit 1
+          fi
+          echo "SHARED_PACKAGES_READ_USERNAME=$GITHUB_REPOSITORY_OWNER" >> "$GITHUB_ENV"
+          echo "SHARED_PACKAGES_READ_TOKEN=$READ_TOKEN" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v5

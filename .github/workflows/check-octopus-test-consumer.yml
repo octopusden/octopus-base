@@ -223,6 +223,12 @@ jobs:
       - name: Shared packages validation scenarios
         shell: bash
         run: bash .github/scripts/test/shared-packages-validation-scenarios.sh
+      # The read credential step is pasted into every Gradle job of the workflows that offer
+      # resolve-from-shared-packages, and octopus-test does not opt in, so consumer-verify never
+      # runs it. The scenarios keep the copies identical and ahead of Gradle, then execute one.
+      - name: Shared packages credentials scenarios
+        shell: bash
+        run: bash .github/scripts/test/shared-packages-credentials-scenarios.sh
       # The retry around `mvn` lives in the workflow's own `run:` body, so these scenarios
       # extract that body and execute it against a stubbed mvn. Both halves are easy to break
       # silently: a transfer blip must cost a second attempt, and a compile error must not.

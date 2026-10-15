@@ -360,6 +360,55 @@ instead of one per project. It also needs a `OCTOPUS_SHARED_PACKAGES_TOKEN` secr
 cannot write to another repository; the release refuses to start without it. Unset, nothing
 changes.
 
+**Resolving a dependency from the shared registry.** A consumer that depends on an artifact
+published there opts in on every calling job of the build, quality, sonar, security, release and
+dependency-submission workflows, and passes `secrets: inherit`, `merge-gate.yml` included:
+
+```yaml
+    with:
+      resolve-from-shared-packages: true
+    secrets: inherit
+```
+
+The repository needs an `OCTOPUS_SHARED_PACKAGES_READ_TOKEN` repository secret: a classic PAT with
+`read:packages` only, outside any environment, minted on an account that can read no non-public
+package (see the Administrator Guide). The workflows then write it to the job environment as
+`SHARED_PACKAGES_READ_USERNAME` / `SHARED_PACKAGES_READ_TOKEN` for every later step of the job; a job
+that does not get it fails before checkout, naming the missing secret. Without the input nothing changes,
+and the two variables stay unset. The build declares the registry with those credentials, as the
+only source of the groups it needs:
+
+```kotlin
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "OctopusMavenPackages"
+                url = uri("https://maven.pkg.github.com/octopusden/octopus-maven-packages")
+                credentials {
+                    username = System.getenv("SHARED_PACKAGES_READ_USERNAME")
+                    password = System.getenv("SHARED_PACKAGES_READ_TOKEN")
+                }
+            }
+        }
+        filter { includeGroup("org.octopusden.octopus.automation.teamcity") }
+    }
+}
+```
+
+`exclusiveContent` rather than `content { includeGroup }`: the latter only keeps other groups out
+of this registry, while every repository declared before it, `mavenCentral()` included, is still
+asked for these groups first.
+
+> Don't name it `GitHubPackages`: the release treats a repository of that name as a publish
+> destination. The read pair has names of its own because the release's GitHub Packages publish
+> step sets `GITHUB_PACKAGES_*` to the publish destination's credential, which may not reach this
+> registry. Every later step of a job in the repository that opts in can read the token, Gradle
+> plugins, test code and actions included; it can only read, and only what its account can read. A pull request from a fork gets no secret and cannot resolve the
+> dependency. A pull request opened by Dependabot gets Dependabot secrets only, so a repository that
+> runs Dependabot stores the token a second time, as a Dependabot secret of the same name. A local
+> build needs a personal token with `read:packages` in the same two variables.
+
 **"This library is too big"** — over `max-central-artifact-mb`, even when it is a genuine
 dependency projects compile against. **There is no exception to reach for** — no input exists for
 waiving the size limit, and the one legacy input that happens to waive it is deprecated and not

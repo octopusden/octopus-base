@@ -29,5 +29,9 @@ The workflow uses [Gradle dependency submission](https://github.com/gradle/actio
 with wrapper validation enabled. It does not run application tests or form part
 of the PR merge gate; resolution/submission failures fail the workflow itself.
 
+A repository that resolves a dependency from `octopusden/octopus-maven-packages`
+also passes `resolve-from-shared-packages: true` and `secrets: inherit`, as on its
+other Gradle workflows (see the Developer Guide).
+
 Dependency inventory does not itself enforce a vulnerability threshold or
 replace CodeQL/Trivy.
