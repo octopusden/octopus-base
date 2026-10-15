@@ -26,13 +26,18 @@ Use GitHub Actions workflow `Release octopus-base`.
 
 The workflow:
 1. **calculate-version** — finds latest `vX.Y.Z` tag, bumps by selected level (e.g. `v2.1.10` + `patch` → `v2.1.11`).
-2. **publish-quality-plugin** — builds and publishes `gradle-quality-plugin` to Sonatype Maven Central with the release version.
-3. **create-release** — creates GitHub Release + tag (only after publish succeeds, so no orphaned tags on publish failure).
-4. **register-release-in-log** — registers in `octopus-release-log`.
+2. **create-release** — creates GitHub Release + tag.
+3. **register-release-in-log** — registers in `octopus-release-log`.
 
-Steps 2–4 are skipped when `dry-run=true`.
+Steps 2–3 are skipped when `dry-run=true`.
 
-Required secrets (`Prod` environment): `OSSRH_USERNAME`, `OSSRH_TOKEN`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`, `OCTOPUS_GITHUB_TOKEN`.
+Required secret: `OCTOPUS_GITHUB_TOKEN`, in the `Prod` environment — `register-release-in-log` reads it
+through `common-register-release.yml`, whose job runs in `Prod`.
+
+The `org.octopusden.octopus-quality` Gradle plugin is no longer released from here: it moved to
+[octopus-quality-gates](https://github.com/octopusden/octopus-quality-gates), which publishes it to
+Maven Central. `gradle-quality-plugin/` stays only as the build the publication fixtures under
+`.github/scripts/test/` run against; change the plugin in octopus-quality-gates.
 
 To use automated `octopus-test` consumer verification (`Merge Gate` on PRs and optional `verify_octopus_test` in release workflow), configure repository secret `OCTOPUS_TEST_PUSH_TOKEN`.
 Note: `Prod` environment secrets are not available to `pull_request` checks unless a job explicitly uses that environment.

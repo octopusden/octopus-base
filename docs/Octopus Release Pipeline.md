@@ -347,8 +347,7 @@ check fails, classified `unknown`. What Central needs beside each artifact file 
 the Central Portal validates that, and the Portal publish step classifies its refusal.
 
 An extra file is classified `deterministic`: nothing was staged, so a re-dispatch after the fix is
-safe. The plugin release (`release-octopus-base.yml`) runs the same check as a job of its own, before
-its upload job, on a dry run and a real release alike. Covered by
+safe. Covered by
 `.github/scripts/test/central-checksum-fixture.sh` (a real build on two Gradle versions) and
 `.github/scripts/test/central-checksum-scenarios.sh` (the rule and the wiring).
 
@@ -758,10 +757,10 @@ It plans by default and writes nothing. `--apply` re-reads every fact first.
   the organisation's Actions retention setting, measured from an artifact's `expires_at` because
   the setting itself is not readable through the API. A wedge discovered later than that has no
   record of its built commit, and the operator has to establish it another way. Two annotations must not be used as the
-  answer. A **dry run** says `(dry run — nothing published)`. A **resumed** run whose checkout was
-  not pinned says the sha may belong to an earlier run and names the Portal deployment it resumed:
-  that is the Gradle `public` flow, and `release-octopus-base.yml`, which cannot pin at all because
-  a non-dry-run refuses a `target-ref` that is not a branch. Neither links to the earlier run —
+  answer. A **dry run** says `(dry run — nothing published)` (`(dry run — nothing released)` on
+  `release-octopus-base.yml`). A **resumed** run whose checkout was not pinned says the sha may
+  belong to an earlier run and names the Portal deployment it resumed: that is the Gradle `public`
+  flow. Neither links to the earlier run —
   find it by that deployment id and take its own `Built commit` annotation. A resumed **Gradle
   hybrid** release is the exception and its annotation says so: that checkout is pinned by
   `commit-hash`, which a resume passes unchanged, so the sha it prints is the built commit.
