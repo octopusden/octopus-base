@@ -35,7 +35,7 @@ DEFAULT_VERSION = "3.9.16"
 RUNNER = "ubuntu-24.04"
 # A command line that starts Maven. Comments and descriptions mention `mvn` in backticks, which
 # this does not match.
-MVN = re.compile(r"(^|[\s|;&(])mvn\s")
+MVN = re.compile(r"(^|[\s|;&(\"'])mvn(\s|$)")
 JDK = re.compile(r"uses: actions/setup-java@")
 # The workflows that run Maven. Pinned, so a new one fails here until it is added on purpose.
 EXPECTED = {
@@ -234,14 +234,17 @@ MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE='' \
 run "a missing archive fails and puts nothing on PATH" 1 \
   '[ ! -s github_path ]'
 
-for bad in '' 'latest' '3.9' '../../x' '3.9.16/../../evil' '3.9.16 -o /tmp/x'; do
+for bad in '' 'latest' '3.9' '4.0.0-rc-7' '../../x' '3.9.16/../../evil' '3.9.16 -o /tmp/x'; do
   MAVEN_VERSION="$bad" SUM="$good_sum" ARCHIVE=1 \
   run "maven-version '$bad' is refused before any download" 1 \
     '[ ! -s curl.log ] && [ ! -s github_path ] && grep -q "::error title=Invalid maven-version::" out.txt'
 done
-MAVEN_VERSION=4.0.0-rc-7 SUM="" ARCHIVE='' \
-run "a pre-release version is a version, and gets as far as the download" 1 \
-  'grep -qF "apache-maven/4.0.0-rc-7/apache-maven-4.0.0-rc-7-bin.tar.gz" curl.log'
+
+# Without --retry-all-errors curl retries only timeouts and HTTP 408/429/5xx, not the TLS and
+# connection-reset failures Central has actually produced (TD-002).
+MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE=1 \
+run "both downloads retry on connection errors, not only on HTTP errors" 0 \
+  '[ "$(grep -c -- "--retry-all-errors" curl.log)" = 2 ]'
 
 echo
 echo "$pass passed, $fail failed"

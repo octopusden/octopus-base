@@ -125,15 +125,15 @@ jobs:
         env:
           MAVEN_VERSION: ${{ inputs.maven-version }}
         run: |
-          if [[ ! "${MAVEN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+(-[0-9]+)?)?$ ]]; then
+          if [[ ! "${MAVEN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error title=Invalid maven-version::'${MAVEN_VERSION}' is not a Maven version." >&2
             exit 1
           fi
           url="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz"
           dir="${RUNNER_TEMP}/maven-${MAVEN_VERSION}"
           mkdir -p "${dir}"
-          curl -fsSL --retry 3 --retry-delay 5 -o "${dir}/maven.tar.gz" "${url}"
-          curl -fsSL --retry 3 --retry-delay 5 -o "${dir}/maven.tar.gz.sha512" "${url}.sha512"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "${dir}/maven.tar.gz" "${url}"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "${dir}/maven.tar.gz.sha512" "${url}.sha512"
           # Central's .sha512 holds the bare hash; the first field also covers a "<hash>  <file>" line.
           # Compared as strings, so an empty or malformed file is a mismatch on every sha512sum.
           expected="$(awk 'NR == 1 { print $1 }' "${dir}/maven.tar.gz.sha512")"
