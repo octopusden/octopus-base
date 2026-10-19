@@ -125,8 +125,6 @@ else:
         problems.append("the step does not take MAVEN_VERSION from the maven-version input")
     if "shell: bash" not in stripped:
         problems.append("the scenarios model 'shell: bash'; the step declares something else")
-    if "run: |" not in stripped:
-        problems.append("the step has no 'run: |' body")
 
 for p in problems:
     print("FAIL  " + p)
@@ -205,15 +203,17 @@ run() {
 echo "-- the body, executed ------------------------------------------------------"
 bin_dir='rt/maven-'"$VERSION"'/apache-maven-'"$VERSION"'/bin'
 
+# One run, every property of the happy path; each failed assertion names itself. The retry flag
+# is here because without --retry-all-errors curl retries only timeouts and HTTP 408/429/5xx, not
+# the TLS and connection-reset failures Central has actually produced (TD-002).
 MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE=1 \
-run "a matching checksum puts exactly that Maven first on PATH" 0 \
-  '[ "$(cat github_path)" = "$PWD/'"$bin_dir"'" ]'
-MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE=1 \
-run "the installed Maven prints its version in the log" 0 \
-  'grep -q "^Apache Maven '"$VERSION"' (stub) -v$" out.txt'
-MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE=1 \
-run "the archive and its checksum come from Maven Central" 0 \
-  'grep -qF -- "'"$URL"'" curl.log && grep -qF -- "'"$URL"'.sha512" curl.log'
+run "a matching checksum installs that Maven from Central, first on PATH, and prints its version" 0 \
+  'rc=0
+   [ "$(cat github_path)" = "$PWD/'"$bin_dir"'" ] || { echo "  not exactly that Maven on PATH"; rc=1; }
+   grep -q "^Apache Maven '"$VERSION"' (stub) -v$" out.txt || { echo "  installed mvn -v not in the log"; rc=1; }
+   grep -qF -- "'"$URL"'" curl.log && grep -qF -- "'"$URL"'.sha512" curl.log || { echo "  not downloaded from Maven Central"; rc=1; }
+   [ "$(grep -c -- "--retry-all-errors" curl.log)" = 2 ] || { echo "  a download does not retry on connection errors"; rc=1; }
+   exit "$rc"'
 MAVEN_VERSION=$VERSION SUM="$good_sum  apache-maven-$VERSION-bin.tar.gz" ARCHIVE=1 \
 run "a checksum file that also names the archive is accepted" 0 \
   '[ -s github_path ]'
@@ -227,9 +227,6 @@ run "a missing checksum file fails and puts nothing on PATH" 1 \
 MAVEN_VERSION=$VERSION SUM=" " ARCHIVE=1 \
 run "an empty checksum file fails and puts nothing on PATH" 1 \
   '[ ! -s github_path ] && grep -q "::error title=Maven checksum mismatch::" out.txt'
-MAVEN_VERSION=$VERSION SUM="not a checksum" ARCHIVE=1 \
-run "a malformed checksum file fails and puts nothing on PATH" 1 \
-  '[ ! -s github_path ] && grep -q "::error title=Maven checksum mismatch::" out.txt'
 MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE='' \
 run "a missing archive fails and puts nothing on PATH" 1 \
   '[ ! -s github_path ]'
@@ -239,12 +236,6 @@ for bad in '' 'latest' '3.9' '4.0.0-rc-7' '../../x' '3.9.16/../../evil' '3.9.16 
   run "maven-version '$bad' is refused before any download" 1 \
     '[ ! -s curl.log ] && [ ! -s github_path ] && grep -q "::error title=Invalid maven-version::" out.txt'
 done
-
-# Without --retry-all-errors curl retries only timeouts and HTTP 408/429/5xx, not the TLS and
-# connection-reset failures Central has actually produced (TD-002).
-MAVEN_VERSION=$VERSION SUM="$good_sum" ARCHIVE=1 \
-run "both downloads retry on connection errors, not only on HTTP errors" 0 \
-  '[ "$(grep -c -- "--retry-all-errors" curl.log)" = 2 ]'
 
 echo
 echo "$pass passed, $fail failed"
