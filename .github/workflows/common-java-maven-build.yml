@@ -77,15 +77,17 @@ jobs:
       #      `maven-version` input installs (3.10.0 by default), not about Maven in general —
       #      under 3.8.x wagon is still the default and those properties would have worked;
       #   2. the native transport's own retry count defaults to 3, so a retry WAS in force
-      #      during the failure above. The property is `aether.connector.http.retryHandler.count`
-      #      under Resolver 1.9.x (`ConfigurationProperties` builds it from the
-      #      `aether.connector.` prefix; Resolver 2.x renamed it to
-      #      `aether.transport.http.retryHandler.count`, so citing one namespace without the
-      #      version is how this gets misread). Note the boundary is NOT 3.9.0: that shipped
-      #      resolver 1.9.4, which retried nothing at all — the count arrived with 1.9.6
-      #      (MRESOLVER-326, for MNG-7708) and reached Maven in 3.9.1 with resolver 1.9.7;
-      #   3. it hands that count to HttpClient's `StandardHttpRequestRetryHandler` (the
-      #      `retryHandler.name` default is "standard"), which extends
+      #      during the failure above. On 3.10.0 (Resolver 2.x) the property is
+      #      `aether.transport.http.retryHandler.count`. A caller that sets a 3.9.x
+      #      `maven-version` gets Resolver 1.9.x, where it is
+      #      `aether.connector.http.retryHandler.count` (`ConfigurationProperties` builds it from
+      #      the `aether.connector.` prefix), so citing one namespace without the version is how
+      #      this gets misread. On 3.9.x the boundary is NOT 3.9.0: that shipped resolver 1.9.4,
+      #      which retried nothing at all — the count arrived with 1.9.6 (MRESOLVER-326, for
+      #      MNG-7708) and reached Maven in 3.9.1 with resolver 1.9.7;
+      #   3. it hands that count to HttpClient's `StandardHttpRequestRetryHandler` (the handler
+      #      name defaults to "standard"; on Resolver 2.x the key is
+      #      `aether.transport.apache.retryHandler.name`), which extends
       #      `DefaultHttpRequestRetryHandler` and inherits its nonRetriableClasses list —
       #      five classes, one of them `SSLException`, rejected by `isInstance` so subclasses
       #      go with it. `bad_record_mac` arrives as an `SSLException`. No count retries it.
