@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["custom.regex"],
+  "ignorePaths": [],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The maven-version default: the Maven workflow inputs, the scenario test that requires them to be identical, and the docs that repeat it. ignorePaths is emptied because config:recommended ignores **/test/**, which holds the scenario test",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/common-java-maven-(build|release|sonar)\\.yml$/",
+        "/^\\.github/scripts/test/maven-install-scenarios\\.sh$/",
+        "/^docs/Octopus (Release Pipeline|SonarCloud Analysis|Tech Debt Register)\\.md$/"
+      ],
+      "matchStrings": [
+        "maven-version:\\n(?:[ \\t]+(?:description|type|required):.*\\n)*[ \\t]+default: (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "DEFAULT_VERSION = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "`maven-version` \\(default `(?<currentValue>\\d+\\.\\d+\\.\\d+)`\\)",
+        "\\| `maven-version` \\| `(?<currentValue>\\d+\\.\\d+\\.\\d+)` \\|",
+        "\\((?<currentValue>\\d+\\.\\d+\\.\\d+) by default"
+      ],
+      "datasourceTemplate": "maven",
+      "depNameTemplate": "org.apache.maven:apache-maven"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["custom.regex"],
+      "semanticCommitType": "ci"
+    }
+  ]
+}
