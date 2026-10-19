@@ -281,7 +281,7 @@ Shared by both workflows:
 |---|---|---|
 | `java-version` | *required* | The JDK the project builds with |
 | `java-distribution` | `temurin` | Passed to `actions/setup-java` |
-| `runs-on` | `ubuntu-latest` | Runner label |
+| `runs-on` | `ubuntu-latest` (Gradle), `ubuntu-24.04` (Maven) | Runner label |
 | `timeout-minutes` | `20` | Job timeout |
 | `sonar-host-url` | `https://sonarcloud.io` | Sonar server |
 | `sonar-organization` | the GitHub owner | Sonar organisation key |
@@ -305,6 +305,7 @@ Maven only:
 | `scanner-java-version` | `21` | The JDK the scanner runs on |
 | `scanner-maven-plugin-version` | `5.7.0.6970` | Pinned scanner plugin |
 | `mvn-parameters` | *(empty)* | Extra Maven parameters, passed to **both** the build and the analysis |
+| `maven-version` | `3.9.16` | Maven to run, downloaded from Maven Central and checked against its sha512; the runner image's Maven is not used |
 
 Secret: `SONAR_TOKEN`. Declared optional in both workflow contracts, but the analysis cannot run
 without it — see *Prerequisites* for why the declaration reads that way.

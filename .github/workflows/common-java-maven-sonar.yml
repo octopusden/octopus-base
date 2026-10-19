@@ -21,7 +21,7 @@ on:
         description: GitHub runner label
         required: false
         type: string
-        default: ubuntu-latest
+        default: ubuntu-24.04
       timeout-minutes:
         description: Timeout in minutes for the analysis job
         required: false
@@ -52,6 +52,11 @@ on:
         required: false
         type: string
         default: ''
+      maven-version:
+        description: Maven version to build and analyse with, downloaded from Maven Central and checked against its sha512. The runner image's own Maven is not used.
+        required: false
+        type: string
+        default: 3.9.16
       quality-gate-wait:
         description: Fail the job when the quality gate is red
         required: false
@@ -112,6 +117,34 @@ jobs:
         with:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
+
+      # The runner image's Maven changes under the same label (#246), so Maven comes from here.
+      # Every copy of this step is identical; see .github/scripts/test/maven-install-scenarios.sh.
+      - name: Install Maven
+        shell: bash
+        env:
+          MAVEN_VERSION: ${{ inputs.maven-version }}
+        run: |
+          if [[ ! "${MAVEN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+(-[0-9]+)?)?$ ]]; then
+            echo "::error title=Invalid maven-version::'${MAVEN_VERSION}' is not a Maven version." >&2
+            exit 1
+          fi
+          url="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz"
+          dir="${RUNNER_TEMP}/maven-${MAVEN_VERSION}"
+          mkdir -p "${dir}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "${dir}/maven.tar.gz" "${url}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "${dir}/maven.tar.gz.sha512" "${url}.sha512"
+          # Central's .sha512 holds the bare hash; the first field also covers a "<hash>  <file>" line.
+          # Compared as strings, so an empty or malformed file is a mismatch on every sha512sum.
+          expected="$(awk 'NR == 1 { print $1 }' "${dir}/maven.tar.gz.sha512")"
+          actual="$(sha512sum "${dir}/maven.tar.gz" | awk '{ print $1 }')"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "::error title=Maven checksum mismatch::apache-maven-${MAVEN_VERSION}-bin.tar.gz has sha512 ${actual}, Maven Central publishes '${expected}'." >&2
+            exit 1
+          fi
+          tar -xzf "${dir}/maven.tar.gz" -C "${dir}"
+          echo "${dir}/apache-maven-${MAVEN_VERSION}/bin" >> "${GITHUB_PATH}"
+          "${dir}/apache-maven-${MAVEN_VERSION}/bin/mvn" -v
 
       - name: Cache Sonar analyzers and provisioned JRE
         uses: actions/cache@v4

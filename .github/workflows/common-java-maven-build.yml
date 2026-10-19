@@ -10,10 +10,14 @@ on:
       mvn-parameters:
         type: string
         default: ""
+      maven-version:
+        description: Maven version to build with, downloaded from Maven Central and checked against its sha512. The runner image's own Maven is not used.
+        type: string
+        default: 3.9.16
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: Prod
 
     steps:
@@ -28,7 +32,35 @@ jobs:
           server-id: ossrh
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
-          
+
+      # The runner image's Maven changes under the same label (#246), so Maven comes from here.
+      # Every copy of this step is identical; see .github/scripts/test/maven-install-scenarios.sh.
+      - name: Install Maven
+        shell: bash
+        env:
+          MAVEN_VERSION: ${{ inputs.maven-version }}
+        run: |
+          if [[ ! "${MAVEN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+(-[0-9]+)?)?$ ]]; then
+            echo "::error title=Invalid maven-version::'${MAVEN_VERSION}' is not a Maven version." >&2
+            exit 1
+          fi
+          url="https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz"
+          dir="${RUNNER_TEMP}/maven-${MAVEN_VERSION}"
+          mkdir -p "${dir}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "${dir}/maven.tar.gz" "${url}"
+          curl -fsSL --retry 3 --retry-delay 5 -o "${dir}/maven.tar.gz.sha512" "${url}.sha512"
+          # Central's .sha512 holds the bare hash; the first field also covers a "<hash>  <file>" line.
+          # Compared as strings, so an empty or malformed file is a mismatch on every sha512sum.
+          expected="$(awk 'NR == 1 { print $1 }' "${dir}/maven.tar.gz.sha512")"
+          actual="$(sha512sum "${dir}/maven.tar.gz" | awk '{ print $1 }')"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "::error title=Maven checksum mismatch::apache-maven-${MAVEN_VERSION}-bin.tar.gz has sha512 ${actual}, Maven Central publishes '${expected}'." >&2
+            exit 1
+          fi
+          tar -xzf "${dir}/maven.tar.gz" -C "${dir}"
+          echo "${dir}/apache-maven-${MAVEN_VERSION}/bin" >> "${GITHUB_PATH}"
+          "${dir}/apache-maven-${MAVEN_VERSION}/bin/mvn" -v
+
       # Retrying is not a convenience. Without it a single corrupted TLS record while Maven
       # resolves a dependency fails the build, and this workflow runs in the octopus-test
       # canary, which is a required check on every octopus-base pull request — so one packet
@@ -41,10 +73,9 @@ jobs:
       # reach this failure class, in three steps:
       #   1. `maven.wagon.http.retryHandler.*` is inert on the Maven this job actually runs —
       #      3.9.0 moved the default to the resolver's native transport, and wagon is used
-      #      only under `-Dmaven.resolver.transport=wagon`. Nothing here pins a Maven; it is
-      #      the `ubuntu-latest` image that ships 3.9.x (3.9.16 as of this change), so the
-      #      claim is about that image, not about Maven in general — under 3.8.x wagon is
-      #      still the default and those properties would have worked;
+      #      only under `-Dmaven.resolver.transport=wagon`. The claim is about the Maven the
+      #      `maven-version` input installs (3.9.x by default), not about Maven in general —
+      #      under 3.8.x wagon is still the default and those properties would have worked;
       #   2. the native transport's own retry count defaults to 3, so a retry WAS in force
       #      during the failure above. The property is `aether.connector.http.retryHandler.count`
       #      under Resolver 1.9.x (`ConfigurationProperties` builds it from the
