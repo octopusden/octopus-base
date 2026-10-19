@@ -41,7 +41,7 @@ on:
       maven-version:
         description: Maven version to release with, downloaded from Maven Central and checked against its sha512. The runner image's own Maven is not used.
         type: string
-        default: 3.9.16
+        default: 3.10.0
     secrets:
       OSSRH_USERNAME:
         required: false

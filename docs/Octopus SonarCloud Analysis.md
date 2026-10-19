@@ -305,7 +305,7 @@ Maven only:
 | `scanner-java-version` | `21` | The JDK the scanner runs on |
 | `scanner-maven-plugin-version` | `5.7.0.6970` | Pinned scanner plugin |
 | `mvn-parameters` | *(empty)* | Extra Maven parameters, passed to **both** the build and the analysis |
-| `maven-version` | `3.9.16` | Maven to run, downloaded from Maven Central and checked against its sha512; the runner image's Maven is not used |
+| `maven-version` | `3.10.0` | Maven to run, downloaded from Maven Central and checked against its sha512; the runner image's Maven is not used |
 
 Secret: `SONAR_TOKEN`. Declared optional in both workflow contracts, but the analysis cannot run
 without it — see *Prerequisites* for why the declaration reads that way.

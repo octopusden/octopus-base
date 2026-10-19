@@ -31,7 +31,7 @@ import glob, io, os, re, sys
 wf_dir, out = sys.argv[1], sys.argv[2]
 
 STEP = "- name: Install Maven"
-DEFAULT_VERSION = "3.9.16"
+DEFAULT_VERSION = "3.10.0"
 RUNNER = "ubuntu-24.04"
 # A command line that starts Maven. Comments and descriptions mention `mvn` in backticks, which
 # this does not match.
