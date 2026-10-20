@@ -12,8 +12,7 @@ PR opened / pushed
   │
   │  ── Required on every PR ──
   │
-  ├─ build              ./gradlew build test (gradle-quality-plugin)
-  ├─ quality            ./gradlew detekt ktlintCheck (gradle-quality-plugin)
+  ├─ build              release fixtures against a real Gradle build (.github/scripts/test/fixture-plugin)
   ├─ workflow-lint      actionlint + bash -n (CI infrastructure)
   ├─ security           validate-github-action-refs.sh
   │
@@ -26,6 +25,8 @@ PR opened / pushed
 
 **Org-wide taxonomy:** `build` · `quality` · `security` · `workflow-lint` · `gate/merge`
 **octopus-base adds:** `consumer-verify` (producer layer)
+**octopus-base has no `quality` job:** it has no Gradle code of its own to analyse since the
+`org.octopusden.octopus-quality` plugin moved to octopus-quality-gates.
 
 ## Release Pipeline
 
