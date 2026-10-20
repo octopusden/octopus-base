@@ -616,6 +616,12 @@ the caller adds a second approval gate.
 
 **Pass `secrets: inherit`**, or registration cannot authenticate.
 
+**Maven:** `maven-version` (default `3.10.0`) is the Maven the release runs, downloaded from Maven
+Central and checked against its sha512 — the runner image's own Maven is not used, because the
+image changes it under the same label. `common-java-maven-build.yml` and
+`common-java-maven-sonar.yml` take the same input. Raise it in the caller to move one repository
+to a newer Maven. The jobs that run Maven run on `ubuntu-24.04`, not `ubuntu-latest`.
+
 **The GPG secrets are optional** when a repository publishes only to GitHub Packages. An unset
 GitHub secret still arrives as an empty `env:` entry, and consumers commonly decide
 `signing.isRequired` by asking whether the variable *exists* — so the release exports the

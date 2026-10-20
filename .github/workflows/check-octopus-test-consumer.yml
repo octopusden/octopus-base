@@ -235,6 +235,11 @@ jobs:
       - name: Maven build retry scenarios
         shell: bash
         run: bash .github/scripts/test/maven-build-retry-scenarios.sh
+      # consumer-verify runs the install on the happy path only. A checksum mismatch, a missing
+      # file and a maven-version that is not a version are reachable only against a stubbed curl.
+      - name: Maven install scenarios
+        shell: bash
+        run: bash .github/scripts/test/maven-install-scenarios.sh
       # The step that runs after the artifacts are immutable, where every wrong answer is
       # permanent: a tag that outlived its release, a draft left by an interrupted attempt, a
       # lookup that failed for a reason other than 404. None of these were reachable from a test
