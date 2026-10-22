@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fake curl for portal-publish.sh tests. Canned responses driven by env:
 #   SEARCH_CODE, SEARCH_DID, STATUS_STATES (space-separated, consumed per call),
-#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, STATUS_NOPURLS=1, PUBLISH_CODES, REPO1_CODES
+#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, STATUS_NOPURLS=1, STATUS_CLASSIFIER=1, PUBLISH_CODES, REPO1_CODES,
+#   REPO1_MISSING_SUFFIX (404 for repo1 URLs ending so, 200 otherwise; overrides REPO1_CODES)
 set -u
 out=/dev/null; url=""; method="GET"
 while [ $# -gt 0 ]; do
@@ -36,7 +37,9 @@ EOF
     ver="${STATUS_VERSION:-2.5.0}"; grp="${STATUS_GROUP:-org.octopusden.octopus}"
     err="${STATUS_ERRORS:-}"
     if [ -n "$err" ]; then errj=",\"errors\":{\"pom\":\"$err\"}"; else errj=""; fi
-    purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver\"]"
+    marker="\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver?type=pom\""
+    purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",$marker]"
+    [ "${STATUS_CLASSIFIER:-}" = "1" ] && purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",\"pkg:maven/$grp/octopus-quality-plugin@$ver?classifier=sources&type=jar\",$marker]"
     [ "${STATUS_NOPURLS:-}" = "1" ] && purls="[]"
     cat > "$out" <<EOF
 {"deploymentId":"dep-1","deploymentState":"$st","purls":$purls$errj}
@@ -47,6 +50,10 @@ EOF
     next publish_i "${PUBLISH_CODES:-204}" 204 ;;
   *repo1.maven.org*)
     echo "" > "$out"
+    if [ -n "${REPO1_MISSING_SUFFIX:-}" ]; then
+      case "$url" in *"$REPO1_MISSING_SUFFIX") echo 404 ;; *) echo 200 ;; esac
+      exit 0
+    fi
     next repo1_i "${REPO1_CODES:-200}" 200 ;;
   *) echo 000 ;;
 esac

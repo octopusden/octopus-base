@@ -375,7 +375,7 @@ version comparison and the "no coordinates at all" check still run, and the scri
 | 2 | Wait for `VALIDATED` | 15 s | `VALIDATE_DEADLINE` | 1800 s |
 | 3 | Coordinate guard — the deployment must be the one we built | — | — | — |
 | 4 | Publish (**irreversible**) | — | max 5 attempts | — |
-| 5 | Wait for `PUBLISHED`, or for every coordinate to resolve on repo1 | 20 s | `PUBLISH_DEADLINE` | 2700 s |
+| 5 | Wait for `PUBLISHED`, or for every file of the deployment to resolve on repo1 | 20 s | `PUBLISH_DEADLINE` | 2700 s |
 | 6 | Verify every coordinate resolves on repo1 | 30 s | `CENTRAL_DEADLINE` | 1800 s |
 
 All deadlines are environment-overridable, which is how the offline scenario suite runs them in
@@ -401,7 +401,7 @@ stateDiagram-v2
     end note
     note right of PUBLISHING
         PUBLISH_DEADLINE 2700s
-        every coordinate on repo1 = done,
+        every file on repo1 = done,
         whatever Portal still says;
         giving up here = resumable
     end note
@@ -416,11 +416,14 @@ does not match `BUILD_VERSION`, if any group falls outside the staging profile's
 there are no Maven coordinates at all. It exists to stop a wrong `resume-deployment-id` from
 publishing someone else's work.
 
-**Phase 5** polls `/status` and, once per poll, asks repo1 for the `.pom` of every coordinate from
-phase 3. Portal can report `PUBLISHING` long after repo1 serves the release; when all coordinates
-answer 200 the deployment counts as published, the log says it was confirmed via repo1 while
-Portal still said `PUBLISHING`, and phase 6 and the rest continue as after `PUBLISHED`. One missing
-coordinate, or a repo1 error, only means "not yet".
+**Phase 5** polls `/status` and, once per poll, asks repo1 for every file the deployment names:
+the file of each `purl` (`artifact-version[-classifier].type`, type `jar` when absent) and, for
+each coordinate, the `.pom` and `.pom.asc`. Central copies a version directory file by file, so
+one served file proves nothing; only when all of them answer 200 does the deployment count as
+published. The log then says it was confirmed via repo1 while Portal still said `PUBLISHING`, and
+phase 6 and the rest continue as after `PUBLISHED`. One missing file, or a repo1 error, only means
+"not yet". The check also runs when `/status` itself is unreachable (5xx, 404, transport error),
+and the log shows the state as unknown.
 
 **Phase 4** never re-POSTs blindly. An inconclusive response (400/404/409/422) is reconciled
 against the deployment state after a settling window, because a late 400 usually means "no longer
@@ -465,7 +468,7 @@ Companion markers: `RELEASE_PUBLISH_DEPLOYMENT_ID`, `RELEASE_PUBLISH_COMPAT_KEY`
 > **A fully successful, irreversible publish can be reported as a failed run.** If artifacts reach
 > `PUBLISHED` but are not yet resolvable on repo1 within `CENTRAL_DEADLINE`, the run is classified
 > `resumable` and goes red. The same is true when `PUBLISH_DEADLINE` expires while the deployment
-> is still `PUBLISHING` and repo1 does not yet serve every artifact — Central may finish minutes
+> is still `PUBLISHING` and repo1 does not yet serve every file of the deployment — Central may finish minutes
 > later, and the release is then published, untagged and unregistered.
 
 ### `resume-deployment-id`
@@ -587,7 +590,7 @@ Packages rows at the end.
 | Guard rejects the upload | — | — | — | — | Nothing left on Central, in git or in the log. But a `docker-image` release has already pushed its image by this point — the push runs before the guard — and nothing cleans that up (#190). Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
 | Version already on Central | published earlier | varies | varies | varies | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. Nothing is built, so this run leaves nothing behind and the earlier release's artifacts are untouched; what varies is whether that release was recorded. If the tag or the GitHub release is missing, run `recover-release.sh` (below). Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
-| `PUBLISH_DEADLINE` expires while `PUBLISHING` and repo1 lacks an artifact | **yes, later** | no | no | no | Maven flow: yes, **Re-run failed jobs** on the same run. Gradle flow: re-dispatch with `resume-deployment-id`. Otherwise published, unrecorded. |
+| `PUBLISH_DEADLINE` expires while `PUBLISHING` and repo1 lacks a file of the deployment (a purl file, a `.pom` or a `.pom.asc`) | **yes, later** | no | no | no | Maven flow: yes, **Re-run failed jobs** on the same run. Gradle flow: re-dispatch with `resume-deployment-id`. Otherwise published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
 | Registration fails | yes | yes | yes | no | No. `recover-release.sh` writes the entry; it leaves the tag and release alone. |

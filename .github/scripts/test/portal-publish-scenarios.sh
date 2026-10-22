@@ -17,7 +17,7 @@ command -v jq >/dev/null || { echo "jq is required"; exit 1; }
 
 pass=0; fail=0
 # Short deadlines/settling so the suite runs in seconds.
-common_env=(SEARCH_DEADLINE=3 VALIDATE_DEADLINE=6 PUBLISH_DEADLINE=6 CENTRAL_DEADLINE=6 SETTLE_SECONDS=1
+common_env=(SEARCH_DEADLINE=3 VALIDATE_DEADLINE=6 PUBLISH_DEADLINE=6 CENTRAL_DEADLINE=6 SETTLE_SECONDS=1 PUBLISH_POLL_SECONDS=1
             MAVEN_USERNAME=u MAVEN_PASSWORD=p)
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]
@@ -82,7 +82,21 @@ STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES=000 \
 # Phase 3 refuses a deployment without Maven coordinates, so the repo1 shortcut never
 # runs on an empty list: the wait for PUBLISHED stays the only way out.
 STATUS_STATES="VALIDATED PUBLISHING" STATUS_NOPURLS=1 REPO1_CODES=200 \
-  run "empty purls keep the old behaviour" 1 "No Maven coordinates" "confirmed via repo1"
+  run "phase 3 refuses an empty purl list, so the repo1 shortcut never runs" 1 "No Maven coordinates" "confirmed via repo1"
+
+# Central copies a GAV directory file by file: a served pom says nothing about the rest.
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
+  run "pom served but the jar is not: times out, no success" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 STATUS_CLASSIFIER=1 REPO1_MISSING_SUFFIX=-sources.jar \
+  run "sources classifier missing: times out, no success" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.pom.asc \
+  run "pom signature missing: times out, no success" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 STATUS_CLASSIFIER=1 \
+  run "every file of every purl served: confirmed via repo1" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING"
 
 echo "-- recovery hints per flow -------------------------------------------------"
 FLOW=maven RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \

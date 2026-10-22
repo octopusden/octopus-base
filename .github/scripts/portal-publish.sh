@@ -6,7 +6,10 @@
 # deployment `closed`, so nothing reaches Maven Central). This script replaces it:
 # after Gradle has uploaded + closed the staging repository, it maps that repo to
 # its Portal deployment, waits for VALIDATED, publishes explicitly, waits for
-# PUBLISHED, and finally verifies the artifacts are resolvable on Maven Central.
+# PUBLISHED, and finally verifies the artifacts are resolvable on Maven Central. While waiting
+# for PUBLISHED it also accepts repo1 serving every file the deployment lists (each purl's file,
+# plus every coordinate's .pom and .pom.asc), because Portal can say PUBLISHING for a long time
+# after that is true.
 #
 # Inputs (env):
 #   MAVEN_USERNAME, MAVEN_PASSWORD  Portal/OSSRH token pair (required)
@@ -37,6 +40,7 @@ PUBLISH_LOG="${PUBLISH_LOG:-}"
 RESUME_DEPLOYMENT_ID="${RESUME_DEPLOYMENT_ID:-}"
 REQUIRE_COORDS="${REQUIRE_COORDS:-}"
 RELEASE_FLOW="${RELEASE_FLOW:-gradle}"
+PUBLISH_POLL_SECONDS="${PUBLISH_POLL_SECONDS:-20}"
 TMP="${RUNNER_TEMP:-/tmp}"
 
 HOST="https://ossrh-staging-api.central.sonatype.com"
@@ -225,6 +229,31 @@ for p in "${PURLS[@]:-}"; do
   MAVEN_COORDS+=("$grp:$art:$ver")
 done
 
+# The exact repo1 files the deployment holds, for the wait in phase 5. Every purl names one file
+# (`type` defaults to jar, a `classifier` adds a suffix: artifact-version[-classifier].type), and
+# every coordinate also has its .pom and the .pom.asc signature. A type that is not also the file
+# extension only makes the file "not found" there, so the wait falls back to PUBLISHED.
+declare -a REPO1_FILES=()
+mapfile -t RAW_PURLS < <(jq -r '.purls[]? // empty' "$STATUS_JSON" 2>/dev/null)
+for p in "${RAW_PURLS[@]:-}"; do
+  case "$p" in pkg:maven/*) : ;; *) continue ;; esac
+  base="${p%%\?*}"; quals=""; [ "$base" = "$p" ] || quals="${p#*\?}"
+  rest="${base#pkg:maven/}"
+  ga="${rest%@*}"; ver="${rest##*@}"
+  grp="${ga%/*}"; art="${ga##*/}"
+  [ -n "$grp" ] && [ -n "$art" ] && [ -n "$ver" ] || continue
+  typ=jar; cls=""
+  IFS="&" read -ra kv <<< "$quals"
+  for q in "${kv[@]:-}"; do
+    case "$q" in type=?*) typ="${q#type=}" ;; classifier=?*) cls="-${q#classifier=}" ;; esac
+  done
+  dir="${grp//.//}/$art/$ver"
+  REPO1_FILES+=("$dir/$art-$ver$cls.$typ" "$dir/$art-$ver.pom" "$dir/$art-$ver.pom.asc")
+done
+if [ "${#REPO1_FILES[@]}" -gt 0 ]; then
+  mapfile -t REPO1_FILES < <(printf '%s\n' "${REPO1_FILES[@]}" | sort -u)
+fi
+
 # Classifier-stripped purls (sources/javadoc) collapse into duplicates.
 if [ "${#MAVEN_COORDS[@]}" -gt 0 ]; then
   mapfile -t MAVEN_COORDS < <(printf '%s\n' "${MAVEN_COORDS[@]}" | sort -u)
@@ -323,12 +352,12 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Wait for PUBLISHED
 # ---------------------------------------------------------------------------
-repo1_serves_all() { # every MAVEN_COORDS pom answers 200; stops at the first that does not
-  local c grp rest art ver code
-  [ "${#MAVEN_COORDS[@]}" -gt 0 ] || return 1
-  for c in "${MAVEN_COORDS[@]}"; do
-    grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
-    code=$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/${grp//.//}/$art/$ver/$art-$ver.pom" 2>/dev/null)
+repo1_serves_all() { # every file in REPO1_FILES answers 200; stops at the first that does not
+  local f code
+  # Phase 3 guarantees a non-empty list; the check keeps "all of nothing" from meaning success.
+  [ "${#REPO1_FILES[@]}" -gt 0 ] || return 1
+  for f in "${REPO1_FILES[@]}"; do
+    code=$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/$f" 2>/dev/null)
     [ "$code" = "200" ] || return 1
   done
 }
@@ -350,16 +379,18 @@ while :; do
     *) : ;;
   esac
   # Portal can report PUBLISHING for tens of minutes after repo1 already serves the release
-  # (octopus-base#250). Every coordinate resolving there is the outcome PUBLISHED stands for.
-  # A repo1 error or a missing artifact only means "not yet".
+  # (octopus-base#250). Central copies a version directory file by file, so one served file proves
+  # nothing: the shortcut needs 200 for every file the deployment's purls name plus each pom and
+  # its .asc. A repo1 error or a missing file only means "not yet". It also runs when /status
+  # itself is unreachable (5xx, 404, transport error: state stays empty, logged as unknown).
   if repo1_serves_all; then
-    echo "Deployment $DID is confirmed via repo1 while Portal still said ${state:-unknown}: all ${#MAVEN_COORDS[@]} artifact(s) are served there."
+    echo "Deployment $DID is confirmed via repo1 while Portal still said ${state:-unknown}: all ${#REPO1_FILES[@]} file(s) of the deployment are served there."
     break
   fi
   if [ "$(now)" -ge "$deadline" ]; then
     fail_resumable "Deployment $DID did not reach PUBLISHED within ${PUBLISH_DEADLINE}s (last state=${state:-unknown})."
   fi
-  sleep 20
+  sleep "$PUBLISH_POLL_SECONDS"
 done
 
 # ---------------------------------------------------------------------------
