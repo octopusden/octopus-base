@@ -419,7 +419,10 @@ publishing someone else's work.
 **Phase 5** polls `/status` and, once per poll, asks repo1 for the files Central requires per GAV.
 Central copies a version directory file by file, so one served file proves nothing. Portal's purls
 carry no type or classifier (one entry per GAV), so the file set comes from the pom, read once per
-GAV from repo1 (the only GET; every other check is a HEAD):
+GAV from repo1 (the only GET; every other check is a HEAD). The packaging is the direct child
+`<packaging>` of the root `<project>`, read with an XML parser, so comments and `<packaging>` elements
+nested elsewhere do not count; a pom that does not parse, or a transfer that does not complete,
+never yields a smaller file set (unparsable means `jar`, an incomplete read means "not yet"):
 
 - always the `.pom`;
 - packaging `jar` (also when `<packaging>` is absent): also `.jar`, `-sources.jar`, `-javadoc.jar`;
@@ -432,7 +435,9 @@ purls, each GAV's packaging and the awaited files, then says it was confirmed vi
 Portal still said `PUBLISHING`, and phase 6 and the rest continue as after `PUBLISHED`. One missing
 file, or a repo1 error, only means "not yet". The check also runs when `/status` itself is
 unreachable (5xx, 404, transport error), and the log shows the state as unknown. The Gradle
-`.module` file is not awaited; Gradle falls back to the pom. `PUBLISH_POLL_SECONDS` (default 20)
+`.module` file is not awaited; Gradle falls back to the pom. With one unqualified purl per GAV, extra
+classifier artifacts (for example `-tests.jar`, `-all.jar`) and attached artifacts of pom-packaged
+GAVs are not awaited either, and phase 6 does not check them. `PUBLISH_POLL_SECONDS` (default 20)
 sets the poll interval and must be a positive integer.
 
 **Phase 4** never re-POSTs blindly. An inconclusive response (400/404/409/422) is reconciled

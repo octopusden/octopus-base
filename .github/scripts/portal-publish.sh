@@ -359,6 +359,28 @@ fi
 # other check is a HEAD, because a GET of a large jar cannot finish inside the curl timeout.
 declare -A GAV_PKG=()
 PKG_POM="$TMP/repo1-pom"
+# The direct child <packaging> of the root <project>, namespace-aware, comments ignored; "jar"
+# when absent or empty (Maven's default). An unparsable pom also yields "jar", the answer that
+# requires more files, and says so on stderr (logged here, once per GAV).
+pom_packaging() { # pom file -> packaging
+  python3 -I -c '
+import sys
+import xml.etree.ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+    if root.tag.rpartition("}")[2] != "project":
+        raise ValueError("root element is not project")
+    for child in root:
+        if child.tag.rpartition("}")[2] == "packaging":
+            print((child.text or "").strip() or "jar")
+            break
+    else:
+        print("jar")
+except Exception as e:
+    print("jar")
+    print("  pom not parsable (%s) - assuming jar" % e, file=sys.stderr)
+' "$1"
+}
 repo1_head() { # path under repo1 -> 0 when it answers 200
   local code
   code=$(curl -sS -I --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/$1" 2>/dev/null)
@@ -373,11 +395,12 @@ repo1_serves_all() { # 0 only when every expected file answers 200; stops at the
     grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
     base="${grp//.//}/$art/$ver/$art-$ver"
     if [ -z "${GAV_PKG[$c]:-}" ]; then
-      code=$(curl -sS --connect-timeout 5 --max-time 10 -o "$PKG_POM" -w '%{http_code}' "$REPO1/$base.pom" 2>/dev/null)
+      # A cut-off transfer can leave a truncated body with 200: require curl's exit 0 as well.
+      code=$(curl -sS --connect-timeout 5 --max-time 10 -o "$PKG_POM" -w '%{http_code}' "$REPO1/$base.pom" 2>/dev/null) || return 1
       [ "$code" = "200" ] || return 1
-      pkg=$(sed -n 's:.*<packaging>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*</packaging>.*:\1:p' "$PKG_POM" | head -1)
-      GAV_PKG[$c]="${pkg:-jar}"
-      echo "  $c: packaging '${GAV_PKG[$c]}'"
+      pkg=$(pom_packaging "$PKG_POM")
+      GAV_PKG[$c]="$pkg"
+      echo "  $c: packaging '$pkg'"
     fi
     case "${GAV_PKG[$c]}" in
       pom) files+=("$base.pom") ;;

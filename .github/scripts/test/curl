@@ -5,7 +5,8 @@
 #   REPO1_MISSING_SUFFIX (404 for repo1 URLs ending so, 200 otherwise; overrides REPO1_CODES),
 #   STATUS_PLAIN=1 (purls without qualifiers, one per GAV: the shape Portal really sends),
 #   POM_PACKAGING (<packaging> in every pom served by a GET; "none" omits the element; the
-#   gradle plugin marker is always pom)
+#   gradle plugin marker is always pom), POM_CURL_FAIL=1, POM_STYLE=comment|nested|truncated (jar poms with a commented-out
+#   or a plugin-nested <packaging>pom</packaging>)
 # A GET of anything but a .pom on repo1 answers 000: a full download of a jar cannot finish
 # within the script curl timeout, so the script must use HEAD for those.
 set -u
@@ -68,7 +69,15 @@ EOF
       case "$url" in *gradle.plugin-*) pk=pom ;; esac
       if [ "$pk" = "none" ]; then pe=""; else pe="<packaging>$pk</packaging>"; fi
       printf "<project><modelVersion>4.0.0</modelVersion>%s</project>\n" "$pe" > "$out"
+      # POM_STYLE: poms a line-based regex misreads (packaging is jar in both).
+      case "${POM_STYLE:-}:$pk" in
+        comment:jar) printf '<project xmlns="http://maven.apache.org/POM/4.0.0">\n  <!--\n  <packaging>pom</packaging>\n  -->\n  <packaging>jar</packaging>\n</project>\n' > "$out" ;;
+        truncated:jar) printf "<project><packaging>pom</packag" > "$out" ;;
+        nested:jar) printf '<project><packaging>jar</packaging><build><plugins><plugin><configuration><packaging>pom</packaging></configuration></plugin></plugins></build></project>\n' > "$out" ;;
+      esac
     fi
-    echo "$code" ;;
+    echo "$code"
+    # POM_CURL_FAIL=1: the transfer is cut off after the status line (curl exits 28).
+    if [ "$method" = "GET" ] && [ "${POM_CURL_FAIL:-}" = "1" ]; then exit 28; fi ;;
   *) echo 000 ;;
 esac

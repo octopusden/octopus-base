@@ -115,6 +115,21 @@ STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISS
 STATUS_PLAIN=1 POM_PACKAGING=pom STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
   run "pom packaging needs only the pom and its signature" 0 \
   "confirmed via repo1 while Portal still said PUBLISHING"
+STATUS_PLAIN=1 POM_STYLE=comment STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
+  run "a commented-out <packaging>pom</packaging> is not the packaging" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_PLAIN=1 POM_STYLE=nested STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
+  run "a <packaging> nested in plugin config is not the packaging" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_PLAIN=1 POM_STYLE=comment STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  run "a namespaced pom with a comment still confirms when everything is served" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING"
+STATUS_PLAIN=1 POM_STYLE=truncated STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
+  run "an unparsable pom is treated as jar (more files required)" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_PLAIN=1 POM_CURL_FAIL=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  run "a pom GET cut off after a 200 is not trusted" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
 STATUS_PLAIN=1 POM_PACKAGING=maven-plugin STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
   run "other packaging: no shortcut, waits for PUBLISHED" 1 \
   "packaging 'maven-plugin'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
