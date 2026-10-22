@@ -15,7 +15,7 @@ on:
 jobs:
   build-deploy-for-python2:
     if: ${{ contains(inputs.python_versions, '2') == true }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ${{ inputs.process_env }}
     permissions:
       id-token: write
@@ -55,7 +55,7 @@ jobs:
           repository-url: ${{ vars.PYPI_REPO_URL }}
   build-deploy-for-python3:
     if: ${{ contains(inputs.python_versions, '3') == true }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ${{ inputs.process_env }}
     permissions:
       id-token: write

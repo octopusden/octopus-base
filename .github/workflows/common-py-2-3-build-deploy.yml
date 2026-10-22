@@ -10,7 +10,7 @@ on:
         required: true
 jobs:
   build-deploy-for-python2:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ${{ inputs.process_env }}
     permissions:
       id-token: write
@@ -42,7 +42,7 @@ jobs:
           verbose: false
           repository-url: ${{ vars.PYPI_REPO_URL }}
   build-deploy-for-python3:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: ${{ inputs.process_env }}
     permissions:
       id-token: write

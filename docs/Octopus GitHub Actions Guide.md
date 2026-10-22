@@ -243,7 +243,7 @@ jobs:
       java-version: "21"
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: ./gradlew build --no-daemon --stacktrace
@@ -252,7 +252,7 @@ jobs:
     name: gate/merge
     if: ${{ always() }}
     needs: [quality, security, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Fail when any gate failed
         shell: bash

@@ -40,7 +40,7 @@ concurrency:
 jobs:
   flags:
     name: Normalise inputs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       dry-run: ${{ steps.normalise.outputs.dry-run }}
       verify-octopus-test: ${{ steps.normalise.outputs.verify-octopus-test }}
@@ -84,7 +84,7 @@ jobs:
   resolve-target:
     name: Resolve target ref
     needs: flags
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
 
@@ -147,7 +147,7 @@ jobs:
     # So every dependency that must have succeeded is named explicitly, and an empty
     # flags output can no longer read as "verification was not requested".
     if: ${{ always() && needs.flags.result == 'success' && needs.resolve-target.result == 'success' && (needs.flags.outputs.verify-octopus-test != 'true' || needs.verify-octopus-test.result == 'success') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
       next_tag: ${{ steps.version.outputs.next_tag }}
@@ -255,7 +255,7 @@ jobs:
     # A status function, as in every job below verify-octopus-test: GitHub skips a job whose if:
     # has none when any job above it was skipped, and the run stays green.
     if: ${{ !failure() && !cancelled() && needs.calculate-version.result == 'success' && needs.flags.outputs.dry-run != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Create release

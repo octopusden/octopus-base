@@ -459,7 +459,7 @@ jobs:
     name: Finish publication
     needs: prepare-build-publish-release
     if: ${{ !inputs.dry-run && needs.prepare-build-publish-release.outputs.portal-deployment-id != '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: Prod
     steps:
       # The script lives in octopus-base; a consumer's checkout does not have it. Pinned to
@@ -522,7 +522,7 @@ jobs:
           && needs.finish-publication.result != 'failure'
           && needs.finish-publication.result != 'cancelled' }}
     needs: [prepare-build-publish-release, finish-publication]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The pom.xml the publish job actually released, restored as the release asset.
       #

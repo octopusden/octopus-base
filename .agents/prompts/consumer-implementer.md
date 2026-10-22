@@ -145,7 +145,7 @@ jobs:
     name: gate/merge
     needs: [ build, quality, security ]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: octopusden/octopus-base/.github/actions/merge-gate@{{OCTOPUS_BASE_VERSION}}

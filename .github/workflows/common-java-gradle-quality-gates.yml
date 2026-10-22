@@ -16,7 +16,7 @@ on:
         description: GitHub runner label
         required: false
         type: string
-        default: ubuntu-latest
+        default: ubuntu-24.04
       timeout-minutes:
         description: Timeout in minutes for every quality job
         required: false

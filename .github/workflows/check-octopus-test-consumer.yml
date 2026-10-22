@@ -38,7 +38,7 @@ jobs:
 
   build:
     name: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -88,7 +88,7 @@ jobs:
 
   workflow-lint:
     name: workflow-lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # `pull_request` triggers cannot supply inputs, so default explicitly.
     env:
       ACTIONLINT_IMAGE: ${{ inputs.actionlint_image || 'rhysd/actionlint:1.7.12' }}
@@ -140,6 +140,9 @@ jobs:
         run: bash .github/scripts/validate-workflow-naming.sh .
       - name: Test reusable workflow lint on consumer fixtures
         run: python3 .github/scripts/test/workflow-lint-scenarios.py
+      - name: Runner label scenarios
+        shell: bash
+        run: bash .github/scripts/test/runner-label-scenarios.sh
       # The meta-runner carries its own copy of this script - TeamCity cannot source one
       # from a repository - so the runner's last cases assert the copy has not drifted and
       # cannot be made injectable. That is what this step is here for.
@@ -243,7 +246,7 @@ jobs:
 
   security:
     name: security
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Action reference validation scenarios
@@ -260,7 +263,7 @@ jobs:
 
   consumer-verify-scope:
     name: consumer-verify-scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       run_verify: ${{ steps.scope.outputs.run_verify }}
     steps:
@@ -317,7 +320,7 @@ jobs:
       - workflow-lint
       - security
       - consumer-verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Validate gate results
         shell: bash
