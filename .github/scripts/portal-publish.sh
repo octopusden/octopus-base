@@ -8,7 +8,8 @@
 # its Portal deployment, waits for VALIDATED, publishes explicitly, waits for
 # PUBLISHED, and finally verifies the artifacts are resolvable on Maven Central. While waiting
 # for PUBLISHED it also accepts repo1 serving every file Central requires for each GAV of the
-# deployment (pom, and for jar packaging the jar, sources and javadoc, each with its .asc),
+# deployment (pom; the jar and sources for jar-like packagings, plus javadoc for plain jar; each
+# with its .asc),
 # because Portal can say PUBLISHING for a long time after that is true.
 #
 # Inputs (env):
@@ -352,9 +353,10 @@ fi
 # Central copies a version directory file by file and nothing orders the pom last, so a served
 # pom proves nothing about the rest. The files expected per GAV follow Central's requirements,
 # not purl qualifiers (Portal sends none): always the .pom; for packaging jar (also Maven's
-# default) the .jar, -sources.jar and -javadoc.jar; each with its .asc. Packaging pom adds
-# nothing. Any other packaging has no known file set, so the shortcut stays off for it and the
-# wait is for PUBLISHED. Gradle's .module is not awaited unless a purl names it: Gradle falls
+# default) the .jar, -sources.jar and -javadoc.jar; atlassian-plugin, bundle and maven-plugin the
+# .jar and -sources.jar (see the case below); each with its .asc. Packaging pom adds nothing.
+# Any other packaging (war, ear, aar, unknown) has no known file set, so the shortcut stays off
+# for the deployment and the wait is for PUBLISHED. Gradle's .module is not awaited unless a purl names it: Gradle falls
 # back to the pom. The packaging is read once per GAV from the pom itself (the only GET); every
 # other check is a HEAD, because a GET of a large jar cannot finish inside the curl timeout.
 declare -A GAV_PKG=()
@@ -405,6 +407,13 @@ repo1_serves_all() { # 0 only when every expected file answers 200; stops at the
     case "${GAV_PKG[$c]}" in
       pom) files+=("$base.pom") ;;
       jar) files+=("$base.pom" "$base.jar" "$base-sources.jar" "$base-javadoc.jar") ;;
+      # Packagings whose main artifact is a .jar. Javadoc is not required: Central accepted
+      # octopus-jira-api-plugin 2.1.2 (atlassian-plugin) without a -javadoc.jar. Extend this
+      # list only with a packaging whose main artifact is confirmed to be a .jar:
+      #   atlassian-plugin  octopus-jira-api-plugin 2.1.2 on repo1 (octopus-base#250)
+      #   bundle            maven-bundle-plugin: the bundle is the project's .jar
+      #   maven-plugin      Maven core: the plugin is the project's .jar
+      atlassian-plugin|bundle|maven-plugin) files+=("$base.pom" "$base.jar" "$base-sources.jar") ;;
       *)
         [ -n "${GAV_PKG_LOGGED[$c]:-}" ] || echo "  $c: packaging '${GAV_PKG[$c]}' has no known file set - not using the repo1 shortcut, waiting for PUBLISHED"
         GAV_PKG_LOGGED[$c]=1

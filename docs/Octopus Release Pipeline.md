@@ -424,13 +424,17 @@ GAV from repo1 (the only GET; every other check is a HEAD). The packaging is the
 nested elsewhere do not count; a pom that does not parse, or a transfer that does not complete,
 never yields a smaller file set (unparsable means `jar`, an incomplete read means "not yet"):
 
-- always the `.pom`;
-- packaging `jar` (also when `<packaging>` is absent): also `.jar`, `-sources.jar`, `-javadoc.jar`;
-- packaging `pom`: nothing more;
-- any other packaging: no known file set, so the shortcut stays off and the wait is for `PUBLISHED`;
-- every file also needs its `.asc`; a purl that does carry `type`/`classifier` adds that file too.
+| Packaging | Files awaited, each also with its `.asc` |
+|---|---|
+| `pom` | `.pom` |
+| `jar` (also when `<packaging>` is absent) | `.pom`, `.jar`, `-sources.jar`, `-javadoc.jar` |
+| `atlassian-plugin`, `bundle`, `maven-plugin` | `.pom`, `.jar`, `-sources.jar` (no javadoc: Central accepted `octopus-jira-api-plugin` 2.1.2 without one) |
+| anything else (`war`, `ear`, `aar`, unknown) | no known file set: the shortcut stays off for the deployment and the wait is for `PUBLISHED` |
 
-Only when all of them answer 200 does the deployment count as published. The log lists the raw
+A purl that does carry `type`/`classifier` adds that file too.
+
+The check runs before the deadline test and each HEAD may take up to 10 s, so on a slow repo1 the
+deadline can be overshot by up to the number of files times 10 s. Only when all of them answer 200 does the deployment count as published. The log lists the raw
 purls, each GAV's packaging and the awaited files, then says it was confirmed via repo1 while
 Portal still said `PUBLISHING`, and phase 6 and the rest continue as after `PUBLISHED`. One missing
 file, or a repo1 error, only means "not yet". The check also runs when `/status` itself is

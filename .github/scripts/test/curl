@@ -5,7 +5,8 @@
 #   REPO1_MISSING_SUFFIX (404 for repo1 URLs ending so, 200 otherwise; overrides REPO1_CODES),
 #   STATUS_PLAIN=1 (purls without qualifiers, one per GAV: the shape Portal really sends),
 #   POM_PACKAGING (<packaging> in every pom served by a GET; "none" omits the element; the
-#   gradle plugin marker is always pom), POM_CURL_FAIL=1, POM_STYLE=comment|nested|truncated (jar poms with a commented-out
+#   gradle plugin marker is always pom), POM_PACKAGING_BY="artifactId=packaging ..." (per GAV),
+#   STATUS_GAVS="artifactId ..." (unqualified purls for these artifacts under STATUS_GROUP), POM_CURL_FAIL=1, POM_STYLE=comment|nested|truncated (jar poms with a commented-out
 #   or a plugin-nested <packaging>pom</packaging>)
 # A GET of anything but a .pom on repo1 answers 000: a full download of a jar cannot finish
 # within the script curl timeout, so the script must use HEAD for those.
@@ -48,6 +49,9 @@ EOF
     purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",$marker]"
     [ "${STATUS_CLASSIFIER:-}" = "1" ] && purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",\"pkg:maven/$grp/octopus-quality-plugin@$ver?classifier=sources&type=jar\",$marker]"
     [ "${STATUS_PLAIN:-}" = "1" ] && purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver\",\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver\"]"
+    if [ -n "${STATUS_GAVS:-}" ]; then
+      purls=""; for a in $STATUS_GAVS; do purls="$purls${purls:+,}\"pkg:maven/$grp/$a@$ver\""; done; purls="[$purls]"
+    fi
     [ "${STATUS_NOPURLS:-}" = "1" ] && purls="[]"
     cat > "$out" <<EOF
 {"deploymentId":"dep-1","deploymentState":"$st","purls":$purls$errj}
@@ -67,6 +71,8 @@ EOF
     if [ "$method" = "GET" ] && [ "$code" = "200" ]; then
       pk="${POM_PACKAGING:-jar}"
       case "$url" in *gradle.plugin-*) pk=pom ;; esac
+      d="${url%/*}"; d="${d%/*}"; d="${d##*/}"   # artifactId of the pom being read
+      for kv in ${POM_PACKAGING_BY:-}; do [ "${kv%%=*}" = "$d" ] && pk="${kv#*=}"; done
       if [ "$pk" = "none" ]; then pe=""; else pe="<packaging>$pk</packaging>"; fi
       printf "<project><modelVersion>4.0.0</modelVersion>%s</project>\n" "$pe" > "$out"
       # POM_STYLE: poms a line-based regex misreads (packaging is jar in both).

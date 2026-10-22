@@ -130,9 +130,41 @@ STATUS_PLAIN=1 POM_STYLE=truncated STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_
 STATUS_PLAIN=1 POM_CURL_FAIL=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
   run "a pom GET cut off after a 200 is not trusted" 1 \
   "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_PLAIN=1 POM_PACKAGING=maven-plugin STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+# The GAV set of octopus-jira-api-plugin 2.1.2 (octopus-base#250): a pom module, two jar modules
+# with javadoc, and an atlassian-plugin module that Central accepted without a javadoc jar.
+jira_env=(VERSION=2.1.2 STATUS_VERSION=2.1.2 STATUS_GROUP=org.octopusden.octopus.jira
+          STATUS_GAVS="octopus-jira-api octopus-jira-api-client octopus-jira-api-common octopus-jira-api-plugin"
+          POM_PACKAGING_BY="octopus-jira-api=pom octopus-jira-api-plugin=atlassian-plugin")
+export "${jira_env[@]}"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-javadoc.jar \
+  run "octopus-jira-api-plugin 2.1.2 (atlassian-plugin, no javadoc): confirmed via repo1" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-sources.jar \
+  run "atlassian-plugin with sources missing times out" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2.jar.asc \
+  run "atlassian-plugin with the jar signature missing times out" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  REPO1_MISSING_SUFFIX=octopus-jira-api-client-2.1.2-javadoc.jar \
+  run "a plain jar module still requires its javadoc" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+POM_PACKAGING_BY="octopus-jira-api=pom octopus-jira-api-plugin=war" STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  run "war packaging: no shortcut, waits for PUBLISHED" 1 \
+  "packaging 'war'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+unset VERSION STATUS_VERSION STATUS_GROUP STATUS_GAVS POM_PACKAGING_BY
+
+for pk in maven-plugin bundle; do
+  STATUS_PLAIN=1 POM_PACKAGING=$pk STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=-javadoc.jar \
+    run "$pk packaging needs no javadoc: confirmed via repo1" 0 \
+    "confirmed via repo1 while Portal still said PUBLISHING"
+done
+STATUS_PLAIN=1 POM_PACKAGING=war STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
   run "other packaging: no shortcut, waits for PUBLISHED" 1 \
-  "packaging 'maven-plugin'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+  "packaging 'war'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
 POLL=0 STATUS_STATES="VALIDATED PUBLISHED" \
   run "rejects a non-positive PUBLISH_POLL_SECONDS" 1 "PUBLISH_POLL_SECONDS must be a positive integer"
 
