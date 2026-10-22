@@ -17,7 +17,7 @@ command -v jq >/dev/null || { echo "jq is required"; exit 1; }
 
 pass=0; fail=0
 # Short deadlines/settling so the suite runs in seconds.
-common_env=(SEARCH_DEADLINE=3 VALIDATE_DEADLINE=6 PUBLISH_DEADLINE=6 CENTRAL_DEADLINE=6 SETTLE_SECONDS=1 PUBLISH_POLL_SECONDS=1
+common_env=(SEARCH_DEADLINE=3 VALIDATE_DEADLINE=6 PUBLISH_DEADLINE=6 CENTRAL_DEADLINE=6 SETTLE_SECONDS=1
             MAVEN_USERNAME=u MAVEN_PASSWORD=p)
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]
@@ -33,7 +33,7 @@ run() {
   PATH="$here:$PATH" env "${common_env[@]}" \
     BUILD_VERSION="${VERSION:-2.5.0}" STAGING_PROFILE_ID="${SPI-org.octopusden}" \
     PUBLISH_LOG="$RUNNER_TEMP/publish.log" \
-    RESUME_DEPLOYMENT_ID="${RESUME_ID:-}" REQUIRE_COORDS="${REQ_COORDS:-}" RELEASE_FLOW="${FLOW:-}" \
+    RESUME_DEPLOYMENT_ID="${RESUME_ID:-}" REQUIRE_COORDS="${REQ_COORDS:-}" RELEASE_FLOW="${FLOW:-}" PUBLISH_POLL_SECONDS="${POLL:-1}" \
     bash "$SCRIPT" >"$out" 2>&1
   rc=$?
   [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }
@@ -97,6 +97,29 @@ STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.pom
 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 STATUS_CLASSIFIER=1 \
   run "every file of every purl served: confirmed via repo1" 0 \
   "confirmed via repo1 while Portal still said PUBLISHING"
+
+# The shape Portal really sends: one unqualified purl per GAV. The expected files come from the
+# pom packaging read off repo1, not from purl qualifiers.
+STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  run "unqualified purls, jar packaging, everything served: confirmed via repo1" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING"
+STATUS_PLAIN=1 POM_PACKAGING=none STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  run "a pom without <packaging> counts as jar" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING"
+STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=-javadoc.jar \
+  run "jar packaging: javadoc missing times out" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=-sources.jar.asc \
+  run "jar packaging: sources signature missing times out" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_PLAIN=1 POM_PACKAGING=pom STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
+  run "pom packaging needs only the pom and its signature" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING"
+STATUS_PLAIN=1 POM_PACKAGING=maven-plugin STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
+  run "other packaging: no shortcut, waits for PUBLISHED" 1 \
+  "packaging 'maven-plugin'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+POLL=0 STATUS_STATES="VALIDATED PUBLISHED" \
+  run "rejects a non-positive PUBLISH_POLL_SECONDS" 1 "PUBLISH_POLL_SECONDS must be a positive integer"
 
 echo "-- recovery hints per flow -------------------------------------------------"
 FLOW=maven RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \

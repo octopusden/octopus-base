@@ -7,9 +7,9 @@
 # after Gradle has uploaded + closed the staging repository, it maps that repo to
 # its Portal deployment, waits for VALIDATED, publishes explicitly, waits for
 # PUBLISHED, and finally verifies the artifacts are resolvable on Maven Central. While waiting
-# for PUBLISHED it also accepts repo1 serving every file the deployment lists (each purl's file,
-# plus every coordinate's .pom and .pom.asc), because Portal can say PUBLISHING for a long time
-# after that is true.
+# for PUBLISHED it also accepts repo1 serving every file Central requires for each GAV of the
+# deployment (pom, and for jar packaging the jar, sources and javadoc, each with its .asc),
+# because Portal can say PUBLISHING for a long time after that is true.
 #
 # Inputs (env):
 #   MAVEN_USERNAME, MAVEN_PASSWORD  Portal/OSSRH token pair (required)
@@ -114,6 +114,10 @@ fail_resumable() {
   exit 1
 }
 
+case "$PUBLISH_POLL_SECONDS" in
+  ''|0|*[!0-9]*) fail_deterministic "PUBLISH_POLL_SECONDS must be a positive integer (got '${PUBLISH_POLL_SECONDS}')." ;;
+esac
+
 # http METHOD URL OUTFILE -> prints HTTP status (000 on transport error).
 # Response headers land in <OUTFILE>.headers (needed for Retry-After).
 http() {
@@ -217,46 +221,37 @@ done
 # 3. Guard: the deployment must be the one we just built
 #    (protects against a wrong resume-deployment-id publishing someone else's work)
 # ---------------------------------------------------------------------------
-mapfile -t PURLS < <(jq -r '.purls[]? // empty' "$STATUS_JSON" 2>/dev/null | sed 's/?.*$//')
-declare -a MAVEN_COORDS=()
-for p in "${PURLS[@]:-}"; do
-  [ -n "$p" ] || continue
-  case "$p" in pkg:maven/*) : ;; *) continue ;; esac
-  rest="${p#pkg:maven/}"
-  ga="${rest%@*}"; ver="${rest##*@}"
-  grp="${ga%/*}"; art="${ga##*/}"
-  [ -n "$grp" ] && [ -n "$art" ] && [ -n "$ver" ] || continue
-  MAVEN_COORDS+=("$grp:$art:$ver")
-done
-
-# The exact repo1 files the deployment holds, for the wait in phase 5. Every purl names one file
-# (`type` defaults to jar, a `classifier` adds a suffix: artifact-version[-classifier].type), and
-# every coordinate also has its .pom and the .pom.asc signature. A type that is not also the file
-# extension only makes the file "not found" there, so the wait falls back to PUBLISHED.
-declare -a REPO1_FILES=()
 mapfile -t RAW_PURLS < <(jq -r '.purls[]? // empty' "$STATUS_JSON" 2>/dev/null)
+declare -a MAVEN_COORDS=()
+# Files a purl names explicitly through its type/classifier qualifiers (Portal's purls normally
+# carry none: one entry per GAV). Additive only: phase 5 derives the expected files from the pom.
+declare -a REPO1_EXTRA=()
 for p in "${RAW_PURLS[@]:-}"; do
   case "$p" in pkg:maven/*) : ;; *) continue ;; esac
-  base="${p%%\?*}"; quals=""; [ "$base" = "$p" ] || quals="${p#*\?}"
+  base="${p%%[?#]*}"; quals=""
+  case "$p" in *\?*) quals="${p#*\?}"; quals="${quals%%#*}" ;; esac
   rest="${base#pkg:maven/}"
   ga="${rest%@*}"; ver="${rest##*@}"
   grp="${ga%/*}"; art="${ga##*/}"
   [ -n "$grp" ] && [ -n "$art" ] && [ -n "$ver" ] || continue
-  typ=jar; cls=""
+  MAVEN_COORDS+=("$grp:$art:$ver")
+  typ=""; cls=""
   IFS="&" read -ra kv <<< "$quals"
   for q in "${kv[@]:-}"; do
     case "$q" in type=?*) typ="${q#type=}" ;; classifier=?*) cls="-${q#classifier=}" ;; esac
   done
-  dir="${grp//.//}/$art/$ver"
-  REPO1_FILES+=("$dir/$art-$ver$cls.$typ" "$dir/$art-$ver.pom" "$dir/$art-$ver.pom.asc")
+  if [ -n "$typ" ]; then
+    f="${grp//.//}/$art/$ver/$art-$ver$cls.$typ"
+    REPO1_EXTRA+=("$f" "$f.asc")
+  fi
 done
-if [ "${#REPO1_FILES[@]}" -gt 0 ]; then
-  mapfile -t REPO1_FILES < <(printf '%s\n' "${REPO1_FILES[@]}" | sort -u)
-fi
 
 # Classifier-stripped purls (sources/javadoc) collapse into duplicates.
 if [ "${#MAVEN_COORDS[@]}" -gt 0 ]; then
   mapfile -t MAVEN_COORDS < <(printf '%s\n' "${MAVEN_COORDS[@]}" | sort -u)
+fi
+if [ "${#REPO1_EXTRA[@]}" -gt 0 ]; then
+  mapfile -t REPO1_EXTRA < <(printf '%s\n' "${REPO1_EXTRA[@]}" | sort -u)
 fi
 
 if [ "${#MAVEN_COORDS[@]}" -eq 0 ]; then
@@ -266,6 +261,8 @@ fi
 
 echo "::group::Deployment coordinates"
 printf '  %s\n' "${MAVEN_COORDS[@]}"
+echo "  purls as reported by Portal:"
+printf '    %s\n' "${RAW_PURLS[@]}"
 echo "::endgroup::"
 
 # The publication guard makes the same version assertion BEFORE the upload, and this one is
@@ -352,15 +349,64 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Wait for PUBLISHED
 # ---------------------------------------------------------------------------
-repo1_serves_all() { # every file in REPO1_FILES answers 200; stops at the first that does not
-  local f code
-  # Phase 3 guarantees a non-empty list; the check keeps "all of nothing" from meaning success.
-  [ "${#REPO1_FILES[@]}" -gt 0 ] || return 1
-  for f in "${REPO1_FILES[@]}"; do
-    code=$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/$f" 2>/dev/null)
-    [ "$code" = "200" ] || return 1
-  done
+# Central copies a version directory file by file and nothing orders the pom last, so a served
+# pom proves nothing about the rest. The files expected per GAV follow Central's requirements,
+# not purl qualifiers (Portal sends none): always the .pom; for packaging jar (also Maven's
+# default) the .jar, -sources.jar and -javadoc.jar; each with its .asc. Packaging pom adds
+# nothing. Any other packaging has no known file set, so the shortcut stays off for it and the
+# wait is for PUBLISHED. Gradle's .module is not awaited unless a purl names it: Gradle falls
+# back to the pom. The packaging is read once per GAV from the pom itself (the only GET); every
+# other check is a HEAD, because a GET of a large jar cannot finish inside the curl timeout.
+declare -A GAV_PKG=()
+PKG_POM="$TMP/repo1-pom"
+repo1_head() { # path under repo1 -> 0 when it answers 200
+  local code
+  code=$(curl -sS -I --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/$1" 2>/dev/null)
+  [ "$code" = "200" ]
 }
+repo1_serves_all() { # 0 only when every expected file answers 200; stops at the first miss
+  local c grp rest art ver base code pkg f
+  local -a files=()
+  # Phase 3 guarantees a non-empty list; the check keeps "all of nothing" from meaning success.
+  [ "${#MAVEN_COORDS[@]}" -gt 0 ] || return 1
+  for c in "${MAVEN_COORDS[@]}"; do
+    grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
+    base="${grp//.//}/$art/$ver/$art-$ver"
+    if [ -z "${GAV_PKG[$c]:-}" ]; then
+      code=$(curl -sS --connect-timeout 5 --max-time 10 -o "$PKG_POM" -w '%{http_code}' "$REPO1/$base.pom" 2>/dev/null)
+      [ "$code" = "200" ] || return 1
+      pkg=$(sed -n 's:.*<packaging>[[:space:]]*\([^<[:space:]]*\)[[:space:]]*</packaging>.*:\1:p' "$PKG_POM" | head -1)
+      GAV_PKG[$c]="${pkg:-jar}"
+      echo "  $c: packaging '${GAV_PKG[$c]}'"
+    fi
+    case "${GAV_PKG[$c]}" in
+      pom) files+=("$base.pom") ;;
+      jar) files+=("$base.pom" "$base.jar" "$base-sources.jar" "$base-javadoc.jar") ;;
+      *)
+        [ -n "${GAV_PKG_LOGGED[$c]:-}" ] || echo "  $c: packaging '${GAV_PKG[$c]}' has no known file set - not using the repo1 shortcut, waiting for PUBLISHED"
+        GAV_PKG_LOGGED[$c]=1
+        return 1
+        ;;
+    esac
+  done
+  files+=("${REPO1_EXTRA[@]}")
+  mapfile -t files < <(printf '%s\n' "${files[@]}" | sort -u)
+  local -a all=()
+  for f in "${files[@]}"; do
+    all+=("$f")
+    case "$f" in *.asc) : ;; *) all+=("$f.asc") ;; esac
+  done
+  mapfile -t all < <(printf '%s\n' "${all[@]}" | sort -u)
+  if [ -z "$REPO1_LISTED" ]; then
+    REPO1_LISTED=1
+    echo "::group::Files awaited on repo1 (${#all[@]})"; printf '  %s\n' "${all[@]}"; echo "::endgroup::"
+  fi
+  for f in "${all[@]}"; do repo1_head "$f" || return 1; done
+  REPO1_CHECKED=${#all[@]}
+}
+declare -A GAV_PKG_LOGGED=()
+REPO1_CHECKED=0
+REPO1_LISTED=""
 deadline=$(( $(now) + PUBLISH_DEADLINE ))
 while :; do
   code=$(http POST "$PORTAL/status?id=$DID" "$STATUS_JSON")
@@ -380,11 +426,11 @@ while :; do
   esac
   # Portal can report PUBLISHING for tens of minutes after repo1 already serves the release
   # (octopus-base#250). Central copies a version directory file by file, so one served file proves
-  # nothing: the shortcut needs 200 for every file the deployment's purls name plus each pom and
-  # its .asc. A repo1 error or a missing file only means "not yet". It also runs when /status
+  # nothing: the shortcut needs 200 for every file Central requires per GAV (see repo1_serves_all),
+  # each with its .asc. A repo1 error or a missing file only means "not yet". It also runs when /status
   # itself is unreachable (5xx, 404, transport error: state stays empty, logged as unknown).
   if repo1_serves_all; then
-    echo "Deployment $DID is confirmed via repo1 while Portal still said ${state:-unknown}: all ${#REPO1_FILES[@]} file(s) of the deployment are served there."
+    echo "Deployment $DID is confirmed via repo1 while Portal still said ${state:-unknown}: all ${REPO1_CHECKED} expected file(s) are served there."
     break
   fi
   if [ "$(now)" -ge "$deadline" ]; then
