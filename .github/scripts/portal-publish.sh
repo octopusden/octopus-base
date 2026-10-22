@@ -17,6 +17,8 @@
 #   PUBLISH_LOG                     Gradle publish log, to read the compat repo key
 #   RESUME_DEPLOYMENT_ID            optional: skip the search, use this deployment
 #   REQUIRE_COORDS                  optional: "group:artifact ..." that must be present
+#   RELEASE_FLOW                    optional: "maven" or "gradle" (default); picks the
+#                                   recovery instruction in a resumable failure
 #
 # Emits classification markers for the caller / TeamCity to scrape:
 #   RELEASE_PUBLISH_CLASS=published                  (success)
@@ -34,6 +36,7 @@ STAGING_PROFILE_ID="${STAGING_PROFILE_ID:-}"
 PUBLISH_LOG="${PUBLISH_LOG:-}"
 RESUME_DEPLOYMENT_ID="${RESUME_DEPLOYMENT_ID:-}"
 REQUIRE_COORDS="${REQUIRE_COORDS:-}"
+RELEASE_FLOW="${RELEASE_FLOW:-gradle}"
 TMP="${RUNNER_TEMP:-/tmp}"
 
 HOST="https://ossrh-staging-api.central.sonatype.com"
@@ -94,7 +97,13 @@ fail_resumable() {
   classify resumable false
   if [ -n "$DID" ]; then
     echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$DID"
-    echo "::error title=Resumable publish failure::$* Re-dispatch with resume-deployment-id=${DID} — a plain re-run would upload ${BUILD_VERSION} a second time."
+    local how
+    if [ "$RELEASE_FLOW" = "maven" ]; then
+      how="Use \"Re-run failed jobs\" on this run: the Finish publication job does not upload, it re-checks deployment ${DID}."
+    else
+      how="Re-dispatch with resume-deployment-id=${DID} — a plain re-run would upload ${BUILD_VERSION} a second time."
+    fi
+    echo "::error title=Resumable publish failure::$* ${how} Do not restart the release from the external system that dispatched it: a new run uploads ${BUILD_VERSION} again and Central rejects it."
   else
     echo "::error title=Resumable publish failure::$* The artifacts are staged but no Portal deployment id is known yet. Do NOT plainly re-run (that uploads ${BUILD_VERSION} again): look it up with the compat key above via GET ${HOST}/manual/search/repositories?ip=any (Bearer auth) and re-dispatch with resume-deployment-id, or drop that staging repository first."
   fi
@@ -314,6 +323,15 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Wait for PUBLISHED
 # ---------------------------------------------------------------------------
+repo1_serves_all() { # every MAVEN_COORDS pom answers 200; stops at the first that does not
+  local c grp rest art ver code
+  [ "${#MAVEN_COORDS[@]}" -gt 0 ] || return 1
+  for c in "${MAVEN_COORDS[@]}"; do
+    grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
+    code=$(curl -sS --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/${grp//.//}/$art/$ver/$art-$ver.pom" 2>/dev/null)
+    [ "$code" = "200" ] || return 1
+  done
+}
 deadline=$(( $(now) + PUBLISH_DEADLINE ))
 while :; do
   code=$(http POST "$PORTAL/status?id=$DID" "$STATUS_JSON")
@@ -331,6 +349,13 @@ while :; do
       ;;
     *) : ;;
   esac
+  # Portal can report PUBLISHING for tens of minutes after repo1 already serves the release
+  # (octopus-base#250). Every coordinate resolving there is the outcome PUBLISHED stands for.
+  # A repo1 error or a missing artifact only means "not yet".
+  if repo1_serves_all; then
+    echo "Deployment $DID is confirmed via repo1 while Portal still said ${state:-unknown}: all ${#MAVEN_COORDS[@]} artifact(s) are served there."
+    break
+  fi
   if [ "$(now)" -ge "$deadline" ]; then
     fail_resumable "Deployment $DID did not reach PUBLISHED within ${PUBLISH_DEADLINE}s (last state=${state:-unknown})."
   fi

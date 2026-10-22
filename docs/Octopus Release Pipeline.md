@@ -375,7 +375,7 @@ version comparison and the "no coordinates at all" check still run, and the scri
 | 2 | Wait for `VALIDATED` | 15 s | `VALIDATE_DEADLINE` | 1800 s |
 | 3 | Coordinate guard — the deployment must be the one we built | — | — | — |
 | 4 | Publish (**irreversible**) | — | max 5 attempts | — |
-| 5 | Wait for `PUBLISHED` | 20 s | `PUBLISH_DEADLINE` | 2700 s |
+| 5 | Wait for `PUBLISHED`, or for every coordinate to resolve on repo1 | 20 s | `PUBLISH_DEADLINE` | 2700 s |
 | 6 | Verify every coordinate resolves on repo1 | 30 s | `CENTRAL_DEADLINE` | 1800 s |
 
 All deadlines are environment-overridable, which is how the offline scenario suite runs them in
@@ -401,10 +401,9 @@ stateDiagram-v2
     end note
     note right of PUBLISHING
         PUBLISH_DEADLINE 2700s
-        giving up here = resumable,
-        and Central may still finish
-        minutes later - published,
-        untagged, unregistered
+        every coordinate on repo1 = done,
+        whatever Portal still says;
+        giving up here = resumable
     end note
     note right of FAILED
         deterministic: a FAILED deployment
@@ -416,6 +415,12 @@ stateDiagram-v2
 does not match `BUILD_VERSION`, if any group falls outside the staging profile's namespace, or if
 there are no Maven coordinates at all. It exists to stop a wrong `resume-deployment-id` from
 publishing someone else's work.
+
+**Phase 5** polls `/status` and, once per poll, asks repo1 for the `.pom` of every coordinate from
+phase 3. Portal can report `PUBLISHING` long after repo1 serves the release; when all coordinates
+answer 200 the deployment counts as published, the log says it was confirmed via repo1 while
+Portal still said `PUBLISHING`, and phase 6 and the rest continue as after `PUBLISHED`. One missing
+coordinate, or a repo1 error, only means "not yet".
 
 **Phase 4** never re-POSTs blindly. An inconclusive response (400/404/409/422) is reconciled
 against the deployment state after a settling window, because a late 400 usually means "no longer
@@ -451,7 +456,7 @@ over; the script has a `fail_transient` helper but no code path reaches it.
 | `published` | no | Success — everything is `PUBLISHED` and resolvable on repo1. |
 | `deterministic` | no | Validation errors, 401/403, a `FAILED` deployment, wrong version or namespace, more than one staging repository. Retrying cannot help. |
 | `transient` | **yes** | Unambiguous infrastructure signals (5xx, timeout, connection reset or refused) **before anything was staged**. The only retryable class. |
-| `resumable` | no | A staging repository or deployment already exists, so a plain re-run would upload the version a second time. Finish it with `resume-deployment-id` instead. |
+| `resumable` | no | A staging repository or deployment already exists. Gradle flow: a plain re-run would upload the version a second time, so re-dispatch with `resume-deployment-id`. Maven flow: *Finish publication* never uploads, so **Re-run failed jobs** on the same run is the recovery. Either way, do not restart the release from the external system that dispatched it: a new run uploads the version again and Central rejects it. |
 | `unknown` | unknown | Nothing matched. There is no evidence a retry will help. |
 
 Companion markers: `RELEASE_PUBLISH_DEPLOYMENT_ID`, `RELEASE_PUBLISH_COMPAT_KEY`, and — for
@@ -460,8 +465,8 @@ Companion markers: `RELEASE_PUBLISH_DEPLOYMENT_ID`, `RELEASE_PUBLISH_COMPAT_KEY`
 > **A fully successful, irreversible publish can be reported as a failed run.** If artifacts reach
 > `PUBLISHED` but are not yet resolvable on repo1 within `CENTRAL_DEADLINE`, the run is classified
 > `resumable` and goes red. The same is true when `PUBLISH_DEADLINE` expires while the deployment
-> is still `PUBLISHING` — Central may finish minutes later, and the release is then published,
-> untagged and unregistered.
+> is still `PUBLISHING` and repo1 does not yet serve every artifact — Central may finish minutes
+> later, and the release is then published, untagged and unregistered.
 
 ### `resume-deployment-id`
 
@@ -471,7 +476,8 @@ and the named existing deployment is published instead, so the version is not up
 **It is unreachable for most consumers as things stand.** It is a `workflow_call` input, and a
 caller must expose it in its own `workflow_dispatch` inputs to use it — but consumer `release.yml`
 files are `repository_dispatch`-only. Using it today means editing the consumer workflow first.
-The Maven flow has no such input at all.
+The Maven flow has no such input at all; the caller sets `RELEASE_FLOW=maven` so the script
+names **Re-run failed jobs** as its recovery.
 
 > **A repository that also routes a publication should expose it.** Splitting a release across two
 > registries adds a state a resume can repair — Central published, the package missing — so the
@@ -581,7 +587,7 @@ Packages rows at the end.
 | Guard rejects the upload | — | — | — | — | Nothing left on Central, in git or in the log. But a `docker-image` release has already pushed its image by this point — the push runs before the guard — and nothing cleans that up (#190). Fix and re-dispatch. |
 | Portal validation rejects the deployment | — | — | — | — | Yes, but a staging repository and a `FAILED` deployment remain on the Portal side. A `FAILED` deployment can be neither published nor resumed — fix the cause and re-dispatch. |
 | Version already on Central | published earlier | varies | varies | varies | Caught by the preflight **before the build**, and the error names which of the two situations it is — or says the recorded state could not be determined. Nothing is built, so this run leaves nothing behind and the earlier release's artifacts are untouched; what varies is whether that release was recorded. If the tag or the GitHub release is missing, run `recover-release.sh` (below). Otherwise release the next version — after checking `octopus-release-log` for the published version, because a tag and a release do not prove it was registered (see *Registration*). |
-| `PUBLISH_DEADLINE` expires while `PUBLISHING` | **yes, later** | no | no | no | **No.** Published, unrecorded. |
+| `PUBLISH_DEADLINE` expires while `PUBLISHING` and repo1 lacks an artifact | **yes, later** | no | no | no | Maven flow: yes, **Re-run failed jobs** on the same run. Gradle flow: re-dispatch with `resume-deployment-id`. Otherwise published, unrecorded. |
 | Run dies after the upload for any other reason | **yes** | no | no | no | **No.** Same state. |
 | Tag created, release creation fails | yes | yes | no | no | Partly — re-run the failed job; it adopts the tag. |
 | Registration fails | yes | yes | yes | no | No. `recover-release.sh` writes the entry; it leaves the tag and release alone. |

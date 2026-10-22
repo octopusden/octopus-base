@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fake curl for portal-publish.sh tests. Canned responses driven by env:
 #   SEARCH_CODE, SEARCH_DID, STATUS_STATES (space-separated, consumed per call),
-#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, PUBLISH_CODES, REPO1_CODES
+#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, STATUS_NOPURLS=1, PUBLISH_CODES, REPO1_CODES
 set -u
 out=/dev/null; url=""; method="GET"
 while [ $# -gt 0 ]; do
@@ -36,8 +36,10 @@ EOF
     ver="${STATUS_VERSION:-2.5.0}"; grp="${STATUS_GROUP:-org.octopusden.octopus}"
     err="${STATUS_ERRORS:-}"
     if [ -n "$err" ]; then errj=",\"errors\":{\"pom\":\"$err\"}"; else errj=""; fi
+    purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver\"]"
+    [ "${STATUS_NOPURLS:-}" = "1" ] && purls="[]"
     cat > "$out" <<EOF
-{"deploymentId":"dep-1","deploymentState":"$st","purls":["pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar","pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver"]$errj}
+{"deploymentId":"dep-1","deploymentState":"$st","purls":$purls$errj}
 EOF
     echo 200 ;;
   *publisher/deployment/*)

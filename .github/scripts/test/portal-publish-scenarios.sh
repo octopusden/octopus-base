@@ -33,7 +33,7 @@ run() {
   PATH="$here:$PATH" env "${common_env[@]}" \
     BUILD_VERSION="${VERSION:-2.5.0}" STAGING_PROFILE_ID="${SPI-org.octopusden}" \
     PUBLISH_LOG="$RUNNER_TEMP/publish.log" \
-    RESUME_DEPLOYMENT_ID="${RESUME_ID:-}" REQUIRE_COORDS="${REQ_COORDS:-}" \
+    RESUME_DEPLOYMENT_ID="${RESUME_ID:-}" REQUIRE_COORDS="${REQ_COORDS:-}" RELEASE_FLOW="${FLOW:-}" \
     bash "$SCRIPT" >"$out" 2>&1
   rc=$?
   [ "$rc" = "$erc" ] || { ok=false; echo "  rc=$rc expected=$erc"; }
@@ -68,6 +68,38 @@ STATUS_STATES="VALIDATED VALIDATED VALIDATED VALIDATED VALIDATED" PUBLISH_CODES=
   run "keeps a still-VALIDATED 409 deterministic" 1 "still VALIDATED"
 STATUS_STATES="VALIDATED PUBLISHED" PUBLISH_CODES=204 REPO1_CODES="404" \
   run "stays resumable when Central never serves the artifact" 1 "RELEASE_PUBLISH_CLASS=resumable"
+
+echo "-- Portal lags repo1 while PUBLISHING -------------------------------------"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES=200 \
+  run "finishes when repo1 serves everything while Portal says PUBLISHING" 0 \
+  "confirmed via repo1 while Portal still said PUBLISHING" "Resumable|RELEASE_PUBLISH_CLASS=resumable"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES="200 404" \
+  run "still times out when repo1 serves only part of the artifacts" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES=000 \
+  run "a repo1 transport error means not yet, not a failed job" 1 \
+  "did not reach PUBLISHED" "confirmed via repo1"
+# Phase 3 refuses a deployment without Maven coordinates, so the repo1 shortcut never
+# runs on an empty list: the wait for PUBLISHED stays the only way out.
+STATUS_STATES="VALIDATED PUBLISHING" STATUS_NOPURLS=1 REPO1_CODES=200 \
+  run "empty purls keep the old behaviour" 1 "No Maven coordinates" "confirmed via repo1"
+
+echo "-- recovery hints per flow -------------------------------------------------"
+FLOW=maven RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
+  run "maven timeout says Re-run failed jobs, not resume-deployment-id" 1 \
+  "Re-run failed jobs" "resume-deployment-id"
+RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
+  run "default flow keeps the resume-deployment-id instruction" 1 \
+  "Re-dispatch with resume-deployment-id=dep-42" "Re-run failed jobs"
+FLOW=gradle RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
+  run "gradle timeout keeps the resume-deployment-id instruction" 1 \
+  "Re-dispatch with resume-deployment-id=dep-42" "Re-run failed jobs"
+FLOW=maven RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
+  run "maven timeout warns against restarting from the external CI" 1 \
+  "Do not restart the release from the external system"
+FLOW=gradle RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
+  run "gradle timeout warns against restarting from the external CI" 1 \
+  "Do not restart the release from the external system"
 
 echo "-- resume, namespaces and staging bookkeeping ----------------------------"
 RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="VALIDATED PUBLISHED" PUBLISH_CODES=204 REPO1_CODES=200 \

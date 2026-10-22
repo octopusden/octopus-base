@@ -940,6 +940,7 @@ jobs:
           STAGING_PROFILE_ID: ${{ inputs.staging-profile-id }}
           PUBLISH_LOG: ${{ runner.temp }}/publish.log
           RESUME_DEPLOYMENT_ID: ${{ inputs.resume-deployment-id }}
+          RELEASE_FLOW: gradle
 
       # After Central, which fails in far more ways: most failures then happen before anything is
       # written here, leaving nothing to clean up. A package version can be deleted; a Central one

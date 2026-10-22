@@ -497,6 +497,7 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
           BUILD_VERSION: ${{ needs.prepare-build-publish-release.outputs.build-version }}
           RESUME_DEPLOYMENT_ID: ${{ needs.prepare-build-publish-release.outputs.portal-deployment-id }}
+          RELEASE_FLOW: maven
 
   # Tagging and release creation are a separate job deliberately. They run after the
   # artifacts are published, and publishing is irreversible: Maven Central refuses a
