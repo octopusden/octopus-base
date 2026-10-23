@@ -184,8 +184,8 @@ check runs for the same commit under the same name. A branch without a pull requ
 analysed on demand through `workflow_dispatch`.
 
 The explicit branch list is also what keeps tags out. A bare `push:` also fires on tag pushes, and
-Sonar would then record the release tag as a branch of its own. The workflow no longer gives such a
-run a reference branch, but it still analyses it.
+Sonar would then record the release tag as a branch of its own. The workflow gives such a run no
+reference branch, but still analyses it.
 
 `concurrency` cancels a pull request's analysis once a newer push to it starts one, so only the
 latest commit is waited on. Pushes to `main` are never cancelled mid-run, so every analysis that
@@ -204,7 +204,7 @@ them.
 
 | What | Analysed when | New code is |
 |---|---|---|
-| `main` | every push | everything since the last release tag |
+| `main` | every push (a superseded pending run may be skipped) | everything since the last release tag |
 | feature branch | only via `workflow_dispatch` | its diff against `main` |
 | pull request | opened, updated, reopened | the pull request's own diff |
 
