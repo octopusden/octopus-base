@@ -70,120 +70,62 @@ STATUS_STATES="VALIDATED PUBLISHED" PUBLISH_CODES=204 REPO1_CODES="404" \
   run "stays resumable when Central never serves the artifact" 1 "RELEASE_PUBLISH_CLASS=resumable"
 
 echo "-- Portal lags repo1 while PUBLISHING -------------------------------------"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES=200 \
-  run "finishes when repo1 serves everything while Portal says PUBLISHING" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING" "Resumable|RELEASE_PUBLISH_CLASS=resumable"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES="200 404" \
-  run "still times out when repo1 serves only part of the artifacts" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_CODES=000 \
-  run "a repo1 transport error means not yet, not a failed job" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1"
-# Phase 3 refuses a deployment without Maven coordinates, so the repo1 shortcut never
-# runs on an empty list: the wait for PUBLISHED stays the only way out.
-STATUS_STATES="VALIDATED PUBLISHING" STATUS_NOPURLS=1 REPO1_CODES=200 \
-  run "phase 3 refuses an empty purl list, so the repo1 shortcut never runs" 1 "No Maven coordinates" "confirmed via repo1"
+# Central copies a version directory file by file, so the shortcut needs every required file.
+# Default stub deployment: one jar GAV and the Gradle plugin marker (pom).
+export STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204
+OK_RE="confirmed via repo1 while Portal still said PUBLISHING"
+NO_RE="confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
+TIMEOUT_RE="did not reach PUBLISHED"
+run "everything served: confirmed via repo1, whatever Portal says" 0 "$OK_RE" "Resumable|RELEASE_PUBLISH_CLASS=resumable"
+REPO1_MISSING_SUFFIX=.jar run "jar missing: times out" 1 "$TIMEOUT_RE" "$NO_RE"
+REPO1_MISSING_SUFFIX=-sources.jar run "sources missing: times out" 1 "$TIMEOUT_RE" "$NO_RE"
+REPO1_MISSING_SUFFIX=-javadoc.jar run "javadoc missing for packaging jar: times out" 1 "$TIMEOUT_RE" "$NO_RE"
+REPO1_MISSING_SUFFIX=.asc run "signatures are required: times out" 1 "$TIMEOUT_RE" "$NO_RE"
+REPO1_CODES=000 run "a repo1 transport error means not yet, not a failed job" 1 "$TIMEOUT_RE" "confirmed via repo1"
 
-# Central copies a GAV directory file by file: a served pom says nothing about the rest.
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
-  run "pom served but the jar is not: times out, no success" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 STATUS_CLASSIFIER=1 REPO1_MISSING_SUFFIX=-sources.jar \
-  run "sources classifier missing: times out, no success" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.pom.asc \
-  run "pom signature missing: times out, no success" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 STATUS_CLASSIFIER=1 \
-  run "every file of every purl served: confirmed via repo1" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING"
+echo "-- packaging is read from the pom ---------------------------------------"
+POM_PACKAGING=pom REPO1_MISSING_SUFFIX=.jar run "pom packaging needs only the pom and its signature" 0 "$OK_RE"
+POM_PACKAGING=none REPO1_MISSING_SUFFIX=.jar run "no <packaging> means jar" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_STYLE=comment REPO1_MISSING_SUFFIX=.jar run "a commented-out <packaging>pom</packaging> is ignored" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_STYLE=nested REPO1_MISSING_SUFFIX=.jar run "a <packaging> nested in plugin config is ignored" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_STYLE=truncated REPO1_MISSING_SUFFIX=.jar run "an unparsable pom counts as jar" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_CURL_FAIL=1 run "a pom GET cut off after a 200 is not trusted" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_STYLE=injection run "a packaging with a workflow command is not echoed and switches the shortcut off" 1 \
+  "$TIMEOUT_RE" "^::error title=x|confirmed via repo1"
+POM_PACKAGING=war run "packaging war: no shortcut, waits for PUBLISHED" 1 "packaging 'war'" "$NO_RE"
+for pk in maven-plugin bundle; do
+POM_PACKAGING=$pk REPO1_MISSING_SUFFIX=-javadoc.jar run "$pk needs no javadoc: confirmed via repo1" 0 "$OK_RE"
+done
+# Gradle writes this marker into the pom of a module that also has a .module file.
+POM_STYLE=gradle REPO1_MISSING_SUFFIX=.module run "Gradle marker in the pom: .module is awaited" 1 "$TIMEOUT_RE" "$NO_RE"
+REPO1_MISSING_SUFFIX=.module run "without the marker .module is not awaited" 0 "$OK_RE"
 
-# The shape Portal really sends: one unqualified purl per GAV. The expected files come from the
-# pom packaging read off repo1, not from purl qualifiers.
-STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  run "unqualified purls, jar packaging, everything served: confirmed via repo1" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING"
-STATUS_PLAIN=1 POM_PACKAGING=none STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  run "a pom without <packaging> counts as jar" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING"
-STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=-javadoc.jar \
-  run "jar packaging: javadoc missing times out" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_PLAIN=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=-sources.jar.asc \
-  run "jar packaging: sources signature missing times out" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_PLAIN=1 POM_PACKAGING=pom STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
-  run "pom packaging needs only the pom and its signature" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING"
-STATUS_PLAIN=1 POM_STYLE=comment STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
-  run "a commented-out <packaging>pom</packaging> is not the packaging" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_PLAIN=1 POM_STYLE=nested STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
-  run "a <packaging> nested in plugin config is not the packaging" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_PLAIN=1 POM_STYLE=comment STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  run "a namespaced pom with a comment still confirms when everything is served" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING"
-STATUS_PLAIN=1 POM_STYLE=truncated STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=.jar \
-  run "an unparsable pom is treated as jar (more files required)" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_PLAIN=1 POM_CURL_FAIL=1 STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  run "a pom GET cut off after a 200 is not trusted" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
 # The GAV set of octopus-jira-api-plugin 2.1.2 (octopus-base#250): a pom module, two jar modules
 # with javadoc, and an atlassian-plugin module that Central accepted without a javadoc jar.
-jira_env=(VERSION=2.1.2 STATUS_VERSION=2.1.2 STATUS_GROUP=org.octopusden.octopus.jira
-          STATUS_GAVS="octopus-jira-api octopus-jira-api-client octopus-jira-api-common octopus-jira-api-plugin"
-          POM_PACKAGING_BY="octopus-jira-api=pom octopus-jira-api-plugin=atlassian-plugin")
-export "${jira_env[@]}"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-javadoc.jar \
-  run "octopus-jira-api-plugin 2.1.2 (atlassian-plugin, no javadoc): confirmed via repo1" 0 \
-  "confirmed via repo1 while Portal still said PUBLISHING"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-sources.jar \
-  run "atlassian-plugin with sources missing times out" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2.jar.asc \
-  run "atlassian-plugin with the jar signature missing times out" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  REPO1_MISSING_SUFFIX=octopus-jira-api-client-2.1.2-javadoc.jar \
-  run "a plain jar module still requires its javadoc" 1 \
-  "did not reach PUBLISHED" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-POM_PACKAGING_BY="octopus-jira-api=pom octopus-jira-api-plugin=war" STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  run "war packaging: no shortcut, waits for PUBLISHED" 1 \
-  "packaging 'war'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-unset VERSION STATUS_VERSION STATUS_GROUP STATUS_GAVS POM_PACKAGING_BY
+export VERSION=2.1.2 STATUS_VERSION=2.1.2 STATUS_GROUP=org.octopusden.octopus.jira \
+  STATUS_GAVS="octopus-jira-api octopus-jira-api-client octopus-jira-api-common octopus-jira-api-plugin" \
+  POM_PACKAGING_BY="octopus-jira-api=pom octopus-jira-api-plugin=atlassian-plugin"
+REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-javadoc.jar \
+  run "octopus-jira-api-plugin 2.1.2 (atlassian-plugin, no javadoc): confirmed via repo1" 0 "$OK_RE"
+REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-sources.jar \
+  run "atlassian-plugin still requires its sources" 1 "$TIMEOUT_RE" "$NO_RE"
+unset VERSION STATUS_VERSION STATUS_GROUP STATUS_GAVS POM_PACKAGING_BY STATUS_STATES PUBLISH_CODES
 
-for pk in maven-plugin bundle; do
-  STATUS_PLAIN=1 POM_PACKAGING=$pk STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 REPO1_MISSING_SUFFIX=-javadoc.jar \
-    run "$pk packaging needs no javadoc: confirmed via repo1" 0 \
-    "confirmed via repo1 while Portal still said PUBLISHING"
-done
-STATUS_PLAIN=1 POM_PACKAGING=war STATUS_STATES="VALIDATED PUBLISHING" PUBLISH_CODES=204 \
-  run "other packaging: no shortcut, waits for PUBLISHED" 1 \
-  "packaging 'war'" "confirmed via repo1|RELEASE_PUBLISH_CLASS=published"
-POLL=0 STATUS_STATES="VALIDATED PUBLISHED" \
-  run "rejects a non-positive PUBLISH_POLL_SECONDS" 1 "PUBLISH_POLL_SECONDS must be a positive integer"
+echo "-- the shortcut stays tied to this deployment ----------------------------"
+STATUS_STATES="VALIDATED PUBLISHING FAILED" PUBLISH_CODES=204 \
+  run "repo1 complete but Portal now says FAILED: no success" 1 "RELEASE_PUBLISH_CLASS=deterministic" "RELEASE_PUBLISH_CLASS=published"
+POLL=00 STATUS_STATES="VALIDATED PUBLISHED" \
+  run "rejects a zero PUBLISH_POLL_SECONDS" 1 "PUBLISH_POLL_SECONDS must be a positive integer"
 
 echo "-- recovery hints per flow -------------------------------------------------"
 FLOW=maven RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
-  run "maven timeout says Re-run failed jobs, not resume-deployment-id" 1 \
-  "Re-run failed jobs" "resume-deployment-id"
+  run "maven: Re-run failed jobs, and do not restart from the external CI" 1 \
+  "Re-run failed jobs.*Do not restart the release from the external system" "resume-deployment-id"
 RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
-  run "default flow keeps the resume-deployment-id instruction" 1 \
-  "Re-dispatch with resume-deployment-id=dep-42" "Re-run failed jobs"
+  run "RELEASE_FLOW unset: resume-deployment-id, and do not restart from the external CI" 1 \
+  "Re-dispatch with resume-deployment-id=dep-42.*Do not restart the release from the external system" "Re-run failed jobs"
 FLOW=gradle RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
-  run "gradle timeout keeps the resume-deployment-id instruction" 1 \
-  "Re-dispatch with resume-deployment-id=dep-42" "Re-run failed jobs"
-FLOW=maven RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
-  run "maven timeout warns against restarting from the external CI" 1 \
-  "Do not restart the release from the external system"
-FLOW=gradle RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="PUBLISHING" REPO1_CODES=404 \
-  run "gradle timeout warns against restarting from the external CI" 1 \
-  "Do not restart the release from the external system"
+  run "RELEASE_FLOW=gradle: resume-deployment-id" 1 "Re-dispatch with resume-deployment-id=dep-42" "Re-run failed jobs"
 
 echo "-- resume, namespaces and staging bookkeeping ----------------------------"
 RESUME_ID=dep-42 NO_LOG=1 STATUS_STATES="VALIDATED PUBLISHED" PUBLISH_CODES=204 REPO1_CODES=200 \

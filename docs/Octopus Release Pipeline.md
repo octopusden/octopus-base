@@ -416,13 +416,19 @@ does not match `BUILD_VERSION`, if any group falls outside the staging profile's
 there are no Maven coordinates at all. It exists to stop a wrong `resume-deployment-id` from
 publishing someone else's work.
 
-**Phase 5** polls `/status` and, once per poll, asks repo1 for the files Central requires per GAV.
-Central copies a version directory file by file, so one served file proves nothing. Portal's purls
-carry no type or classifier (one entry per GAV), so the file set comes from the pom, read once per
-GAV from repo1 (the only GET; every other check is a HEAD). The packaging is the direct child
-`<packaging>` of the root `<project>`, read with an XML parser, so comments and `<packaging>` elements
-nested elsewhere do not count; a pom that does not parse, or a transfer that does not complete,
-never yields a smaller file set (unparsable means `jar`, an incomplete read means "not yet"):
+**Phase 4** never re-POSTs blindly. An inconclusive response (400/404/409/422) is reconciled
+against the deployment state after a settling window, because a late 400 usually means "no longer
+`VALIDATED`" — i.e. the publish already went through. Only a deployment still sitting in
+`VALIDATED` is treated as a genuine refusal.
+
+**Phase 5** polls `/status` and, once per poll, also asks repo1 for the files of the deployment.
+Portal can say `PUBLISHING` long after repo1 serves everything, and Central copies a version
+directory file by file, so one served file proves nothing. Portal's purls carry no qualifiers (one
+entry per GAV), so the files come from each GAV's pom, read once from repo1 (the only GET in
+phase 5; every other check is a HEAD). The packaging is the direct child `<packaging>` of the root
+`<project>`, read with an XML parser, so comments and `<packaging>` elements nested elsewhere do not
+count. A pom that does not parse counts as `jar` (more files required); a transfer that does not
+complete means "not yet". A packaging that is not a plain token counts as unknown.
 
 | Packaging | Files awaited, each also with its `.asc` |
 |---|---|
@@ -431,23 +437,18 @@ never yields a smaller file set (unparsable means `jar`, an incomplete read mean
 | `atlassian-plugin`, `bundle`, `maven-plugin` | `.pom`, `.jar`, `-sources.jar` (no javadoc: Central accepted `octopus-jira-api-plugin` 2.1.2 without one) |
 | anything else (`war`, `ear`, `aar`, unknown) | no known file set: the shortcut stays off for the deployment and the wait is for `PUBLISHED` |
 
-A purl that does carry `type`/`classifier` adds that file too.
+A pom that carries Gradle's `published-with-gradle-metadata` marker adds its `.module` file. The
+`.md5`/`.sha1` checksums, other classifier artifacts (for example `-tests.jar`, `-all.jar`) and the
+attached artifacts of pom-packaged GAVs are not awaited, and phase 6 does not check them either.
 
-The check runs before the deadline test and each HEAD may take up to 10 s, so on a slow repo1 the
-deadline can be overshot by up to the number of files times 10 s. Only when all of them answer 200 does the deployment count as published. The log lists the raw
-purls, each GAV's packaging and the awaited files, then says it was confirmed via repo1 while
-Portal still said `PUBLISHING`, and phase 6 and the rest continue as after `PUBLISHED`. One missing
-file, or a repo1 error, only means "not yet". The check also runs when `/status` itself is
-unreachable (5xx, 404, transport error), and the log shows the state as unknown. The Gradle
-`.module` file is not awaited; Gradle falls back to the pom. With one unqualified purl per GAV, extra
-classifier artifacts (for example `-tests.jar`, `-all.jar`) and attached artifacts of pom-packaged
-GAVs are not awaited either, and phase 6 does not check them. `PUBLISH_POLL_SECONDS` (default 20)
-sets the poll interval and must be a positive integer.
-
-**Phase 4** never re-POSTs blindly. An inconclusive response (400/404/409/422) is reconciled
-against the deployment state after a settling window, because a late 400 usually means "no longer
-`VALIDATED`" — i.e. the publish already went through. Only a deployment still sitting in
-`VALIDATED` is treated as a genuine refusal.
+When every file answers 200, `/status` is read once more: `FAILED` fails the run (deterministic),
+anything else counts the deployment as published. The log lists the purls, each GAV's packaging and
+the awaited files, and says it was confirmed via repo1 while Portal still said `PUBLISHING`; phase 6
+and the rest continue as after `PUBLISHED`. A missing file or a repo1 error only means "not yet".
+The shortcut also runs while `/status` is unreachable (5xx, 404, transport error; the state is
+logged as unknown). It runs before the deadline test and each HEAD may take up to 10 s, so the
+deadline can be overshot by up to the number of files times 10 s. `PUBLISH_POLL_SECONDS` (default
+20) is the poll interval and must be a positive integer.
 
 > **The deadlines can exceed the outer budget.** Sequentially they permit 6900 s ≈ 115 minutes
 > inside this script alone, against a TeamCity poller timeout that was 60 minutes when the

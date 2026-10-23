@@ -10,7 +10,9 @@ into a wedged one.
 
 `resumable` is the case that surprises people. It names a failure that *can* be finished — the
 artifacts are staged, the deployment exists — and it is still `retryable=false`, because
-finishing it means re-dispatching with `resume-deployment-id`, not re-running. An operator who
+finishing it means, in the Gradle flow, re-dispatching with `resume-deployment-id`, not re-running
+(the Maven flow's *Finish publication* job never uploads, so **Re-run failed jobs** on the same run
+is safe there). An operator who
 re-runs plainly gets `already exists` and a component whose record then has to be completed by
 `.github/scripts/recover-release.sh`, which is what happened to `octopus-sonar-automation` 2.0.15
 (#189).

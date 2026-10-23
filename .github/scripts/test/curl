@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Fake curl for portal-publish.sh tests. Canned responses driven by env:
 #   SEARCH_CODE, SEARCH_DID, STATUS_STATES (space-separated, consumed per call),
-#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, STATUS_NOPURLS=1, STATUS_CLASSIFIER=1, PUBLISH_CODES, REPO1_CODES,
-#   REPO1_MISSING_SUFFIX (404 for repo1 URLs ending so, 200 otherwise; overrides REPO1_CODES),
-#   STATUS_PLAIN=1 (purls without qualifiers, one per GAV: the shape Portal really sends),
-#   POM_PACKAGING (<packaging> in every pom served by a GET; "none" omits the element; the
-#   gradle plugin marker is always pom), POM_PACKAGING_BY="artifactId=packaging ..." (per GAV),
-#   STATUS_GAVS="artifactId ..." (unqualified purls for these artifacts under STATUS_GROUP), POM_CURL_FAIL=1, POM_STYLE=comment|nested|truncated (jar poms with a commented-out
-#   or a plugin-nested <packaging>pom</packaging>)
-# A GET of anything but a .pom on repo1 answers 000: a full download of a jar cannot finish
-# within the script curl timeout, so the script must use HEAD for those.
+#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, PUBLISH_CODES, REPO1_CODES,
+#   STATUS_GAVS="artifactId ..."  purls for these artifacts under STATUS_GROUP
+#                                 (default: octopus-quality-plugin plus the gradle plugin marker),
+#   REPO1_MISSING_SUFFIX          404 for repo1 URLs ending so, 200 otherwise (overrides REPO1_CODES),
+#   POM_PACKAGING                 <packaging> of every pom GET ("none" omits it; the marker is pom),
+#   POM_PACKAGING_BY="art=pkg .." per-artifact override,
+#   POM_STYLE=comment|nested|truncated|gradle|injection  jar poms a naive parse misreads,
+#   POM_CURL_FAIL=1               a pom GET answers 200 but curl exits 28.
+# Purls carry no qualifiers: the shape Portal sends. A GET of anything but a .pom on repo1
+# answers 000 (a jar download cannot finish within the script's curl timeout): HEAD is required.
 set -u
 out=/dev/null; url=""; method="GET"
 while [ $# -gt 0 ]; do
@@ -45,14 +46,10 @@ EOF
     ver="${STATUS_VERSION:-2.5.0}"; grp="${STATUS_GROUP:-org.octopusden.octopus}"
     err="${STATUS_ERRORS:-}"
     if [ -n "$err" ]; then errj=",\"errors\":{\"pom\":\"$err\"}"; else errj=""; fi
-    marker="\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver?type=pom\""
-    purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",$marker]"
-    [ "${STATUS_CLASSIFIER:-}" = "1" ] && purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar\",\"pkg:maven/$grp/octopus-quality-plugin@$ver?classifier=sources&type=jar\",$marker]"
-    [ "${STATUS_PLAIN:-}" = "1" ] && purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver\",\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver\"]"
+    purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver\",\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver\"]"
     if [ -n "${STATUS_GAVS:-}" ]; then
       purls=""; for a in $STATUS_GAVS; do purls="$purls${purls:+,}\"pkg:maven/$grp/$a@$ver\""; done; purls="[$purls]"
     fi
-    [ "${STATUS_NOPURLS:-}" = "1" ] && purls="[]"
     cat > "$out" <<EOF
 {"deploymentId":"dep-1","deploymentState":"$st","purls":$purls$errj}
 EOF
@@ -77,6 +74,8 @@ EOF
       printf "<project><modelVersion>4.0.0</modelVersion>%s</project>\n" "$pe" > "$out"
       # POM_STYLE: poms a line-based regex misreads (packaging is jar in both).
       case "${POM_STYLE:-}:$pk" in
+        gradle:jar) printf '<?xml version="1.0"?>\n<!-- This module was also published with a richer model, Gradle metadata,  -->\n<!-- which should be used instead. Do not delete the following line which -->\n<!-- is to indicate to Gradle or any Gradle module metadata file consumer -->\n<!-- that they should prefer consuming it instead. -->\n<!-- do_not_remove: published-with-gradle-metadata -->\n<project><packaging>jar</packaging></project>\n' > "$out" ;;
+        injection:jar) printf '<project><packaging>jar\n::error title=x::y</packaging></project>\n' > "$out" ;;
         comment:jar) printf '<project xmlns="http://maven.apache.org/POM/4.0.0">\n  <!--\n  <packaging>pom</packaging>\n  -->\n  <packaging>jar</packaging>\n</project>\n' > "$out" ;;
         truncated:jar) printf "<project><packaging>pom</packag" > "$out" ;;
         nested:jar) printf '<project><packaging>jar</packaging><build><plugins><plugin><configuration><packaging>pom</packaging></configuration></plugin></plugins></build></project>\n' > "$out" ;;
