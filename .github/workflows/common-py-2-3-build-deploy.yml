@@ -9,8 +9,9 @@ on:
       PYPI_API_TOKEN:
         required: true
 jobs:
+  # ubuntu-22.04, not 24.04: the setup-python manifest has no Python 2.7, and 3.7 only up to 22.04.
   build-deploy-for-python2:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     environment: ${{ inputs.process_env }}
     permissions:
       id-token: write
@@ -42,7 +43,7 @@ jobs:
           verbose: false
           repository-url: ${{ vars.PYPI_REPO_URL }}
   build-deploy-for-python3:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     environment: ${{ inputs.process_env }}
     permissions:
       id-token: write

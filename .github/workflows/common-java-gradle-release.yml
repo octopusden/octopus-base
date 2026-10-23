@@ -126,7 +126,7 @@ concurrency:
 
 jobs:
   prepare-build-publish-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: Prod
     # The version is an input only for the hybrid flow; the public flow computes it
     # here. Publishing it as an output is what lets registration receive the version
@@ -1096,7 +1096,7 @@ jobs:
     name: Tag and release
     if: ${{ !inputs.dry-run }}
     needs: prepare-build-publish-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The tag is created at the commit the build job actually built. The replaced
       # action, marvinpinto/action-automatic-releases, had no target-commit input: it

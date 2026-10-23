@@ -281,7 +281,7 @@ Shared by both workflows:
 |---|---|---|
 | `java-version` | *required* | The JDK the project builds with |
 | `java-distribution` | `temurin` | Passed to `actions/setup-java` |
-| `runs-on` | `ubuntu-latest` (Gradle), `ubuntu-24.04` (Maven) | Runner label |
+| `runs-on` | `ubuntu-24.04` | Runner label |
 | `timeout-minutes` | `20` | Job timeout |
 | `sonar-host-url` | `https://sonarcloud.io` | Sonar server |
 | `sonar-organization` | the GitHub owner | Sonar organisation key |

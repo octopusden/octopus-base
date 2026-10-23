@@ -36,7 +36,7 @@ on:
 jobs:
   build-push-docker-image:
     name: Build and push docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v3

@@ -620,7 +620,7 @@ the caller adds a second approval gate.
 Central and checked against its sha512 — the runner image's own Maven is not used, because the
 image changes it under the same label. `common-java-maven-build.yml` and
 `common-java-maven-sonar.yml` take the same input. Raise it in the caller to move one repository
-to a newer Maven. The jobs that run Maven run on `ubuntu-24.04`, not `ubuntu-latest`.
+to a newer Maven. Every job in these workflows runs on `ubuntu-24.04` by default, not the moving `ubuntu-latest`.
 
 **The GPG secrets are optional** when a repository publishes only to GitHub Packages. An unset
 GitHub secret still arrives as an empty `env:` entry, and consumers commonly decide

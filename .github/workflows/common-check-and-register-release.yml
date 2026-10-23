@@ -16,7 +16,7 @@ on:
 
 jobs:
   check-http-artifact:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: Prod
     env:
       ATTEMPTS: 45
