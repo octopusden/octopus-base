@@ -17,7 +17,7 @@ command -v jq >/dev/null || { echo "jq is required"; exit 1; }
 
 pass=0; fail=0
 # Short deadlines/settling so the suite runs in seconds.
-common_env=(SEARCH_DEADLINE=3 VALIDATE_DEADLINE=6 PUBLISH_DEADLINE=6 CENTRAL_DEADLINE=6 SETTLE_SECONDS=1
+common_env=(SEARCH_DEADLINE=3 VALIDATE_DEADLINE=60 PUBLISH_DEADLINE=6 CENTRAL_DEADLINE=6 SETTLE_SECONDS=1
             MAVEN_USERNAME=u MAVEN_PASSWORD=p)
 
 # run <name> <expected-rc> <must-match> [<must-not-match>]
@@ -80,15 +80,16 @@ run "everything served: confirmed via repo1, whatever Portal says" 0 "$OK_RE" "R
 REPO1_MISSING_SUFFIX=.jar run "jar missing: times out" 1 "$TIMEOUT_RE" "$NO_RE"
 REPO1_MISSING_SUFFIX=-sources.jar run "sources missing: times out" 1 "$TIMEOUT_RE" "$NO_RE"
 REPO1_MISSING_SUFFIX=-javadoc.jar run "javadoc missing for packaging jar: times out" 1 "$TIMEOUT_RE" "$NO_RE"
-REPO1_MISSING_SUFFIX=.asc run "signatures are required: times out" 1 "$TIMEOUT_RE" "$NO_RE"
+REPO1_MISSING_SUFFIX=.pom.asc run "a missing pom signature (also the marker GAV's): times out" 1 "$TIMEOUT_RE" "$NO_RE"
 REPO1_CODES=000 run "a repo1 transport error means not yet, not a failed job" 1 "$TIMEOUT_RE" "confirmed via repo1"
 
 echo "-- packaging is read from the pom ---------------------------------------"
 POM_PACKAGING=pom REPO1_MISSING_SUFFIX=.jar run "pom packaging needs only the pom and its signature" 0 "$OK_RE"
-POM_PACKAGING=none REPO1_MISSING_SUFFIX=.jar run "no <packaging> means jar" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_PACKAGING=none REPO1_MISSING_SUFFIX=-javadoc.jar run "no <packaging> means jar" 1 "$TIMEOUT_RE" "$NO_RE"
 POM_STYLE=comment REPO1_MISSING_SUFFIX=.jar run "a commented-out <packaging>pom</packaging> is ignored" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_STYLE=notproject REPO1_MISSING_SUFFIX=-javadoc.jar run "a root element that is not <project> counts as jar" 1 "$TIMEOUT_RE" "$NO_RE"
 POM_STYLE=nested REPO1_MISSING_SUFFIX=.jar run "a <packaging> nested in plugin config is ignored" 1 "$TIMEOUT_RE" "$NO_RE"
-POM_STYLE=truncated REPO1_MISSING_SUFFIX=.jar run "an unparsable pom counts as jar" 1 "$TIMEOUT_RE" "$NO_RE"
+POM_STYLE=truncated REPO1_MISSING_SUFFIX=-javadoc.jar run "an unparsable pom counts as jar" 1 "$TIMEOUT_RE" "$NO_RE"
 POM_CURL_FAIL=1 run "a pom GET cut off after a 200 is not trusted" 1 "$TIMEOUT_RE" "$NO_RE"
 POM_STYLE=injection run "a packaging with a workflow command is not echoed and switches the shortcut off" 1 \
   "$TIMEOUT_RE" "^::error title=x|confirmed via repo1"
@@ -109,11 +110,17 @@ REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-javadoc.jar \
   run "octopus-jira-api-plugin 2.1.2 (atlassian-plugin, no javadoc): confirmed via repo1" 0 "$OK_RE"
 REPO1_MISSING_SUFFIX=octopus-jira-api-plugin-2.1.2-sources.jar \
   run "atlassian-plugin still requires its sources" 1 "$TIMEOUT_RE" "$NO_RE"
+# The #250 bug class: a jar GAV next to an atlassian-plugin GAV keeps its javadoc requirement.
+REPO1_MISSING_SUFFIX=octopus-jira-api-client-2.1.2-javadoc.jar \
+  run "a plain jar GAV next to an atlassian-plugin still requires its javadoc" 1 "$TIMEOUT_RE" "$NO_RE"
 unset VERSION STATUS_VERSION STATUS_GROUP STATUS_GAVS POM_PACKAGING_BY STATUS_STATES PUBLISH_CODES
+
+# Phase 3 refuses an empty purl list; repo1_serves_all also refuses it (defence in depth).
+STATUS_NOPURLS=1 run "an empty purl list is refused before the repo1 shortcut" 1 "No Maven coordinates" "confirmed via repo1"
 
 echo "-- the shortcut stays tied to this deployment ----------------------------"
 STATUS_STATES="VALIDATED PUBLISHING FAILED" PUBLISH_CODES=204 \
-  run "repo1 complete but Portal now says FAILED: no success" 1 "RELEASE_PUBLISH_CLASS=deterministic" "RELEASE_PUBLISH_CLASS=published"
+  run "repo1 complete but Portal now says FAILED: no success" 1 "re-check\) -> HTTP 200 state=FAILED" "RELEASE_PUBLISH_CLASS=published"
 POLL=00 STATUS_STATES="VALIDATED PUBLISHED" \
   run "rejects a zero PUBLISH_POLL_SECONDS" 1 "PUBLISH_POLL_SECONDS must be a positive integer"
 

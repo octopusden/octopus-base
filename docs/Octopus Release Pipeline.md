@@ -442,7 +442,8 @@ A pom that carries Gradle's `published-with-gradle-metadata` marker adds its `.m
 attached artifacts of pom-packaged GAVs are not awaited, and phase 6 does not check them either.
 
 When every file answers 200, `/status` is read once more: `FAILED` fails the run (deterministic),
-anything else counts the deployment as published. The log lists the purls, each GAV's packaging and
+anything else counts the deployment as published, a transport error or a 401/403 on that read
+included (repo1 has already confirmed). The log lists the purls, each GAV's packaging and
 the awaited files, and says it was confirmed via repo1 while Portal still said `PUBLISHING`; phase 6
 and the rest continue as after `PUBLISHED`. A missing file or a repo1 error only means "not yet".
 The shortcut also runs while `/status` is unreachable (5xx, 404, transport error; the state is

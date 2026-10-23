@@ -341,9 +341,9 @@ PKG_POM="$TMP/repo1-pom"
 REPO1_CHECKED=0
 REPO1_LISTED=""
 # The direct child <packaging> of the root <project> (namespace-aware, comments ignored), jar when
-# absent or empty. Exits non-zero when the pom does not parse.
+# absent, empty or when the root is not <project>. Exits non-zero when the pom does not parse.
 pom_packaging() { # pom file -> packaging
-  python3 -I -c 'import sys, xml.etree.ElementTree as E; r = E.parse(sys.argv[1]).getroot(); print(next(((c.text or "").strip() for c in r if c.tag.rpartition("}")[2] == "packaging"), "") or "jar")' "$1"
+  python3 -I -c 'import sys, xml.etree.ElementTree as E; r = E.parse(sys.argv[1]).getroot(); print((next(((c.text or "").strip() for c in r if c.tag.rpartition("}")[2] == "packaging"), "") if r.tag.rpartition("}")[2] == "project" else "") or "jar")' "$1"
 }
 repo1_head() { # path under repo1 -> 0 when it answers 200
   local code
@@ -353,6 +353,8 @@ repo1_head() { # path under repo1 -> 0 when it answers 200
 repo1_serves_all() { # 0 only when every expected file answers 200; stops at the first miss
   local c grp rest art ver base code pkg f
   local -a files=() all=()
+  # Defence in depth: phase 3 already refuses an empty list, and an empty one must never pass.
+  [ "${#MAVEN_COORDS[@]}" -gt 0 ] || return 1
   for c in "${MAVEN_COORDS[@]}"; do
     grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
     base="${grp//.//}/$art/$ver/$art-$ver"
@@ -414,8 +416,10 @@ while :; do
   if repo1_serves_all; then
     lag_state="${state:-unknown}"
     # Tie the shortcut to this deployment: a deployment that has failed meanwhile is not released.
-    http POST "$PORTAL/status?id=$DID" "$STATUS_JSON" >/dev/null
-    if [ "$(poll_state)" = "FAILED" ]; then
+    code=$(http POST "$PORTAL/status?id=$DID" "$STATUS_JSON")
+    state=$(poll_state)
+    echo "POST /status?id=$DID (re-check) -> HTTP $code state=${state:-?}"
+    if [ "$state" = "FAILED" ]; then
       echo "::group::Deployment errors"; dump_errors; echo "::endgroup::"
       fail_deterministic "Deployment $DID is FAILED although repo1 serves its files."
     fi
