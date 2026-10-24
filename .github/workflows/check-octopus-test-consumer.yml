@@ -141,7 +141,6 @@ jobs:
       - name: Test reusable workflow lint on consumer fixtures
         run: python3 .github/scripts/test/workflow-lint-scenarios.py
       - name: Runner label scenarios
-        shell: bash
         run: bash .github/scripts/test/runner-label-scenarios.sh
       # The meta-runner carries its own copy of this script - TeamCity cannot source one
       # from a repository - so the runner's last cases assert the copy has not drifted and

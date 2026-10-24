@@ -9,7 +9,9 @@ on:
       PYPI_API_TOKEN:
         required: true
 jobs:
-  # ubuntu-22.04, not 24.04: the setup-python manifest has no Python 2.7, and 3.7 only up to 22.04.
+  # ubuntu-22.04, not 24.04, as a stopgap: setup-python's manifest has Python 3.7 builds only up to
+  # Ubuntu 22.04 and no Python 2.x at all. So only the 3.7 job stays working; the python2 job cannot
+  # install 2.7 on any image. Tracked in #252.
   build-deploy-for-python2:
     runs-on: ubuntu-22.04
     environment: ${{ inputs.process_env }}
