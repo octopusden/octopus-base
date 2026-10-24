@@ -6,7 +6,8 @@
 # deployment `closed`, so nothing reaches Maven Central). This script replaces it:
 # after Gradle has uploaded + closed the staging repository, it maps that repo to
 # its Portal deployment, waits for VALIDATED, publishes explicitly, waits for
-# PUBLISHED, and finally verifies the artifacts are resolvable on Maven Central.
+# PUBLISHED (or for repo1 to serve every file of the deployment), and finally verifies the
+# artifacts are resolvable on Maven Central.
 #
 # Inputs (env):
 #   MAVEN_USERNAME, MAVEN_PASSWORD  Portal/OSSRH token pair (required)
@@ -17,6 +18,8 @@
 #   PUBLISH_LOG                     Gradle publish log, to read the compat repo key
 #   RESUME_DEPLOYMENT_ID            optional: skip the search, use this deployment
 #   REQUIRE_COORDS                  optional: "group:artifact ..." that must be present
+#   RELEASE_FLOW                    optional: "maven" or "gradle" (default); picks the
+#                                   recovery instruction in a resumable failure
 #
 # Emits classification markers for the caller / TeamCity to scrape:
 #   RELEASE_PUBLISH_CLASS=published                  (success)
@@ -34,6 +37,8 @@ STAGING_PROFILE_ID="${STAGING_PROFILE_ID:-}"
 PUBLISH_LOG="${PUBLISH_LOG:-}"
 RESUME_DEPLOYMENT_ID="${RESUME_DEPLOYMENT_ID:-}"
 REQUIRE_COORDS="${REQUIRE_COORDS:-}"
+RELEASE_FLOW="${RELEASE_FLOW:-gradle}"
+PUBLISH_POLL_SECONDS="${PUBLISH_POLL_SECONDS:-20}"
 TMP="${RUNNER_TEMP:-/tmp}"
 
 HOST="https://ossrh-staging-api.central.sonatype.com"
@@ -94,12 +99,24 @@ fail_resumable() {
   classify resumable false
   if [ -n "$DID" ]; then
     echo "RELEASE_PUBLISH_RESUME_DEPLOYMENT_ID=$DID"
-    echo "::error title=Resumable publish failure::$* Re-dispatch with resume-deployment-id=${DID} — a plain re-run would upload ${BUILD_VERSION} a second time."
+    local how
+    if [ "$RELEASE_FLOW" = "maven" ]; then
+      how="Use \"Re-run failed jobs\" on this run: the Finish publication job does not upload, it re-checks deployment ${DID}."
+    else
+      how="Re-dispatch with resume-deployment-id=${DID} — a plain re-run would upload ${BUILD_VERSION} a second time."
+    fi
+    echo "::error title=Resumable publish failure::$* ${how} Do not restart the release from the external system that dispatched it: a new run uploads ${BUILD_VERSION} again and Central rejects it."
   else
     echo "::error title=Resumable publish failure::$* The artifacts are staged but no Portal deployment id is known yet. Do NOT plainly re-run (that uploads ${BUILD_VERSION} again): look it up with the compat key above via GET ${HOST}/manual/search/repositories?ip=any (Bearer auth) and re-dispatch with resume-deployment-id, or drop that staging repository first."
   fi
   exit 1
 }
+
+case "$PUBLISH_POLL_SECONDS" in
+  ''|*[!0-9]*) fail_deterministic "PUBLISH_POLL_SECONDS must be a positive integer (got '${PUBLISH_POLL_SECONDS}')." ;;
+esac
+[ "$((10#$PUBLISH_POLL_SECONDS))" -gt 0 ] \
+  || fail_deterministic "PUBLISH_POLL_SECONDS must be a positive integer (got '${PUBLISH_POLL_SECONDS}')."
 
 # http METHOD URL OUTFILE -> prints HTTP status (000 on transport error).
 # Response headers land in <OUTFILE>.headers (needed for Retry-After).
@@ -204,10 +221,10 @@ done
 # 3. Guard: the deployment must be the one we just built
 #    (protects against a wrong resume-deployment-id publishing someone else's work)
 # ---------------------------------------------------------------------------
-mapfile -t PURLS < <(jq -r '.purls[]? // empty' "$STATUS_JSON" 2>/dev/null | sed 's/?.*$//')
+mapfile -t RAW_PURLS < <(jq -r '.purls[]? // empty' "$STATUS_JSON" 2>/dev/null)
 declare -a MAVEN_COORDS=()
-for p in "${PURLS[@]:-}"; do
-  [ -n "$p" ] || continue
+for p in "${RAW_PURLS[@]:-}"; do
+  p="${p%%[?#]*}"
   case "$p" in pkg:maven/*) : ;; *) continue ;; esac
   rest="${p#pkg:maven/}"
   ga="${rest%@*}"; ver="${rest##*@}"
@@ -228,6 +245,8 @@ fi
 
 echo "::group::Deployment coordinates"
 printf '  %s\n' "${MAVEN_COORDS[@]}"
+echo "  purls as reported by Portal:"
+printf '    %s\n' "${RAW_PURLS[@]}"
 echo "::endgroup::"
 
 # The publication guard makes the same version assertion BEFORE the upload, and this one is
@@ -314,6 +333,67 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Wait for PUBLISHED
 # ---------------------------------------------------------------------------
+# Central copies a version directory file by file, so one served file proves nothing. Portal's
+# purls carry no qualifiers, so the files awaited per GAV come from its pom (the only GET here;
+# every other check is a HEAD, as a jar cannot be downloaded inside the curl timeout).
+declare -A GAV_PKG=() GAV_MODULE=() GAV_WARNED=()
+PKG_POM="$TMP/repo1-pom"
+REPO1_CHECKED=0
+REPO1_LISTED=""
+# The direct child <packaging> of the root <project> (namespace-aware, comments ignored), jar when
+# absent, empty or when the root is not <project>. Exits non-zero when the pom does not parse.
+pom_packaging() { # pom file -> packaging
+  python3 -I -c 'import sys, xml.etree.ElementTree as E; r = E.parse(sys.argv[1]).getroot(); print((next(((c.text or "").strip() for c in r if c.tag.rpartition("}")[2] == "packaging"), "") if r.tag.rpartition("}")[2] == "project" else "") or "jar")' "$1"
+}
+repo1_head() { # path under repo1 -> 0 when it answers 200
+  local code
+  code=$(curl -sS -I --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' "$REPO1/$1" 2>/dev/null)
+  [ "$code" = "200" ]
+}
+repo1_serves_all() { # 0 only when every expected file answers 200; stops at the first miss
+  local c grp rest art ver base code pkg f
+  local -a files=() all=()
+  # Defence in depth: phase 3 already refuses an empty list, and an empty one must never pass.
+  [ "${#MAVEN_COORDS[@]}" -gt 0 ] || return 1
+  for c in "${MAVEN_COORDS[@]}"; do
+    grp="${c%%:*}"; rest="${c#*:}"; art="${rest%%:*}"; ver="${rest##*:}"
+    base="${grp//.//}/$art/$ver/$art-$ver"
+    if [ -z "${GAV_PKG[$c]:-}" ]; then
+      # A cut-off transfer can leave a truncated body with 200: require curl's exit 0 as well.
+      code=$(curl -sS --connect-timeout 5 --max-time 10 -o "$PKG_POM" -w '%{http_code}' "$REPO1/$base.pom" 2>/dev/null) || return 1
+      [ "$code" = "200" ] || return 1
+      pkg=$(pom_packaging "$PKG_POM" 2>/dev/null) || { pkg=jar; echo "  $c: pom not parsable - assuming jar"; }
+      # The text comes from repo1 and reaches the log: only plain tokens are echoed.
+      case "$pkg" in *[!A-Za-z0-9._-]*) pkg=unknown ;; esac
+      GAV_PKG[$c]="$pkg"
+      # Gradle writes this marker into the pom of a module that also publishes a .module file.
+      grep -q published-with-gradle-metadata "$PKG_POM" && GAV_MODULE[$c]=1
+      echo "  $c: packaging '$pkg'${GAV_MODULE[$c]:+, Gradle module metadata}"
+    fi
+    case "${GAV_PKG[$c]}" in
+      pom) files+=("$base.pom") ;;
+      jar) files+=("$base.pom" "$base.jar" "$base-sources.jar" "$base-javadoc.jar") ;;
+      # Packagings whose main artifact is the .jar; Central accepted octopus-jira-api-plugin 2.1.2
+      # (atlassian-plugin) without a javadoc jar. Add one only with a confirmed .jar main artifact:
+      # org.apache.felix.scr 2.2.6 (bundle), maven-compiler-plugin 3.13.0 (maven-plugin) on repo1.
+      atlassian-plugin|bundle|maven-plugin) files+=("$base.pom" "$base.jar" "$base-sources.jar") ;;
+      *)
+        [ -n "${GAV_WARNED[$c]:-}" ] || echo "  $c: no known file set for packaging '${GAV_PKG[$c]}' - waiting for PUBLISHED"
+        GAV_WARNED[$c]=1
+        return 1
+        ;;
+    esac
+    [ -z "${GAV_MODULE[$c]:-}" ] || files+=("$base.module")
+  done
+  for f in "${files[@]}"; do all+=("$f" "$f.asc"); done
+  mapfile -t all < <(printf '%s\n' "${all[@]}" | sort -u)
+  if [ -z "$REPO1_LISTED" ]; then
+    REPO1_LISTED=1
+    echo "::group::Files awaited on repo1 (${#all[@]})"; printf '  %s\n' "${all[@]}"; echo "::endgroup::"
+  fi
+  for f in "${all[@]}"; do repo1_head "$f" || return 1; done
+  REPO1_CHECKED=${#all[@]}
+}
 deadline=$(( $(now) + PUBLISH_DEADLINE ))
 while :; do
   code=$(http POST "$PORTAL/status?id=$DID" "$STATUS_JSON")
@@ -331,10 +411,25 @@ while :; do
       ;;
     *) : ;;
   esac
+  # Portal can say PUBLISHING long after repo1 serves everything (octopus-base#250). Runs while
+  # /status is unreachable too (state unknown). A repo1 error or a missing file means "not yet".
+  if repo1_serves_all; then
+    lag_state="${state:-unknown}"
+    # Tie the shortcut to this deployment: a deployment that has failed meanwhile is not released.
+    code=$(http POST "$PORTAL/status?id=$DID" "$STATUS_JSON")
+    state=$(poll_state)
+    echo "POST /status?id=$DID (re-check) -> HTTP $code state=${state:-?}"
+    if [ "$state" = "FAILED" ]; then
+      echo "::group::Deployment errors"; dump_errors; echo "::endgroup::"
+      fail_deterministic "Deployment $DID is FAILED although repo1 serves its files."
+    fi
+    echo "Deployment $DID is confirmed via repo1 while Portal still said $lag_state: all ${REPO1_CHECKED} expected file(s) are served there."
+    break
+  fi
   if [ "$(now)" -ge "$deadline" ]; then
     fail_resumable "Deployment $DID did not reach PUBLISHED within ${PUBLISH_DEADLINE}s (last state=${state:-unknown})."
   fi
-  sleep 20
+  sleep "$PUBLISH_POLL_SECONDS"
 done
 
 # ---------------------------------------------------------------------------

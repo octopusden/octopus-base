@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
 # Fake curl for portal-publish.sh tests. Canned responses driven by env:
 #   SEARCH_CODE, SEARCH_DID, STATUS_STATES (space-separated, consumed per call),
-#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, PUBLISH_CODES, REPO1_CODES
+#   STATUS_VERSION, STATUS_GROUP, STATUS_ERRORS, PUBLISH_CODES, REPO1_CODES,
+#   STATUS_NOPURLS=1 (empty purls),
+#   STATUS_GAVS="artifactId ..."  purls for these artifacts under STATUS_GROUP
+#                                 (default: octopus-quality-plugin plus the gradle plugin marker),
+#   REPO1_MISSING_SUFFIX          404 for repo1 URLs ending so, 200 otherwise (overrides REPO1_CODES),
+#   POM_PACKAGING                 <packaging> of every pom GET ("none" omits it; the marker is pom),
+#   POM_PACKAGING_BY="art=pkg .." per-artifact override,
+#   POM_STYLE=comment|nested|truncated|gradle|injection|notproject  jar poms a naive parse misreads,
+#   POM_CURL_FAIL=1               a pom GET answers 200 but curl exits 28.
+# Purls carry no qualifiers: the shape Portal sends. A GET of anything but a .pom on repo1
+# answers 000 (a jar download cannot finish within the script's curl timeout): HEAD is required.
 set -u
 out=/dev/null; url=""; method="GET"
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
     -X) method="$2"; shift 2 ;;
+    -I) method="HEAD"; shift ;;
     -w|-H|--connect-timeout|--max-time) shift 2 ;;
     -sS|-s|-S) shift ;;
     -*) shift ;;
@@ -36,8 +47,13 @@ EOF
     ver="${STATUS_VERSION:-2.5.0}"; grp="${STATUS_GROUP:-org.octopusden.octopus}"
     err="${STATUS_ERRORS:-}"
     if [ -n "$err" ]; then errj=",\"errors\":{\"pom\":\"$err\"}"; else errj=""; fi
+    purls="[\"pkg:maven/$grp/octopus-quality-plugin@$ver\",\"pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver\"]"
+    if [ -n "${STATUS_GAVS:-}" ]; then
+      purls=""; for a in $STATUS_GAVS; do purls="$purls${purls:+,}\"pkg:maven/$grp/$a@$ver\""; done; purls="[$purls]"
+    fi
+    [ "${STATUS_NOPURLS:-}" = "1" ] && purls="[]"
     cat > "$out" <<EOF
-{"deploymentId":"dep-1","deploymentState":"$st","purls":["pkg:maven/$grp/octopus-quality-plugin@$ver?type=jar","pkg:maven/org.octopusden.octopus-quality/org.octopusden.octopus-quality.gradle.plugin@$ver"]$errj}
+{"deploymentId":"dep-1","deploymentState":"$st","purls":$purls$errj}
 EOF
     echo 200 ;;
   *publisher/deployment/*)
@@ -45,6 +61,31 @@ EOF
     next publish_i "${PUBLISH_CODES:-204}" 204 ;;
   *repo1.maven.org*)
     echo "" > "$out"
-    next repo1_i "${REPO1_CODES:-200}" 200 ;;
+    if [ "$method" = "GET" ]; then case "$url" in *.pom) : ;; *) echo 000; exit 0 ;; esac; fi
+    if [ -n "${REPO1_MISSING_SUFFIX:-}" ]; then
+      case "$url" in *"$REPO1_MISSING_SUFFIX") code=404 ;; *) code=200 ;; esac
+    else
+      code="$(next repo1_i "${REPO1_CODES:-200}" 200)"
+    fi
+    if [ "$method" = "GET" ] && [ "$code" = "200" ]; then
+      pk="${POM_PACKAGING:-jar}"
+      case "$url" in *gradle.plugin-*) pk=pom ;; esac
+      d="${url%/*}"; d="${d%/*}"; d="${d##*/}"   # artifactId of the pom being read
+      for kv in ${POM_PACKAGING_BY:-}; do [ "${kv%%=*}" = "$d" ] && pk="${kv#*=}"; done
+      if [ "$pk" = "none" ]; then pe=""; else pe="<packaging>$pk</packaging>"; fi
+      printf '<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>%s</project>\n' "$pe" > "$out"
+      # POM_STYLE: poms a line-based regex misreads (packaging is jar in both).
+      case "${POM_STYLE:-}:$pk" in
+        gradle:jar) printf '<?xml version="1.0"?>\n<!-- This module was also published with a richer model, Gradle metadata,  -->\n<!-- which should be used instead. Do not delete the following line which -->\n<!-- is to indicate to Gradle or any Gradle module metadata file consumer -->\n<!-- that they should prefer consuming it instead. -->\n<!-- do_not_remove: published-with-gradle-metadata -->\n<project><packaging>jar</packaging></project>\n' > "$out" ;;
+        notproject:jar) printf '<other><packaging>pom</packaging></other>\n' > "$out" ;;
+        injection:jar) printf '<project><packaging>jar\n::error title=x::y</packaging></project>\n' > "$out" ;;
+        comment:jar) printf '<project xmlns="http://maven.apache.org/POM/4.0.0">\n  <!--\n  <packaging>pom</packaging>\n  -->\n  <packaging>jar</packaging>\n</project>\n' > "$out" ;;
+        truncated:jar) printf "<project><packaging>pom</packag" > "$out" ;;
+        nested:jar) printf '<project><packaging>jar</packaging><build><plugins><plugin><configuration><packaging>pom</packaging></configuration></plugin></plugins></build></project>\n' > "$out" ;;
+      esac
+    fi
+    echo "$code"
+    # POM_CURL_FAIL=1: the transfer is cut off after the status line (curl exits 28).
+    if [ "$method" = "GET" ] && [ "${POM_CURL_FAIL:-}" = "1" ]; then exit 28; fi ;;
   *) echo 000 ;;
 esac

@@ -221,10 +221,11 @@ instead, or see the token options in
 
 ## Maven Central publishing
 
-> This section describes the **Gradle** release workflow. The Maven one publishes through the
-> OSSRH path and has none of `publish-to-nexus`, the Central preflight, the publication guard or
-> `resume-deployment-id`;
-> see [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for the differences.
+> This section describes the **Gradle** release workflow. The Maven one uploads with `mvn deploy`
+> and finishes through the same Portal script, but has none of `publish-to-nexus`, the Central
+> preflight, the publication guard or `resume-deployment-id`: after the upload, **Re-run failed
+> jobs** on the same run is its recovery. See
+> [Octopus Release Pipeline](Octopus%20Release%20Pipeline.md) for the differences.
 
 Publish to Central only what other projects consume as a **Maven dependency**. Deployables
 and internal tooling do not belong there:
