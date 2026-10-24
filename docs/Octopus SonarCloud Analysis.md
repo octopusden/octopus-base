@@ -46,11 +46,19 @@ and you are done:
 name: Sonar
 
 on:
+  # main only: a PR branch is already analysed through pull_request, and a second analysis of the
+  # same SHA posts a second check run under the required context.
   push:
-    branches: [ '**' ]
+    branches: [ main ]
   pull_request:
     types: [ opened, synchronize, reopened ]
   workflow_dispatch:
+
+# A newer push to a PR supersedes its analysis. A running main analysis is never cancelled; a
+# superseded pending one may be dropped, and the newest main SHA is always analysed.
+concurrency:
+  group: sonar-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sonar:
@@ -147,11 +155,19 @@ Then the caller:
 name: Sonar
 
 on:
+  # main only: a PR branch is already analysed through pull_request, and a second analysis of the
+  # same SHA posts a second check run under the required context.
   push:
-    branches: [ '**' ]
+    branches: [ main ]
   pull_request:
     types: [ opened, synchronize, reopened ]
   workflow_dispatch:
+
+# A newer push to a PR supersedes its analysis. A running main analysis is never cancelled; a
+# superseded pending one may be dropped, and the newest main SHA is always analysed.
+concurrency:
+  group: sonar-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   sonar:
@@ -161,9 +177,19 @@ jobs:
     secrets: inherit
 ```
 
-`branches: [ '**' ]` is what keeps tags out. A bare `push:` also fires on tag pushes, and Sonar
-would then record the release tag as a branch of its own. The workflow no longer gives such a run
-a reference branch, but it still analyses it.
+`branches: [ main ]` names the repository's default branch; use its real name if it is not `main`.
+Pushes to any other branch are left to `pull_request`: a branch with an open pull request would
+otherwise be analysed twice per push, once as a branch and once as the pull request, and post two
+check runs for the same commit under the same name. A branch without a pull request can still be
+analysed on demand through `workflow_dispatch`.
+
+The explicit branch list is also what keeps tags out. A bare `push:` also fires on tag pushes, and
+Sonar would then record the release tag as a branch of its own. The workflow gives such a run no
+reference branch, but still analyses it.
+
+`concurrency` cancels a pull request's analysis once a newer push to it starts one, so only the
+latest commit is waited on. Pushes to `main` are never cancelled mid-run, so every analysis that
+starts on `main` completes and the newest `main` commit is always analysed.
 
 `secrets: inherit` is required. Reusable workflows do not inherit secrets on their own, and a
 caller without it fails on a missing secret rather than on anything Sonar-shaped.
@@ -178,8 +204,8 @@ them.
 
 | What | Analysed when | New code is |
 |---|---|---|
-| `main` | every push | everything since the last release tag |
-| feature branch | every push | its diff against `main` |
+| `main` | every push (a superseded pending run may be skipped) | everything since the last release tag |
+| feature branch | only via `workflow_dispatch` | its diff against `main` |
 | pull request | opened, updated, reopened | the pull request's own diff |
 
 Feature branches are compared against the default branch by a parameter the workflow sets per
