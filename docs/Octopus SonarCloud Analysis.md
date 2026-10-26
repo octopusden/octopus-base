@@ -46,8 +46,8 @@ and you are done:
 name: Sonar
 
 on:
-  # main only: a PR branch is already analysed through pull_request, and a second analysis of the
-  # same SHA posts a second check run under the required context.
+  # main only: a branch with a PR is already analysed through pull_request, and a second analysis
+  # of the same SHA posts a second check run under the required context.
   push:
     branches: [ main ]
   pull_request:
@@ -155,8 +155,8 @@ Then the caller:
 name: Sonar
 
 on:
-  # main only: a PR branch is already analysed through pull_request, and a second analysis of the
-  # same SHA posts a second check run under the required context.
+  # main only: a branch with a PR is already analysed through pull_request, and a second analysis
+  # of the same SHA posts a second check run under the required context.
   push:
     branches: [ main ]
   pull_request:
@@ -181,7 +181,9 @@ jobs:
 Pushes to any other branch are left to `pull_request`: a branch with an open pull request would
 otherwise be analysed twice per push, once as a branch and once as the pull request, and post two
 check runs for the same commit under the same name. A branch without a pull request can still be
-analysed on demand through `workflow_dispatch`.
+analysed on demand through `workflow_dispatch`. A branch with an open pull request needs no
+dispatch: it is already analysed, and a dispatched run would add a second check run for the same
+commit.
 
 The explicit branch list is also what keeps tags out. A bare `push:` also fires on tag pushes, and
 Sonar would then record the release tag as a branch of its own. The workflow gives such a run no
