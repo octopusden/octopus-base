@@ -163,7 +163,7 @@ jobs:
         if: always()
         # SARIF upload is best-effort; scanner execution already determines the job result.
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ inputs.dependency-check-sarif-path }}
       - name: Upload Dependency-Check reports
@@ -200,13 +200,13 @@ jobs:
           distribution: ${{ inputs.java-distribution }}
           java-version: ${{ inputs.java-version }}
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ inputs.codeql-languages }}
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
       - name: Analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: ${{ inputs.codeql-category }}
       - name: Upload CodeQL report
@@ -240,7 +240,7 @@ jobs:
         if: always()
         # SARIF upload is best-effort; scan execution already determines the job result.
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ inputs.trivy-sarif-output }}
       - name: Upload Trivy report
