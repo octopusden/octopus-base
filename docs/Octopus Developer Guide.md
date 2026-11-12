@@ -256,6 +256,25 @@ jobs:
       register-release-immediately: true
 ```
 
+**Maven: a file people download and install by hand** — an Atlassian plugin jar, say — is
+published on the GitHub Release itself. Set `release-artifact` to a path or glob that matches
+exactly one file after `mvn package`; nothing goes to Central and the Sonatype and GPG secrets are
+not needed. The release is published only once it holds that file, compared by sha256.
+
+```yaml
+jobs:
+  release:
+    uses: octopusden/octopus-base/.github/workflows/common-java-maven-release.yml@<tag>
+    with:
+      flow-type: public
+      java-version: '17'
+      release-artifact: target/my-plugin-*.jar
+      # Keeps the sources and javadoc jars out of target/, so the pattern matches one file.
+      release-mvn-parameters: -Dmaven.source.skip=true -Dmaven.javadoc.skip=true
+      register-release-immediately: true
+    secrets: inherit
+```
+
 ### Keeping single modules off Central
 
 When some modules are consumed and some are not (a service plus its client libraries), declare
@@ -335,7 +354,7 @@ flowchart TD
 | How is it obtained? | Fix |
 |---|---|
 | A build tool resolves it by Maven coordinates | Route it: `github-packages-publications: ":<project>:<publication>"` |
-| A person or script downloads a URL | Attach it to a GitHub release instead |
+| A person or script downloads a URL | Attach it to a GitHub release instead (Maven: `release-artifact`, see [Keeping a repository off Central](#keeping-a-repository-off-central)) |
 | Nobody — it is deployed, not consumed | Stop publishing it: declare no `MavenPublication`, or `publish-to-nexus: false` for a whole repository |
 
 Routing needs a publishing repository named `GitHubPackages` in the build script, and moves that

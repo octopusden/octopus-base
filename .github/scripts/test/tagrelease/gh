@@ -13,11 +13,19 @@
 #   REL_STATE      published | draft | absent | error
 #   REL_ASSETS     newline-separated asset names already on the release
 #   ASSETS_READ    ok | error                   listing those assets
-#   UPLOAD         ok | error
+#   UPLOAD         ok | error | starter | corrupt   starter: fails AND leaves an empty asset behind;
+#                                               corrupt (artifact only): succeeds with other content
 #   GRAPHQL_REF    id | empty                   what wait-for-tag-ref.sh sees
 #   REL_CREATE     ok | error                   whether `gh release create` succeeds
 #   REL_EDIT       ok | error                   whether `gh release edit --draft=false` succeeds
 #   DRAFT_QUERY    ok | error                   whether the isDraft lookup answers
+#
+# For RELEASE_ARTIFACT the release is stateful, because the script reads it back after writing:
+#   ARTIFACT_STATE_FILE  holds "<state> <digest>" of the asset named like RELEASE_ARTIFACT; empty
+#                        when the release has none. An upload or a delete of that asset rewrites
+#                        it, so a later query sees what an earlier call left.
+#   ARTIFACT_READ  ok | error                   the state-and-digest asset query
+#   DELETE_ASSET   ok | error
 set -u
 log() { [ -n "${CALL_LOG:-}" ] && printf '%s\n' "$*" >> "$CALL_LOG"; return 0; }
 
@@ -63,6 +71,19 @@ if [ "${1:-}" = "release" ]; then
         [ "${REL_STATE:-absent}" = "draft" ] && echo "true" || echo "false"
         exit 0
       fi
+      # The artifact gate's query. Its --jq program is RUN here, against a release that also holds
+      # an unrelated asset, so the expression the script ships is the one under test.
+      if [[ "$*" == *--json\ assets* && "$*" == *.state* ]]; then
+        log "artifact-query"
+        [ "${ARTIFACT_READ:-ok}" = "ok" ] || { echo 'gh: Internal Server Error (HTTP 500)' >&2; exit 1; }
+        prog=""; while [ $# -gt 0 ]; do [ "$1" = "--jq" ] && prog="${2:-}"; shift; done
+        state=""; digest=""; read -r state digest < "$ARTIFACT_STATE_FILE" || true
+        jq -n --arg n "$(basename "$RELEASE_ARTIFACT")" --arg s "$state" --arg d "$digest" '
+          {assets: ([{name: "pom.xml", state: "uploaded", digest: "sha256:0"}]
+            + if $s == "" then [] else [{name: $n, state: $s, digest: (if $d == "" then null else $d end)}] end)}' \
+          | jq -r "$prog"
+        exit 0
+      fi
       if [[ "$*" == *--json\ assets* ]]; then
         log "assets-query"
         if [ "${ASSETS_READ:-ok}" != "ok" ]; then
@@ -95,9 +116,30 @@ if [ "${1:-}" = "release" ]; then
       exit 0 ;;
     upload)
       log "upload ${4:-${3:-}}"
+      # Only the artifact's upload is tracked. gh refuses a name the release already holds, in
+      # any state, so a script that uploads over an existing asset fails here as it would there.
+      if [ -n "${RELEASE_ARTIFACT:-}" ] && [ "${4:-}" = "$RELEASE_ARTIFACT" ]; then
+        if [ -s "$ARTIFACT_STATE_FILE" ]; then
+          echo 'asset under the same name already exists' >&2; exit 1
+        fi
+        case "${UPLOAD:-ok}" in
+          ok)      echo "uploaded sha256:$(sha256sum "$4" | cut -d' ' -f1)" > "$ARTIFACT_STATE_FILE" ;;
+          starter) echo "starter" > "$ARTIFACT_STATE_FILE" ;;
+          # gh reports success, but what the release holds is not the file: the read-back, not
+          # gh's exit status, is what the gate has to believe.
+          corrupt) echo "uploaded sha256:not-what-was-sent" > "$ARTIFACT_STATE_FILE"; exit 0 ;;
+        esac
+      fi
       [ "${UPLOAD:-ok}" = "ok" ] && exit 0
       echo 'gh: could not upload asset (HTTP 502)' >&2
       exit 1 ;;
+    delete-asset)
+      # --yes is part of the contract: without it gh prompts, and a job has nobody to answer.
+      [[ "$*" == *--yes* ]] || { echo "stub gh: release delete-asset without --yes: $*" >&2; exit 99; }
+      log "delete-asset ${4:-}"
+      [ "${DELETE_ASSET:-ok}" = "ok" ] || { echo 'gh: HTTP 500: could not delete asset' >&2; exit 1; }
+      : > "$ARTIFACT_STATE_FILE"
+      exit 0 ;;
   esac
 fi
 

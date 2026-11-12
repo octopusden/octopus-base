@@ -178,6 +178,15 @@ grep -q '^ok   create-release' "$tmp/downstream" && [ -z "$bad" ]; check \
   "every job below a skippable one survives the skip" \
   "${bad:-create-release not found} — a skipped verify job would skip it, and the run stays green"
 
+# The Maven release has the same shape. finish-publication is skipped whenever nothing goes through
+# the Portal — always, for a release-artifact release — so the registration two jobs below it must
+# name a status function on that branch, or the release is published, never registered, and green.
+MVN="$root/.github/workflows/common-java-maven-release.yml"
+awk '/^  register-release-in-log:/ { found = 1 } found' "$MVN" | tr '\n' ' ' \
+  | grep -q "inputs.release-artifact != '' && !cancelled()"; check \
+  "Maven: registering a release-artifact release survives the skipped finish-publication" \
+  "register-release-in-log names no status function for a release-artifact release"
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

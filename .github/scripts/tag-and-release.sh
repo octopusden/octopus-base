@@ -19,6 +19,11 @@
 #                      then published — see attach_asset for why that order is not optional.
 #                      When empty the release is created published, with no draft phase and so
 #                      no draft to strand.
+#   RELEASE_ARTIFACT   optional path to the one file this release PUBLISHES — a file people
+#                      download from the release, published nowhere else. The opposite of
+#                      RELEASE_ASSET, which never gates: the release is published only while it
+#                      holds exactly this file — see ensure_artifact. Takes the same draft path.
+#                      Independent of RELEASE_ASSET; both may be set. Unset, nothing here runs.
 #   GH_TOKEN, GH_REPO  as the callers set them; `gh release` resolves the repository from the
 #                      git remote and GH_REPO is the only documented override, which matters
 #                      because the tagging job has no checkout.
@@ -33,11 +38,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${TAG:?TAG is required}"
 BUILT_SHA="${BUILT_SHA:-}"
 RELEASE_ASSET="${RELEASE_ASSET:-}"
+RELEASE_ARTIFACT="${RELEASE_ARTIFACT:-}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 
 built_sha="${BUILT_SHA}"
 if [ -z "$built_sha" ]; then
   echo "::error title=Built commit unknown::The build job did not report the commit it built, so there is nothing safe to tag." >&2
+  exit 1
+fi
+
+# Before anything is created: without the file there is nothing to publish, and a tag or a draft
+# made first would only have to be found again by the next attempt.
+if [ -n "$RELEASE_ARTIFACT" ] && [ ! -f "$RELEASE_ARTIFACT" ]; then
+  echo "::error title=Release artifact missing::${RELEASE_ARTIFACT} is what ${TAG} publishes, and it could not be restored from the build job's artifact. Nothing was tagged or released." >&2
   exit 1
 fi
 
@@ -97,9 +110,72 @@ attach_asset() {
   return 0
 }
 
+# Prints "<state> <digest>" of the release asset named like RELEASE_ARTIFACT, nothing when the
+# release has none. Fails when the release cannot be read; gh's own message goes to the log.
+#
+# shortcut: matched by the local file name. GitHub renames an asset whose name has characters
+# outside [A-Za-z0-9._+@-] (a space becomes a dot), so such a file is never found here and the
+# release stays an unpublished draft; refuse the name before the build if one ever appears.
+artifact_on_release() {
+  local assets
+  assets="$(gh release view "$TAG" --json assets --jq '.assets[] | [.name, .state, .digest] | @tsv')" || return 1
+  awk -F'\t' -v name="$(basename "$RELEASE_ARTIFACT")" '$1 == name { print $2 " " $3 }' <<<"$assets"
+}
+
+# RELEASE_ARTIFACT inverts the rule above. The asset is a convenience copy of something already
+# published elsewhere, so it may never gate; the artifact IS the publication — a file installed by
+# hand from the release page and published nowhere else — so a release without it is not a release.
+# This returns 0 only while the release holds a file of that name, fully uploaded, with the sha256
+# of the file this run built, and every caller publishes only after it has.
+#
+# By content, not by name: a draft left by another attempt can already hold a same-named file built
+# from another commit. That one is refused and never replaced — which of the two is right is not
+# something this script can know, and replacing it is how a release ends up serving code its tag
+# does not point at.
+#
+# An asset that is not "uploaded" is a different case: a failed upload "may leave an empty asset
+# with a state of starter" (REST, upload a release asset), and it holds the name, so every later
+# upload is refused. It is deleted and the file uploaded again, which is what lets "re-run failed
+# jobs" finish the release.
+#
+# Called inside create_or_adopt_release, where `set -e` is suspended (see below): every command
+# that must not fail silently is checked by hand.
+ensure_artifact() {
+  local name want have
+  name="$(basename "$RELEASE_ARTIFACT")"
+  want="uploaded sha256:$(sha256sum "$RELEASE_ARTIFACT" | cut -d' ' -f1)"
+  have="$(artifact_on_release)" || {
+    echo "::error title=Release artifact unreadable::Could not read the assets of release ${TAG}, so whether it holds ${name} is unknown. A release is not published without the file it publishes." >&2
+    return 1
+  }
+  if [ -n "$have" ] && [ "${have%% *}" != "uploaded" ]; then
+    echo "Release ${TAG} holds an incomplete ${name} (state ${have%% *}) left by a failed upload — deleting it so the file can be uploaded again."
+    gh release delete-asset "$TAG" "$name" --yes || {
+      echo "::error title=Release artifact not replaced::The incomplete ${name} on release ${TAG} could not be deleted, so the file cannot be uploaded." >&2
+      return 1
+    }
+    have=""
+  fi
+  if [ -z "$have" ]; then
+    gh release upload "$TAG" "$RELEASE_ARTIFACT" || {
+      echo "::error title=Release artifact not uploaded::GitHub refused the upload of ${name} to release ${TAG}. A release is not published without the file it publishes." >&2
+      return 1
+    }
+    have="$(artifact_on_release)" || {
+      echo "::error title=Release artifact unreadable::${name} was uploaded to release ${TAG}, but the result could not be read back, so it is not known to be complete." >&2
+      return 1
+    }
+  fi
+  if [ "$have" != "$want" ]; then
+    echo "::error title=Release artifact mismatch::Release ${TAG} holds a ${name} that is not the file this run built (on the release: '${have}'; built: '${want}'). It is neither replaced nor published: delete that asset, or the release, if this run's file is the right one — or release a new version." >&2
+    return 1
+  fi
+  echo "Release ${TAG} holds ${name} (${want#uploaded })."
+}
+
 # A draft left behind by an interrupted attempt is invisible to the stamp step's
 # `releases/tags/...` lookup, so publish it rather than treating it as done.
-# `set -e` is on (line 30) but it does NOT reach into the three functions below. The shell suspends
+# `set -e` is on (line 35) but it does NOT reach into the three functions below. The shell suspends
 # -e for the entire body of a function invoked as part of a `||` list, and create_or_adopt_release
 # is always called that way — `create_or_adopt_release || { ... }` — so the caller can say which
 # ledger was left short instead of dying with a bare non-zero. Everything it calls inherits that
@@ -151,6 +227,11 @@ reconcile_existing_release() {
   else
     echo "Release $TAG already exists at $built_sha."
   fi
+  # The artifact gates what the asset above may not: a draft is published, and an already
+  # published release is reported as done, only once it holds this run's file.
+  if [ -n "$RELEASE_ARTIFACT" ]; then
+    ensure_artifact || return 1
+  fi
   # After the asset, never before: publishing first would put the release beyond reach of an
   # asset once immutable releases are enabled on the repository, permanently.
   # Last command again, so its status is this function's status.
@@ -178,7 +259,7 @@ create_or_adopt_release() {
     exit 1
   fi
   wait_for_tag || return 1
-  if [ -n "$RELEASE_ASSET" ]; then
+  if [ -n "$RELEASE_ASSET" ] || [ -n "$RELEASE_ARTIFACT" ]; then
     # Draft, then asset, then publish. GitHub's immutable releases refuse an asset added after
     # publication, so attaching afterwards would silently stop working the day immutability is
     # enabled on a consumer repository. Publication happens unconditionally, so a refused upload
@@ -187,7 +268,14 @@ create_or_adopt_release() {
     # file directly: that makes it draft, upload and publish as one step, where an interrupted
     # upload leaves a draft nothing ever finishes.
     gh release create "$TAG" --verify-tag --draft --title "$TAG" --generate-notes || return 1
-    attach_asset
+    if [ -n "$RELEASE_ASSET" ]; then
+      attach_asset
+    fi
+    # The artifact is the exception to "publication happens unconditionally": a failure here
+    # leaves the draft unpublished, and the reconcile path above finishes it on the next attempt.
+    if [ -n "$RELEASE_ARTIFACT" ]; then
+      ensure_artifact || return 1
+    fi
     gh release edit "$TAG" --draft=false || {
       echo "::error title=Release left as a draft::${TAG} was created as a draft and publishing it failed. The stamp lookup cannot see a draft, so registration would never run." >&2
       return 1
