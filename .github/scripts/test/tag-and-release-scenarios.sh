@@ -9,7 +9,8 @@
 # that fails for a reason other than 404, a ref creation refused by the workflow-file rule (#180).
 #
 # The property under test throughout: nothing is created on unverified state, nothing is moved,
-# and the release asset can never gate the release.
+# and the release asset can never gate the release — while the release ARTIFACT, the file a
+# release publishes when nothing goes to Central, always does.
 #
 # Usage: bash .github/scripts/test/tag-and-release-scenarios.sh   (from the repo root)
 
@@ -30,8 +31,10 @@ run() {
   local tmp; tmp="$(mktemp -d)"
   local out="$tmp/out.txt" rc=0
   CALL_LOG="$tmp/calls.txt"; : > "$CALL_LOG"
+  # What the release holds under the artifact's name when the run starts; the stub rewrites it.
+  ARTIFACT_STATE_FILE="$tmp/artifact-on-release"; printf '%s' "${ARTIFACT_ON_RELEASE:-}" > "$ARTIFACT_STATE_FILE"
   (
-    export CALL_LOG GITHUB_REPOSITORY=octopusden/octopus-test TAG=v2.0.15
+    export CALL_LOG ARTIFACT_STATE_FILE GITHUB_REPOSITORY=octopusden/octopus-test TAG=v2.0.15
     export PATH="$here/tagrelease:$PATH"
     export GITHUB_STEP_SUMMARY="$tmp/summary.md"
     bash "$script"
@@ -54,6 +57,7 @@ base() {
   export REF_STATE=absent REF_SHA="$SHA_BUILT" REF_CREATE=ok
   export REL_STATE=absent REL_ASSETS="" ASSETS_READ=ok UPLOAD=ok GRAPHQL_REF=id
   export REL_CREATE=ok REL_EDIT=ok DRAFT_QUERY=ok
+  export RELEASE_ARTIFACT="" ARTIFACT_ON_RELEASE="" ARTIFACT_READ=ok DELETE_ASSET=ok
   # The wait succeeds on its first attempt whenever GRAPHQL_REF=id, so these only bound the cases
   # where it is meant to fail — without them each of those would sleep for twenty seconds.
   export WAIT_ATTEMPTS=1 WAIT_INTERVAL=0
@@ -180,6 +184,109 @@ run "a refused draft creation is not masked by the asset upload that follows" 1 
 base; RELEASE_ASSET="$tmpasset" REL_EDIT=error; export RELEASE_ASSET REL_EDIT
 run "an asset release that cannot be published is reported as left a draft" 1 "" \
   "Release left as a draft"
+
+# --- the artifact always gates the release --------------------------------------------------
+# RELEASE_ARTIFACT is the file a release publishes when nothing goes to Central, so every rule of
+# the asset section is inverted: no path may reach `publish` unless the release holds exactly this
+# run's file. Each sequence below ends where the script must stop; a `publish` after a failed or
+# mismatched artifact is the defect. Every scenario above runs with RELEASE_ARTIFACT unset and
+# compares the whole call sequence, which is what shows the existing callers are untouched.
+artifact="$(mktemp -d)/plugin-2.0.15.jar"; printf 'this build\n' > "$artifact"
+ours="uploaded sha256:$(sha256sum "$artifact" | cut -d' ' -f1)"
+NEW="ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 ref-create api repos/octopusden/octopus-test/git/refs -f ref=refs/tags/v2.0.15 -f sha=$SHA_BUILT --jq .ref graphql release-view"
+ADOPT="ref-lookup repos/octopusden/octopus-test/git/ref/tags/v2.0.15 commit-lookup repos/octopusden/octopus-test/commits/v2.0.15 release-view"
+
+base; RELEASE_ARTIFACT="$artifact"; export RELEASE_ARTIFACT
+run "with an artifact: draft, upload, read it back, then publish — in that order" 0 \
+  "$NEW graphql create-draft artifact-query upload $artifact artifact-query publish" \
+  "holds plugin-2.0.15.jar"
+
+base; RELEASE_ARTIFACT="$artifact" UPLOAD=error; export RELEASE_ARTIFACT UPLOAD
+run "a refused artifact upload leaves the draft unpublished" 1 \
+  "$NEW graphql create-draft artifact-query upload $artifact" \
+  "Release artifact not uploaded"
+
+base; RELEASE_ARTIFACT="$artifact" UPLOAD=starter; export RELEASE_ARTIFACT UPLOAD
+run "an upload that fails and leaves an empty asset leaves the draft unpublished" 1 \
+  "$NEW graphql create-draft artifact-query upload $artifact" \
+  "Release not completed"
+
+# The re-run of the case above: the tag exists, the draft exists, and the empty asset holds the
+# name. Without the delete the upload is refused on every attempt and the release never finishes.
+base; RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft ARTIFACT_ON_RELEASE="starter"
+export RELEASE_ARTIFACT REF_STATE REL_STATE ARTIFACT_ON_RELEASE
+run "a re-run replaces the empty asset, then publishes" 0 \
+  "$ADOPT artifact-query delete-asset plugin-2.0.15.jar upload $artifact artifact-query draft-query publish" \
+  "left by a failed upload"
+
+base; RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft ARTIFACT_ON_RELEASE="starter" DELETE_ASSET=error
+export RELEASE_ARTIFACT REF_STATE REL_STATE ARTIFACT_ON_RELEASE DELETE_ASSET
+run "an empty asset that cannot be deleted stops the run before any upload" 1 \
+  "$ADOPT artifact-query delete-asset plugin-2.0.15.jar" \
+  "Release artifact not replaced"
+
+# A draft with no tag, already holding a same-named file built from another commit: the name
+# matches and the content does not. It is neither replaced nor published.
+base; RELEASE_ARTIFACT="$artifact" REL_STATE=draft ARTIFACT_ON_RELEASE="uploaded sha256:another-build"
+export RELEASE_ARTIFACT REL_STATE ARTIFACT_ON_RELEASE
+run "an adopted draft holding another build's file is refused, not replaced or published" 1 \
+  "$NEW artifact-query" \
+  "Release artifact mismatch"
+
+# An asset uploaded before GitHub recorded digests has none, so it cannot be shown to be this file.
+base; RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft ARTIFACT_ON_RELEASE="uploaded"
+export RELEASE_ARTIFACT REF_STATE REL_STATE ARTIFACT_ON_RELEASE
+run "a same-named file with no digest is refused" 1 "$ADOPT artifact-query" "Release artifact mismatch"
+
+base; RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft ARTIFACT_ON_RELEASE="$ours"
+export RELEASE_ARTIFACT REF_STATE REL_STATE ARTIFACT_ON_RELEASE
+run "a draft already holding this run's file is published without another upload" 0 \
+  "$ADOPT artifact-query draft-query publish" \
+  "holds plugin-2.0.15.jar"
+
+base; RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=published ARTIFACT_ON_RELEASE="$ours"
+export RELEASE_ARTIFACT REF_STATE REL_STATE ARTIFACT_ON_RELEASE
+run "a published release holding this run's file: change nothing" 0 \
+  "$ADOPT artifact-query draft-query" \
+  "in place"
+
+# The asset's list lookup degrades to "try the upload"; the artifact's fails closed.
+base; RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft ARTIFACT_READ=error
+export RELEASE_ARTIFACT REF_STATE REL_STATE ARTIFACT_READ
+run "an unreadable release stops the run instead of publishing on unknown state" 1 \
+  "$ADOPT artifact-query" \
+  "Release artifact unreadable"
+
+base; RELEASE_ARTIFACT="/nonexistent/plugin-2.0.15.jar" REF_STATE=error; export RELEASE_ARTIFACT REF_STATE
+run "a missing artifact file stops the run before the first lookup" 1 "" "Release artifact missing"
+
+# gh exiting 0 is not the evidence: the release is read back, and that is what is compared.
+base; RELEASE_ARTIFACT="$artifact" UPLOAD=corrupt; export RELEASE_ARTIFACT UPLOAD
+run "an upload gh calls successful is not published until the read-back matches" 1 \
+  "$NEW graphql create-draft artifact-query upload $artifact artifact-query" \
+  "Release artifact mismatch"
+
+# The Maven flow sets both — the only configuration a caller uses today: the pom.xml stays a
+# best-effort asset, the artifact gates. The asset's own outcome must never open the gate.
+base; RELEASE_ASSET="$tmpasset" RELEASE_ARTIFACT="$artifact"; export RELEASE_ASSET RELEASE_ARTIFACT
+run "asset and artifact together: the asset first, then the gate, then publish" 0 \
+  "$NEW graphql create-draft upload $tmpasset artifact-query upload $artifact artifact-query publish" \
+  "holds plugin-2.0.15.jar"
+
+# "Re-run failed jobs" after the artifact's upload failed: the tag and the draft exist and the
+# pom.xml is already attached. The asset path reports "nothing to do"; the gate still runs.
+base; RELEASE_ASSET="$tmpasset" RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft REL_ASSETS="pom.xml"
+export RELEASE_ASSET RELEASE_ARTIFACT REF_STATE REL_STATE REL_ASSETS
+run "asset and artifact on a re-run: the missing artifact is uploaded before the draft is published" 0 \
+  "$ADOPT assets-query artifact-query upload $artifact artifact-query draft-query publish" \
+  "holds plugin-2.0.15.jar"
+
+base; RELEASE_ASSET="$tmpasset" RELEASE_ARTIFACT="$artifact" REF_STATE=exists REL_STATE=draft REL_ASSETS="pom.xml"
+ARTIFACT_ON_RELEASE="uploaded sha256:another-build"
+export RELEASE_ASSET RELEASE_ARTIFACT REF_STATE REL_STATE REL_ASSETS ARTIFACT_ON_RELEASE
+run "asset and artifact on a re-run: another build's file is refused although the asset is fine" 1 \
+  "$ADOPT assets-query artifact-query" \
+  "Release artifact mismatch"
 
 echo
 echo "tag-and-release scenarios: $pass passed, $fail failed"
