@@ -151,7 +151,8 @@ ensure_artifact() {
   if [ -n "$have" ] && [ "${have%% *}" != "uploaded" ]; then
     echo "Release ${TAG} holds an incomplete ${name} (state ${have%% *}) left by a failed upload — deleting it so the file can be uploaded again."
     # shortcut: deleted by name, safe only because the release workflow's concurrency group
-    # serializes attempts; delete by the asset's apiUrl if a caller ever runs this outside it.
+    # serializes attempts; a caller outside it must join that group (deleting by id would not
+    # help: the asset keeps its id from starter to uploaded).
     gh release delete-asset "$TAG" "$name" --yes || {
       echo "::error title=Release artifact not replaced::The incomplete ${name} on release ${TAG} could not be deleted, so the file cannot be uploaded." >&2
       return 1

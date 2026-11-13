@@ -190,10 +190,12 @@ awk '/^  register-release-in-log:/ { found = 1 } found' "$MVN" | tr '\n' ' ' \
 # Real Maven releases are serialized per repository like Gradle ones: without it two overlapping
 # releases compute the same version, and ensure_artifact's delete-by-name could remove the file
 # another attempt has just uploaded and verified.
-awk '/^concurrency:/ { found = 1 } /^jobs:/ { found = 0 } found' "$MVN" | tr '\n' ' ' \
-  | grep -q "|| 'publish' }} *cancel-in-progress: false"; check \
-  "Maven: real releases share one per-repository concurrency group" \
-  "common-java-maven-release.yml has no workflow-level 'publish' concurrency group"
+# Compared whole with Gradle's, minus the per-flow dry-run format: a prefix changed on one side
+# alone would stop the two flows serializing against each other while a suffix check stayed green.
+key() { awk '/^concurrency:/ { found = 1 } /^jobs:/ { found = 0 } found' "$1" | tr -s ' \n' ' ' | sed 's/ && format([^)]*)//'; }
+[ "$(key "$MVN")" = "$(key "$REL")" ] && key "$MVN" | grep -q "|| 'publish' }} cancel-in-progress: false"; check \
+  "Maven: real releases share Gradle's per-repository concurrency group" \
+  "common-java-maven-release.yml's real-release concurrency group differs from common-java-gradle-release.yml's, or is no longer 'publish' with cancel-in-progress: false"
 
 # The release artifact crosses jobs by name: the build job uploads it, the tagging job restores it
 # and builds RELEASE_ARTIFACT from that directory. A one-sided rename would only show on a release
