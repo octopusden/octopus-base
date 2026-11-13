@@ -10,7 +10,7 @@ in [Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md)
 > **Gradle and Maven are not the same pipeline.** Everything below describes
 > `common-java-gradle-release.yml` unless stated otherwise. `common-java-maven-release.yml`
 > shares the shape but has none of: the Central Portal publish path, the Central preflight, the
-> publication guard, a concurrency group, `publish-to-nexus`, `resume-deployment-id`,
+> publication guard, `publish-to-nexus`, `resume-deployment-id`,
 > `docker-image`, or `skip-extra-tasks`. Differences are called out as **Maven:** notes. Its own
 > way off Central is `release-artifact`, which publishes a file on the GitHub Release instead —
 > see [Tag and GitHub Release](#tag-and-github-release).
@@ -766,8 +766,12 @@ Keep `packages: write` in the example regardless: the same job still needs it fo
   `github-packages-publications` and `github-packages-repository`. Two dry-run variants differing
   in anything else will cancel each
   other — GitHub keeps only one pending run per group.
-  **Maven:** there is no concurrency group at all, so two overlapping public-flow Maven releases
-  can compute and publish the same version.
+  **Maven:** real releases share the same `release-<repo>-publish` group, so a repository is
+  serialized across both flows, and a third queued release cancels the pending second one —
+  including a pending **Re-run failed jobs**, which has changed nothing and can simply be
+  re-run again. A run waiting on `Prod` environment approval holds the lease, so approve or
+  reject it promptly. Its dry-run key distinguishes run id, attempt, flow type, `java-version`,
+  `maven-version` and `release-artifact`.
 - **A Maven dry-run compiles and tests nothing** — the only build is inside `mvn deploy`, which
   dry-run skips. The Gradle flow always runs `./gradlew build`. The exception is `release-artifact`:
   its `mvn package` runs under dry-run too.

@@ -187,6 +187,32 @@ awk '/^  register-release-in-log:/ { found = 1 } found' "$MVN" | tr '\n' ' ' \
   "Maven: registering a release-artifact release survives the skipped finish-publication" \
   "register-release-in-log names no status function for a release-artifact release"
 
+# Real Maven releases are serialized per repository like Gradle ones: without it two overlapping
+# releases compute the same version, and ensure_artifact's delete-by-name could remove the file
+# another attempt has just uploaded and verified.
+awk '/^concurrency:/ { found = 1 } /^jobs:/ { found = 0 } found' "$MVN" | tr '\n' ' ' \
+  | grep -q "|| 'publish' }} *cancel-in-progress: false"; check \
+  "Maven: real releases share one per-repository concurrency group" \
+  "common-java-maven-release.yml has no workflow-level 'publish' concurrency group"
+
+# The release artifact crosses jobs by name: the build job uploads it, the tagging job restores it
+# and builds RELEASE_ARTIFACT from that directory. A one-sided rename would only show on a release
+# — checked whole, not by a shared prefix, because the two sides build the version suffix from
+# different expressions (env.BUILD_VERSION vs the job output).
+grep -qF 'name: release-artifact-${{ github.run_id }}-${{ inputs.flow-type }}-${{ env.BUILD_VERSION }}' "$MVN" \
+  && grep -qF 'name: release-artifact-${{ github.run_id }}-${{ inputs.flow-type }}-${{ needs.prepare-build-publish-release.outputs.build-version }}' "$MVN" \
+  && grep -q 'path: released-artifact$' "$MVN"; check \
+  "Maven: the release artifact is restored under the name and directory it is uploaded to" \
+  "release-artifact upload and download no longer agree on name or directory"
+
+# The file name itself travels Locate step -> job output -> RELEASE_ARTIFACT; a break anywhere on
+# that path builds or restores the wrong file without either upload or download failing to run.
+grep -qF 'echo "name=$(basename "${files[0]}")"' "$MVN" \
+  && grep -qF 'release-artifact-name: ${{ steps.release-artifact.outputs.name }}' "$MVN" \
+  && grep -qF "format('released-artifact/{0}', needs.prepare-build-publish-release.outputs.release-artifact-name)" "$MVN"; check \
+  "Maven: RELEASE_ARTIFACT is the restored directory plus the file name the build job located" \
+  "the file name no longer travels from the Locate step through the job output into RELEASE_ARTIFACT"
+
 echo
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

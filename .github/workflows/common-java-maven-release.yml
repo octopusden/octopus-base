@@ -57,6 +57,18 @@ on:
       GPG_PRIVATE_KEY:
         required: false
 
+# Serialize REAL releases per repository, for the reasons given on the same group in
+# common-java-gradle-release.yml: two overlapping releases compute the same next version, and
+# two attempts inside tag-and-release.sh's ensure_artifact could delete each other's upload.
+# Real releases share the Gradle flow's key on purpose: both write the same tag namespace.
+# Dry runs get their own key per run and per input a caller's matrix may vary; add any new one.
+concurrency:
+  group: >-
+    release-${{ github.repository }}-${{ inputs.dry-run
+      && format('dry-{0}-{1}-{2}-{3}-{4}-{5}', github.run_id, github.run_attempt, inputs.flow-type, inputs.java-version, inputs.maven-version, inputs.release-artifact)
+      || 'publish' }}
+  cancel-in-progress: false
+
 jobs:
   prepare-build-publish-release:
     runs-on: ubuntu-24.04
