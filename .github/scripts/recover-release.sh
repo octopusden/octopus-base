@@ -403,9 +403,12 @@ if [ "$tag_state" = "absent" ] || [ "$release_state" != "published" ]; then
   # One script for both, the same one the release path uses, so the recovery and the release cannot
   # drift apart. It creates the ref, waits for it to become readable, adopts what exists, and
   # publishes a stranded draft. No RELEASE_ASSET: the Maven flow attaches a released pom.xml from
-  # its build job's artifact, which a recovery deliberately does not restore.
+  # its build job's artifact, which a recovery deliberately does not restore. No RELEASE_ARTIFACT
+  # either, cleared so that one left in the operator's shell cannot switch the gate on. A
+  # release-artifact release never gets here: it puts nothing on Central, so the coordinate check
+  # above refuses it, and its stranded draft is finished by "re-run failed jobs" instead.
   if GITHUB_REPOSITORY="$TARGET_REPO" GH_REPO="$TARGET_REPO" TAG="$TAG" BUILT_SHA="$COMMIT" \
-       RELEASE_ASSET="" bash "$here/tag-and-release.sh" >&2; then
+       RELEASE_ASSET="" RELEASE_ARTIFACT="" bash "$here/tag-and-release.sh" >&2; then
     [ "$tag_state" = "absent" ] && tag_outcome="written now"
     [ "$release_state" = "published" ] || release_outcome="written now"
   else

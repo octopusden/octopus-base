@@ -38,6 +38,11 @@ on:
       release-mvn-parameters:
         type: string
         default: ''
+      release-artifact:
+        description: 'Path or glob, relative to the repository root, of the one file this release publishes as an asset of its GitHub Release INSTEAD of publishing to Maven Central — for an artifact people download and install by hand and nothing consumes as a Maven dependency, such as an Atlassian plugin jar. It is built with `mvn package` and must match exactly one file. The release is published only once it holds that file, compared by sha256; nothing is deployed, so the OSSRH and GPG secrets are not needed. Set register-release-immediately: true with it — the artifact check polls Maven Central, which never receives this release. Blank — the default — changes nothing: the release publishes to Maven Central.'
+        required: false
+        type: string
+        default: ''
       maven-version:
         description: Maven version to release with, downloaded from Maven Central and checked against its sha512. The runner image's own Maven is not used.
         type: string
@@ -51,6 +56,18 @@ on:
         required: false
       GPG_PRIVATE_KEY:
         required: false
+
+# Serialize REAL releases per repository, for the reasons given on the same group in
+# common-java-gradle-release.yml: two overlapping releases compute the same next version, and
+# two attempts inside tag-and-release.sh's ensure_artifact could delete each other's upload.
+# Real releases share the Gradle flow's key on purpose: both write the same tag namespace.
+# Dry runs get their own key per run and per input a caller's matrix may vary; add any new one.
+concurrency:
+  group: >-
+    release-${{ github.repository }}-${{ inputs.dry-run
+      && format('dry-{0}-{1}-{2}-{3}-{4}-{5}', github.run_id, github.run_attempt, inputs.flow-type, inputs.java-version, inputs.maven-version, inputs.release-artifact)
+      || 'publish' }}
+  cancel-in-progress: false
 
 jobs:
   prepare-build-publish-release:
@@ -67,6 +84,9 @@ jobs:
       # The Portal deployment the publish job finishes. Published so that job can be re-run on its own:
       # re-running THIS one would repeat `mvn deploy` for a version Central already has.
       portal-deployment-id: ${{ steps.portal-deployment.outputs.id }}
+      # File name of the release artifact, empty unless release-artifact is set. The tagging job
+      # restores the file under this name.
+      release-artifact-name: ${{ steps.release-artifact.outputs.name }}
     env:
       BUILD_VERSION: ''
 
@@ -114,8 +134,9 @@ jobs:
           echo "- GitHub release creation will be skipped"
           echo "- Release log registration will be skipped"
 
+      # Not for a release-artifact release: it deploys nothing, so it needs none of these.
       - name: Fail if release secrets are not set for non-dry-run
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && inputs.release-artifact == '' }}
         env:
           OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
           OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
@@ -407,8 +428,50 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+      # release-artifact: the release publishes one file on its GitHub Release and nothing on
+      # Maven Central, so the three steps below replace the deploy. `package` is the goal
+      # common-java-maven-build.yml runs, so the release builds what the pull request checks built.
+      # The build and the match run under dry-run too — neither has an external effect, and a dry
+      # run is the place to learn that the pattern matches nothing.
+      - name: Build the release artifact
+        if: ${{ inputs.release-artifact != '' }}
+        run: mvn --batch-mode package ${{ inputs.release-mvn-parameters }}
+
+      # Exactly one file, because the release holds one artifact and the tagging job is told its
+      # name: a pattern that also matches a -sources jar must fail here, not publish the wrong file.
+      - name: Locate the release artifact
+        id: release-artifact
+        if: ${{ inputs.release-artifact != '' }}
+        shell: bash
+        env:
+          ARTIFACT_PATTERN: ${{ inputs.release-artifact }}
+        run: |
+          set -u
+          mapfile -t files < <(compgen -G "${ARTIFACT_PATTERN}" || true)
+          if [ "${#files[@]}" -ne 1 ] || [ ! -f "${files[0]}" ]; then
+            echo "::error title=Release artifact not found::release-artifact '${ARTIFACT_PATTERN}' must match exactly one file after 'mvn package'; it matched ${#files[@]}: ${files[*]:-nothing}." >&2
+            exit 1
+          fi
+          echo "Release artifact: ${files[0]}"
+          {
+            echo "path=${files[0]}"
+            echo "name=$(basename "${files[0]}")"
+          } >> "${GITHUB_OUTPUT}"
+
+      # Handed to the tagging job the way the pom.xml above is, and keyed the same way for the
+      # same reasons: "re-run failed jobs" repeats only the tagging job, which must find this.
+      - name: Keep the release artifact for the release
+        if: ${{ !inputs.dry-run && inputs.release-artifact != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-${{ github.run_id }}-${{ inputs.flow-type }}-${{ env.BUILD_VERSION }}
+          path: ${{ steps.release-artifact.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
       - name: Publish to Sonatype Nexus
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && inputs.release-artifact == '' }}
         shell: bash
         run: |
           # -u only: `shell: bash` already runs with -e and -o pipefail. Tee'd because the next step
@@ -435,10 +498,11 @@ jobs:
       # consumes the script's failure classification.
       #
       # A repository that publishes somewhere other than the Portal prints no deployment id, and this
-      # step then does nothing.
+      # step then does nothing. A release-artifact release deploys nothing, so the step is skipped,
+      # the id stays empty and finish-publication below is skipped with it.
       - name: Read the Portal deployment id
         id: portal-deployment
-        if: ${{ !inputs.dry-run }}
+        if: ${{ !inputs.dry-run && inputs.release-artifact == '' }}
         shell: bash
         run: |
           set -u
@@ -576,6 +640,16 @@ jobs:
           done
           echo "Could not fetch the released pom.xml after 3 retries." >&2
 
+      # The release artifact, when the release publishes one. NOT best-effort like the pom.xml
+      # above: it is what this release publishes, so a failed restore fails the job — nothing has
+      # been tagged or released yet, and "re-run failed jobs" tries again.
+      - name: Restore the release artifact
+        if: ${{ inputs.release-artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifact-${{ github.run_id }}-${{ inputs.flow-type }}-${{ needs.prepare-build-publish-release.outputs.build-version }}
+          path: released-artifact
+
       # The tag is created at the commit the build job actually built. The replaced
       # action, marvinpinto/action-automatic-releases, had no target-commit input: it
       # tagged `context.sha`, which for the repository_dispatch runs every release uses
@@ -613,6 +687,12 @@ jobs:
       # RELEASE_ASSET is what makes this flow take the draft-then-attach-then-publish path:
       # GitHub's immutable releases refuse an asset added after publication, so the pom.xml has
       # to be attached while the release is still a draft. The asset can never fail the job.
+      #
+      # RELEASE_ARTIFACT is the opposite: set only for a release-artifact release, it is the file
+      # the release publishes, and the script publishes nothing until the release holds exactly
+      # it. The path is built from the INPUT, not from the build job's output alone, so a lost
+      # output yields a path that is not a file — which the script refuses — rather than an empty
+      # value, which would silently publish a release with no artifact.
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -622,6 +702,7 @@ jobs:
           TAG: v${{ needs.prepare-build-publish-release.outputs.build-version }}
           BUILT_SHA: ${{ needs.prepare-build-publish-release.outputs.built-sha }}
           RELEASE_ASSET: released-pom/pom.xml
+          RELEASE_ARTIFACT: ${{ inputs.release-artifact != '' && format('released-artifact/{0}', needs.prepare-build-publish-release.outputs.release-artifact-name) || '' }}
         run: bash .octopus-base-tagwait/.github/scripts/tag-and-release.sh
 
       # Bind the release to the run that produced it. Registration happens afterwards
@@ -652,7 +733,19 @@ jobs:
 
   register-release-in-log:
       # register release in octopus-release-log
-      if: inputs.register-release-immediately && !inputs.dry-run
+      #
+      # A release-artifact release deploys nothing, so finish-publication is always skipped — and
+      # an `if` with no status function gets an implicit success(), which a skipped job ANYWHERE
+      # above fails, transitively, not only among the direct needs (the comment on tag-and-release
+      # describes the direct case). Left as it was, such a release would be tagged and published,
+      # never registered, and the run would stay green. So that branch names a status function and
+      # asks for the one thing it needs, a tagging job that succeeded. The other branch spells out
+      # the success() it had implicitly: nothing changes for a release that publishes to Central.
+      if: >-
+        ${{ inputs.register-release-immediately && !inputs.dry-run
+            && (inputs.release-artifact == '' && success()
+                || inputs.release-artifact != '' && !cancelled()
+                   && needs.tag-and-release.result == 'success') }}
       # Both: the version comes from the build job, but the release must exist first.
       needs: [prepare-build-publish-release, tag-and-release]
       uses: ./.github/workflows/common-register-release.yml

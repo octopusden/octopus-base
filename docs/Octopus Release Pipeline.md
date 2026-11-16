@@ -10,8 +10,10 @@ in [Administrator Troubleshooting](Octopus%20Administrator%20Troubleshooting.md)
 > **Gradle and Maven are not the same pipeline.** Everything below describes
 > `common-java-gradle-release.yml` unless stated otherwise. `common-java-maven-release.yml`
 > shares the shape but has none of: the Central Portal publish path, the Central preflight, the
-> publication guard, a concurrency group, `publish-to-nexus`, `resume-deployment-id`,
-> `docker-image`, or `skip-extra-tasks`. Differences are called out as **Maven:** notes.
+> publication guard, `publish-to-nexus`, `resume-deployment-id`,
+> `docker-image`, or `skip-extra-tasks`. Differences are called out as **Maven:** notes. Its own
+> way off Central is `release-artifact`, which publishes a file on the GitHub Release instead —
+> see [Tag and GitHub Release](#tag-and-github-release).
 
 ---
 
@@ -544,6 +546,18 @@ released, rather than whichever tag sorts highest. Two releases do not carry it:
 #189 reconciler, which has no run to name, and `octopus-base`'s own release, whose workflow never
 added the stamp. Registration falls back to the highest-sorting tag for those.
 
+**Maven: the release can publish a file here instead of anything on Central.** With
+`release-artifact` set, phase A is replaced by `mvn package`: nothing is deployed, the Sonatype and
+GPG secrets are not required, and the one file the pattern matches is attached to the GitHub
+Release. Registration needs `register-release-immediately: true` — the other route polls Central.
+That inverts a rule of this job. The `pom.xml` the Maven flow attaches is a convenience copy and
+may never fail the release; the release artifact *is* the publication, so the release is published
+only once it holds a file of that name, fully uploaded, with the sha256 of the file this run built.
+A same-named file with other content — a draft left by a run that built another commit — is
+refused, never replaced. An upload that fails leaves the release a draft, and **Re-run failed
+jobs** finishes it, replacing the empty asset the failed upload can leave behind. Covered by
+`.github/scripts/test/tag-and-release-scenarios.sh`.
+
 ### Registration
 
 Two routes reach the release log, and **both can be wired at once**. Both are a
@@ -637,7 +651,8 @@ version before retrying. Central offers no equivalent.
 
 **Secrets** (`Prod` environment): `OSSRH_USERNAME`, `OSSRH_TOKEN`, `GPG_PRIVATE_KEY`,
 `GPG_PASSPHRASE`, `OCTOPUS_GITHUB_TOKEN`. The Sonatype and GPG four are unnecessary when
-`publish-to-nexus: false`. **Maven:** they are required whenever `dry-run` is false, regardless.
+`publish-to-nexus: false`. **Maven:** they are required whenever `dry-run` is false, unless
+`release-artifact` is set.
 
 **Caller workflows**: `release.yml` and `check-and-register.yml`, each a short `uses:` block
 pinned to an `octopus-base` tag — never `@main`. The calling job must **not** set `runs-on:`;
@@ -751,10 +766,15 @@ Keep `packages: write` in the example regardless: the same job still needs it fo
   `github-packages-publications` and `github-packages-repository`. Two dry-run variants differing
   in anything else will cancel each
   other — GitHub keeps only one pending run per group.
-  **Maven:** there is no concurrency group at all, so two overlapping public-flow Maven releases
-  can compute and publish the same version.
+  **Maven:** real releases share the same `release-<repo>-publish` group, so a repository is
+  serialized across both flows, and a third queued release cancels the pending second one —
+  including a pending **Re-run failed jobs**, which has changed nothing and can simply be
+  re-run again. A run waiting on `Prod` environment approval holds the lease, so approve or
+  reject it promptly. Its dry-run key distinguishes run id, attempt, flow type, `java-version`,
+  `maven-version` and `release-artifact`.
 - **A Maven dry-run compiles and tests nothing** — the only build is inside `mvn deploy`, which
-  dry-run skips. The Gradle flow always runs `./gradlew build`.
+  dry-run skips. The Gradle flow always runs `./gradlew build`. The exception is `release-artifact`:
+  its `mvn package` runs under dry-run too.
 - **A stranded draft release is finished rather than treated as done.** A draft is invisible to
   the stamp lookup, so leaving one in place would block registration forever. Both flows and the
   reconciler now share `.github/scripts/tag-and-release.sh`, which looks for an existing release
